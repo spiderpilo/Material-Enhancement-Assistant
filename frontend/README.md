@@ -1,26 +1,32 @@
 # Frontend
 
-The frontend provides the user interface for uploading materials, reviewing suggestions, and approving revisions.
+This directory now contains a working Next.js App Router project with Tailwind CSS v4, TypeScript, and ESLint.
 
-## Main Features
+## Run Locally
 
-• Upload lecture materials  
-• View AI-generated improvements  
-• Side-by-side comparison interface  
-• Professor approval workflow  
-• Export improved materials
+```bash
+npm run dev
+```
 
-## Planned Framework
+Open `http://localhost:3000`.
 
-Next.js + React
+## Available Commands
 
-## Key Components
+```bash
+npm run dev
+npm run build
+npm run start
+npm run lint
+```
 
-UploadPanel  
-Handles file uploads.
+## Structure
 
-DiffViewer  
-Displays the original content and AI suggestions.
+- `src/app/` contains the App Router layout, page, and global styles.
+- `public/` contains static assets.
+- `package.json` defines the frontend scripts and dependencies.
 
-ApprovalPanel  
-Allows professors to approve or reject modifications.
+## Next Steps
+
+- Build `UploadPanel`, `DiffViewer`, and `ApprovalPanel` under `src/components/`.
+- Add API integration for upload, review, and approval flows.
+- Expand the starter page into the professor review interface.
