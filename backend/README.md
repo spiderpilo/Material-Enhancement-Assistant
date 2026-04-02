@@ -1,30 +1,51 @@
 # Backend
 
-The backend is responsible for document processing, LLM integration, and textbook retrieval.
+Minimal FastAPI backend for local testing.
 
-## Responsibilities
+## Endpoints
 
-• Document parsing  
-• OCR for images and scanned documents  
-• Textbook ingestion and vector storage  
-• LLM prompt generation and response handling  
-• Suggestion generation  
-• Exporting improved documents  
+- `GET /health`
+- `POST /upload-doc`
 
-## Framework
+`POST /upload-doc` accepts a PDF or DOCX file, extracts text, and sends a short clarity-improvement prompt to Gemini.
 
-FastAPI is used to build the API because of its performance and strong support for Python AI tooling.
+## Local Run
 
-## Core Modules
+From the repository root:
 
-api/  
-Defines API endpoints.
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+cp .env.example .env
+uvicorn app.main:app --reload --app-dir backend
+```
 
-services/  
-Contains core logic such as LLM interaction and document parsing.
+If you already have a repo-root `.env`, keep it and make sure it contains `GOOGLE_GEMINI_API_KEY`.
 
-models/  
-Defines internal data structures.
+## curl Examples
 
-utils/  
-Utility functions used throughout the backend.
+Health check:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+Upload a document:
+
+```bash
+curl -X POST http://127.0.0.1:8000/upload-doc \
+  -F "file=@/absolute/path/to/lecture1.pdf"
+```
+
+Expected success response shape:
+
+```json
+{
+  "filename": "lecture1.pdf",
+  "file_type": "pdf",
+  "text_length": 12345,
+  "preview": "First few hundred characters...",
+  "gemini_response": "Clearer rewrite..."
+}
+```
