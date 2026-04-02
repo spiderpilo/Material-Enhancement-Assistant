@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f5f2ea;
+  --foreground: #1f1b16;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: "Avenir Next", "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", "SF Mono", monospace;
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
