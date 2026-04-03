@@ -1,8 +1,22 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f5f2ea;
-  --foreground: #1f1b16;
+  --background: #f6efe5;
+  --foreground: #201913;
+  --surface: rgba(255, 252, 247, 0.94);
+  --surface-muted: #fbf6ef;
+  --sidebar-surface: rgba(244, 234, 221, 0.86);
+  --line: #eadfce;
+  --line-strong: #dcc4aa;
+  --muted: #a18f7b;
+  --muted-strong: #77695a;
+  --accent: #b96c42;
+  --accent-strong: #9e5730;
+  --accent-soft: #f0d8c7;
+  --shadow-panel: 0 32px 80px -42px rgba(79, 56, 34, 0.32);
+  --shadow-soft: 0 24px 56px -36px rgba(79, 56, 34, 0.28);
+  --shadow-inset: 0 10px 24px -20px rgba(79, 56, 34, 0.35);
+  --shadow-button: 0 18px 36px -22px rgba(152, 87, 48, 0.62);
 }
 
 @theme inline {
@@ -17,7 +31,24 @@ html {
 }
 
 body {
-  background: var(--background);
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.68), transparent 24%),
+    radial-gradient(circle at bottom right, rgba(225, 197, 167, 0.32), transparent 28%),
+    linear-gradient(180deg, #f9f3eb 0%, #f5ede2 100%);
   color: var(--foreground);
   font-family: var(--font-sans);
+}
+
+.uploaded-documents-placeholder {
+  background-color: rgba(255, 255, 255, 0.5);
+  background-image:
+    linear-gradient(
+      135deg,
+      rgba(220, 196, 170, 0.14) 0%,
+      rgba(220, 196, 170, 0) 48%
+    ),
+    radial-gradient(rgba(185, 140, 98, 0.16) 1px, transparent 1px);
+  background-position: center;
+  background-size: auto, 18px 18px;
 }

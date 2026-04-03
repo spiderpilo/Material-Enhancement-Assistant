@@ -1,81 +1,54 @@
+import { FloatingHelpButton } from "@/components/course-content-upload/FloatingHelpButton";
+import { SidebarNav } from "@/components/course-content-upload/SidebarNav";
+import { TopHeader } from "@/components/course-content-upload/TopHeader";
+import { UploadDropzone } from "@/components/course-content-upload/UploadDropzone";
+import { UploadedDocumentsCard } from "@/components/course-content-upload/UploadedDocumentsCard";
+
 export default function Home() {
   return (
     <main className="relative flex-1 overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(20,184,166,0.18),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(249,115,22,0.16),_transparent_28%)]" />
-      <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col px-6 py-10 sm:px-10 lg:px-12">
-        <header className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.28em] text-teal-700">
-              Material Enhancement Assistant
-            </p>
-            <p className="mt-2 text-sm text-stone-600">
-              Next.js 16 + Tailwind CSS 4 starter
-            </p>
-          </div>
-          <div className="rounded-full border border-stone-300/70 bg-white/80 px-4 py-2 text-sm text-stone-700 shadow-sm backdrop-blur">
-            App Router ready
-          </div>
-        </header>
+      <div className="mx-auto flex min-h-screen w-full max-w-[1640px] flex-col gap-5 px-4 py-4 lg:flex-row lg:px-5 lg:py-5">
+        <SidebarNav />
 
-        <section className="grid flex-1 items-center gap-10 py-16 lg:grid-cols-[1.15fr_0.85fr] lg:py-24">
-          <div className="space-y-8">
-            <div className="inline-flex rounded-full border border-teal-200 bg-teal-50 px-4 py-2 text-sm font-medium text-teal-800">
-              Professor review workflow scaffolded
-            </div>
-            <div className="space-y-5">
-              <h1 className="max-w-3xl text-5xl font-semibold tracking-tight text-stone-950 sm:text-6xl">
-                Build the interface for uploading, reviewing, and approving
-                course material revisions.
-              </h1>
-              <p className="max-w-2xl text-lg leading-8 text-stone-600">
-                This frontend is configured with Next.js, TypeScript, ESLint,
-                and Tailwind CSS so the approval experience can be built on top
-                of a clean App Router foundation.
-              </p>
-            </div>
+        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-[32px] border border-[color:var(--line)] bg-[color:var(--surface)] shadow-[var(--shadow-panel)]">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.95),rgba(255,255,255,0))]" />
 
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <code className="rounded-full border border-stone-300 bg-stone-950 px-5 py-3 text-sm font-medium text-stone-50 shadow-sm">
-                npm run dev
-              </code>
-              <code className="rounded-full border border-stone-300 bg-white px-5 py-3 text-sm font-medium text-stone-700 shadow-sm">
-                npm run build
-              </code>
-            </div>
-          </div>
+          <TopHeader />
 
-          <div className="grid gap-4">
-            {[
-              [
-                "Upload materials",
-                "Accept lecture slides, notes, and documents for analysis.",
-              ],
-              [
-                "Compare revisions",
-                "Present original content beside grounded AI suggestions.",
-              ],
-              [
-                "Approve changes",
-                "Keep instructors in control before anything is exported.",
-              ],
-            ].map(([title, description]) => (
-              <article
-                key={title}
-                className="rounded-3xl border border-stone-200/80 bg-white/90 p-6 shadow-[0_20px_60px_-30px_rgba(41,37,36,0.35)] backdrop-blur"
-              >
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-orange-700">
-                  Workflow Step
-                </p>
-                <h2 className="mt-3 text-2xl font-semibold text-stone-950">
-                  {title}
-                </h2>
-                <p className="mt-3 text-base leading-7 text-stone-600">
-                  {description}
-                </p>
-              </article>
-            ))}
+          <div className="relative flex-1 px-5 pb-8 pt-5 sm:px-6 lg:px-10 lg:pb-10 lg:pt-8">
+            <section className="rounded-[32px] border border-[color:var(--line)] bg-[color:var(--surface-muted)] p-6 shadow-[var(--shadow-soft)] sm:p-8 lg:p-10">
+              <div className="flex flex-col gap-8 xl:flex-row xl:items-end xl:justify-between">
+                <div className="max-w-4xl">
+                  <p className="text-sm font-semibold uppercase tracking-[0.24em] text-[color:var(--accent-strong)]">
+                    Course Workspace
+                  </p>
+                  <h1 className="mt-4 text-4xl font-semibold tracking-[-0.05em] text-[color:var(--foreground)] sm:text-5xl xl:text-[3.75rem] xl:leading-[1.05]">
+                    Course Content Upload
+                  </h1>
+                  <p className="mt-4 max-w-3xl text-base leading-8 text-[color:var(--muted-strong)] sm:text-lg">
+                    Upload and organize course materials before analysis. Keep
+                    the review space clean, centralized, and ready for the next
+                    approval step.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-full bg-[color:var(--accent)] px-7 py-4 text-sm font-semibold text-white shadow-[var(--shadow-button)] transition hover:bg-[color:var(--accent-strong)] focus:outline-none focus:ring-4 focus:ring-[color:var(--accent-soft)]"
+                >
+                  Start Analysis
+                </button>
+              </div>
+            </section>
+
+            <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.9fr)]">
+              <UploadDropzone />
+              <UploadedDocumentsCard />
+            </section>
           </div>
-        </section>
+        </div>
+
+        <FloatingHelpButton />
       </div>
     </main>
   );
