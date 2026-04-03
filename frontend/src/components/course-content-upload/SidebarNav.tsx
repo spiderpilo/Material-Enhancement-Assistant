@@ -35,7 +35,7 @@ export function SidebarNav() {
             Material Assistant
           </p>
           <p className="mt-1 text-lg font-semibold text-[color:var(--foreground)]">
-            Sisterhood LMS
+            CURRICULUM UPDATER
           </p>
         </div>
       </div>
