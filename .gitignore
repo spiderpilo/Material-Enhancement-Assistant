@@ -1,1 +1,5 @@
 .env
+/AGENTS.md
+.codex/*
+.gitnexus
+.DS_Store
