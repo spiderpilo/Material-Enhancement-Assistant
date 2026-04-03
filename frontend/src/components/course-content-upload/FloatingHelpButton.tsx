@@ -5,9 +5,9 @@ export function FloatingHelpButton() {
     <button
       type="button"
       aria-label="Open help"
-      className="fixed bottom-6 right-6 z-20 flex h-16 w-16 items-center justify-center rounded-full bg-[linear-gradient(135deg,#c57648,#9f5830)] text-white shadow-[0_24px_48px_-22px_rgba(110,62,31,0.65)] transition hover:scale-[1.02] hover:shadow-[0_30px_55px_-24px_rgba(110,62,31,0.72)] focus:outline-none focus:ring-4 focus:ring-[color:var(--accent-soft)]"
+      className="fixed bottom-5 right-5 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-[color:var(--fab)] text-white shadow-[0_18px_36px_-22px_rgba(85,64,32,0.72)] transition hover:-translate-y-0.5 hover:bg-[#7b602b] focus:outline-none focus:ring-4 focus:ring-[rgba(196,166,106,0.28)]"
     >
-      <HelpCircleIcon className="h-7 w-7" />
+      <HelpCircleIcon className="h-5 w-5" />
     </button>
   );
 }
