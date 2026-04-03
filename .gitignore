@@ -1,0 +1,7 @@
+.env
+.DS_Store
+.codex/*
+.gitnexus/*
+AGENTS.md
+backend/.DS_Store
+frontend/.DS_Store
