@@ -48,7 +48,7 @@ export function SidebarNav() {
               key={label}
               type="button"
               aria-label={label}
-              aria-pressed={isActive}
+              aria-current={isActive ? "page" : undefined}
               className={[
                 "flex h-11 w-11 shrink-0 items-center justify-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-[color:var(--accent-soft)] focus:ring-offset-2 focus:ring-offset-[color:var(--surface-strong)] lg:h-10 lg:w-10",
                 isActive
