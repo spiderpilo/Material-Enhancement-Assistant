@@ -57,7 +57,9 @@ export function UploadDropzone() {
           accept=".pdf,.doc,.docx,.ppt,.pptx,image/*"
           className="sr-only"
           onChange={(event) => {
-            setSelectedCount(event.target.files?.length ?? 0);
+            const fileCount = event.target.files?.length ?? 0;
+            setSelectedCount(fileCount);
+            event.target.value = "";
           }}
         />
       </div>
