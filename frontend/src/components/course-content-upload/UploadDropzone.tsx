@@ -35,7 +35,9 @@ export function UploadDropzone() {
           </button>
           <button
             type="button"
-            className="inline-flex items-center justify-center rounded-2xl bg-[#eae6de] px-6 py-3 text-base font-medium text-[color:var(--foreground)] transition hover:bg-[#e1dbd1] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+            disabled
+            aria-label="Import from Drive (coming soon, currently unavailable)"
+            className="inline-flex cursor-not-allowed items-center justify-center rounded-2xl bg-[#eae6de] px-6 py-3 text-base font-medium text-[color:var(--foreground)] opacity-60 transition disabled:hover:bg-[#eae6de] focus:outline-none"
           >
             Import from Drive
           </button>
