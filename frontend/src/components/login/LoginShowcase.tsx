@@ -7,15 +7,15 @@ import {
 
 const features = [
   {
-    title: "Curriculum planning and revision",
+    title: "Smarter content refinement",
     description:
-      "Streamline updates and academic delivery with structured review cycles.",
+      "Improve lectures and course materials with structured, research-backed suggestions.",
     icon: ClipboardIcon,
   },
   {
-    title: "Real-time academic collaboration",
+    title: "Guided review workflow",
     description:
-      "Work across faculty, assistants, and reviewers without losing context.",
+      "Review, edit, and approve AI-generated improvements side by side.",
     icon: ReviewBubbleIcon,
   },
   {
