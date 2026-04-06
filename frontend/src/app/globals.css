@@ -1,28 +1,34 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f6efe5;
-  --foreground: #201913;
-  --surface: rgba(255, 252, 247, 0.94);
-  --surface-muted: #fbf6ef;
-  --sidebar-surface: rgba(244, 234, 221, 0.86);
-  --line: #eadfce;
-  --line-strong: #dcc4aa;
-  --muted: #a18f7b;
-  --muted-strong: #77695a;
-  --accent: #b96c42;
-  --accent-strong: #9e5730;
-  --accent-soft: #f0d8c7;
-  --shadow-panel: 0 32px 80px -42px rgba(79, 56, 34, 0.32);
-  --shadow-soft: 0 24px 56px -36px rgba(79, 56, 34, 0.28);
-  --shadow-inset: 0 10px 24px -20px rgba(79, 56, 34, 0.35);
-  --shadow-button: 0 18px 36px -22px rgba(152, 87, 48, 0.62);
+  --background: #f5f1ea;
+  --foreground: #2e3230;
+  --surface: #fafaf9;
+  --surface-strong: #ffffff;
+  --surface-subtle: #f7f3ed;
+  --panel: #eae6de;
+  --line: #e7e5e4;
+  --line-strong: #c4c8bc;
+  --muted: #6b7280;
+  --muted-strong: #4a4e4a;
+  --accent: #4a7c59;
+  --accent-strong: #3e6a4c;
+  --accent-soft: rgba(74, 124, 89, 0.14);
+  --chip-bg: rgba(74, 124, 89, 0.12);
+  --chip-text: #4a7c59;
+  --warning-bg: rgba(196, 166, 106, 0.18);
+  --warning-border: rgba(196, 166, 106, 0.35);
+  --warning-text: #554020;
+  --fab: #8a6d32;
+  --shadow-card: 0 18px 40px -32px rgba(41, 37, 36, 0.24);
+  --shadow-soft: 0 10px 24px -20px rgba(41, 37, 36, 0.18);
+  --shadow-button: 0 8px 16px -10px rgba(74, 124, 89, 0.48);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: "Avenir Next", "Segoe UI", sans-serif;
+  --font-sans: var(--font-ui);
   --font-mono: "SFMono-Regular", "SF Mono", monospace;
 }
 
@@ -32,23 +38,14 @@ html {
 
 body {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.68), transparent 24%),
-    radial-gradient(circle at bottom right, rgba(225, 197, 167, 0.32), transparent 28%),
-    linear-gradient(180deg, #f9f3eb 0%, #f5ede2 100%);
+  background: linear-gradient(180deg, #f8f5ef 0%, #f5f1ea 100%);
   color: var(--foreground);
-  font-family: var(--font-sans);
+  font-family: var(--font-ui), "Segoe UI", sans-serif;
 }
 
-.uploaded-documents-placeholder {
-  background-color: rgba(255, 255, 255, 0.5);
-  background-image:
-    linear-gradient(
-      135deg,
-      rgba(220, 196, 170, 0.14) 0%,
-      rgba(220, 196, 170, 0) 48%
-    ),
-    radial-gradient(rgba(185, 140, 98, 0.16) 1px, transparent 1px);
-  background-position: center;
-  background-size: auto, 18px 18px;
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display), Georgia, serif;
 }
