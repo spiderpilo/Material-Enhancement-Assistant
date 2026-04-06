@@ -55,6 +55,49 @@ Open `http://localhost:3000`.
 
 The frontend currently does not require any frontend-specific environment variables, and the checked-in UI is not yet wired to the backend API.
 
+## Docker Development
+
+This repository now includes a Docker Compose setup for local development.
+
+Create a repo-root `.env` file if you want the upload endpoint to call Gemini:
+
+```bash
+cp .env.example .env
+```
+
+Start both services:
+
+```bash
+docker compose up --build
+```
+
+Run the same stack in watch mode:
+
+```bash
+docker compose watch
+```
+
+Available URLs:
+- frontend: `http://localhost:3000`
+- backend API: `http://localhost:8000`
+- backend health check: `http://localhost:8000/health`
+
+Useful commands:
+
+```bash
+docker compose up --build
+docker compose watch
+docker compose down
+docker compose logs -f backend
+docker compose logs -f frontend
+```
+
+Notes:
+- The Compose setup is geared toward development, not production deployment.
+- `docker compose watch` syncs source changes into the running containers.
+- Changing `backend/requirements.txt`, `frontend/package.json`, or `frontend/package-lock.json` triggers a rebuild.
+- Gemini API keys are passed through from your shell or repo-root `.env` via Compose variable expansion.
+
 ## Example Workflow
 
 1. Professor uploads lecture slides or course materials.
