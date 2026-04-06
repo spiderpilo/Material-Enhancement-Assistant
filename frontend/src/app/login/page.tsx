@@ -12,10 +12,10 @@ export const metadata: Metadata = {
 
 export default function LoginPage() {
   return (
-    <main className="min-h-screen bg-[#f3ede4] text-[color:var(--foreground)]">
-      <div className="mx-auto flex min-h-screen w-full max-w-[1180px] flex-col px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+    <main className="min-h-screen bg-[#f3ede4] text-foreground">
+      <div className="mx-auto flex min-h-screen w-full max-w-295 flex-col px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
         <div className="flex flex-1 flex-col justify-center">
-          <div className="overflow-hidden rounded-[24px] border border-[#e4d8c8] bg-[#faf7f2] shadow-[0_28px_80px_-48px_rgba(54,43,31,0.34)]">
+          <div className="overflow-hidden rounded-3xl border border-[#e4d8c8] bg-[#faf7f2] shadow-[0_28px_80px_-48px_rgba(54,43,31,0.34)]">
             <div className="grid lg:grid-cols-[312px_minmax(0,1fr)]">
               <div>
                 <LoginShowcase />
