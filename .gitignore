@@ -5,3 +5,29 @@
 AGENTS.md
 backend/.DS_Store
 frontend/.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Next.js / Node
+node_modules/
+.next/
+out/
+build/
+dist/
+.npm
+.eslintcache
+
+# Project files
+*.log
+.vscode/
+.idea/
