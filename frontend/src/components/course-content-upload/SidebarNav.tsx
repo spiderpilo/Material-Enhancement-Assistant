@@ -1,11 +1,13 @@
 import type { ComponentType, SVGProps } from "react";
 
 import {
-  BrandSparkIcon,
-  ClipboardIcon,
-  FolderStackIcon,
-  HomeIcon,
+  BellIcon,
+  BrandMarkIcon,
+  ExportArrowIcon,
+  GridIcon,
+  ReviewBubbleIcon,
   SettingsIcon,
+  UploadCloudIcon,
 } from "@/components/course-content-upload/icons";
 
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
@@ -17,76 +19,63 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
-  { label: "Dashboard", icon: HomeIcon },
-  { label: "Course Content", icon: FolderStackIcon, isActive: true },
-  { label: "Review Queue", icon: ClipboardIcon },
+  { label: "Dashboard", icon: GridIcon },
+  { label: "Uploads", icon: UploadCloudIcon, isActive: true },
+  { label: "Review Queue", icon: ReviewBubbleIcon },
+  { label: "Exports", icon: ExportArrowIcon },
   { label: "Settings", icon: SettingsIcon },
 ];
 
 export function SidebarNav() {
   return (
-    <aside className="w-full shrink-0 rounded-[30px] border border-[color:var(--line)] bg-[color:var(--sidebar-surface)] p-5 shadow-[var(--shadow-soft)] lg:flex lg:w-[280px] lg:flex-col lg:p-6">
-      <div className="flex items-center gap-4 rounded-[24px] border border-white/70 bg-white/80 p-4 backdrop-blur">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[color:var(--accent-soft)] text-[color:var(--accent-strong)]">
-          <BrandSparkIcon className="h-6 w-6" />
-        </div>
-        <div className="min-w-0">
-          <p className="truncate text-xs font-semibold uppercase tracking-[0.24em] text-[color:var(--muted-strong)]">
-            Material Assistant
-          </p>
-          <p className="mt-1 text-lg font-semibold text-[color:var(--foreground)]">
-            CURRICULUM UPDATER
+    <aside className="shrink-0 border-b border-[color:var(--line)] bg-[color:var(--surface-strong)] lg:min-h-screen lg:w-16 lg:border-b-0 lg:border-r">
+      <div className="flex items-center justify-between gap-4 px-4 py-3 lg:h-full lg:flex-col lg:justify-start lg:px-0 lg:py-0">
+        <div className="flex items-center gap-3 lg:w-full lg:flex-col lg:gap-0">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[color:var(--surface)] text-[color:var(--accent)] lg:h-16 lg:w-full lg:rounded-none lg:border-b lg:border-[color:var(--line)] lg:bg-transparent">
+            <BrandMarkIcon className="h-5 w-5" />
+          </div>
+          <p className="text-sm font-semibold text-[color:var(--foreground)] lg:hidden">
+            Curriculum Updater
           </p>
         </div>
-      </div>
 
-      <nav aria-label="Primary" className="mt-6">
-        <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+        <nav
+          aria-label="Primary"
+          className="flex flex-1 items-center gap-2 overflow-x-auto lg:w-full lg:flex-col lg:gap-5 lg:overflow-visible lg:px-0 lg:py-6"
+        >
           {navItems.map(({ label, icon: Icon, isActive }) => (
-            <li key={label}>
-              <a
-                href="#"
-                aria-current={isActive ? "page" : undefined}
-                className={[
-                  "group flex items-center gap-3 rounded-[20px] border px-4 py-3 text-sm font-medium transition",
-                  isActive
-                    ? "border-[color:var(--line-strong)] bg-white text-[color:var(--foreground)] shadow-[var(--shadow-inset)]"
-                    : "border-transparent bg-transparent text-[color:var(--muted-strong)] hover:border-[color:var(--line)] hover:bg-white/70 hover:text-[color:var(--foreground)]",
-                ].join(" ")}
-              >
-                <span
-                  className={[
-                    "flex h-10 w-10 items-center justify-center rounded-2xl border transition",
-                    isActive
-                      ? "border-[color:var(--accent-soft)] bg-[color:var(--accent-soft)] text-[color:var(--accent-strong)]"
-                      : "border-[color:var(--line)] bg-white/75 text-[color:var(--muted-strong)] group-hover:border-[color:var(--line-strong)]",
-                  ].join(" ")}
-                >
-                  <Icon className="h-5 w-5" />
-                </span>
-                <span className="truncate">{label}</span>
-              </a>
-            </li>
+            <button
+              key={label}
+              type="button"
+              aria-label={label}
+              aria-current={isActive ? "page" : undefined}
+              className={[
+                "flex h-11 w-11 shrink-0 items-center justify-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-[color:var(--accent-soft)] focus:ring-offset-2 focus:ring-offset-[color:var(--surface-strong)] lg:h-10 lg:w-10",
+                isActive
+                  ? "border-[color:var(--accent-soft)] bg-[color:var(--accent-soft)] text-[color:var(--accent)]"
+                  : "border-transparent text-[color:var(--muted-strong)] hover:border-[color:var(--line)] hover:bg-[color:var(--surface)] hover:text-[color:var(--foreground)]",
+              ].join(" ")}
+            >
+              <Icon className="h-5 w-5" />
+            </button>
           ))}
-        </ul>
-      </nav>
+        </nav>
 
-      <div className="mt-6 rounded-[26px] border border-[color:var(--line)] bg-white/90 p-4 shadow-[var(--shadow-soft)] lg:mt-auto">
-        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[color:var(--muted)]">
-          Professor Profile
-        </p>
-        <div className="mt-4 flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#e6c9b1,#c78155)] text-base font-semibold text-white">
-            AC
-          </div>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-[color:var(--foreground)]">
-              Prof. Amelia Carter
-            </p>
-            <p className="truncate text-sm text-[color:var(--muted)]">
-              Curriculum Review Lead
-            </p>
-          </div>
+        <div className="flex items-center gap-2 lg:mb-3 lg:flex-col">
+          <button
+            type="button"
+            aria-label="Notifications"
+            className="flex h-10 w-10 items-center justify-center rounded-full text-[color:var(--muted-strong)] transition hover:bg-[color:var(--surface)] hover:text-[color:var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent-soft)] focus:ring-offset-2 focus:ring-offset-[color:var(--surface-strong)]"
+          >
+            <BellIcon className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="Professor profile"
+            className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border-2 border-[color:var(--line)] bg-[color:var(--accent)] text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:border-[color:var(--line-strong)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent-soft)] focus:ring-offset-2 focus:ring-offset-[color:var(--surface-strong)]"
+          >
+            DS
+          </button>
         </div>
       </div>
     </aside>

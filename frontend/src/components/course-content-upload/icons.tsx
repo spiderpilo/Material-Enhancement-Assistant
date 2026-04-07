@@ -123,3 +123,93 @@ export function HelpCircleIcon(props: IconProps) {
     </IconBase>
   );
 }
+
+export function BrandMarkIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="m4 8.5 8-4.5 8 4.5-8 4.5-8-4.5Z" />
+      <path d="M4 8.5v7L12 20" />
+      <path d="M20 8.5v7L12 20" />
+    </IconBase>
+  );
+}
+
+export function ReviewBubbleIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M5 6.25A2.25 2.25 0 0 1 7.25 4h9.5A2.25 2.25 0 0 1 19 6.25v6.5A2.25 2.25 0 0 1 16.75 15H10l-4 4v-4H7.25A2.25 2.25 0 0 1 5 12.75Z" />
+      <path d="M9 8.75h6" />
+      <path d="M9 11.5h4.5" />
+    </IconBase>
+  );
+}
+
+export function ExportArrowIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M12 3.75v11" />
+      <path d="m8.25 7.5 3.75-3.75 3.75 3.75" />
+      <path d="M5.5 14.75v3A1.75 1.75 0 0 0 7.25 19.5h9.5a1.75 1.75 0 0 0 1.75-1.75v-3" />
+    </IconBase>
+  );
+}
+
+export function ChevronDownIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="m6.75 9.5 5.25 5 5.25-5" />
+    </IconBase>
+  );
+}
+
+export function StartAnalysisIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect x="4.5" y="4.5" width="15" height="15" rx="2.5" />
+      <path d="M8.25 8.5h3.5" />
+      <path d="M8.25 12h7.5" />
+      <path d="M8.25 15.5h4.5" />
+      <path d="m15.25 8.5 1.5 1.5-1.5 1.5" />
+    </IconBase>
+  );
+}
+
+export function InfoCircleIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 10.25v4.5" />
+      <path d="M12 7.5h.01" />
+    </IconBase>
+  );
+}
+
+export function EmptyDocumentsIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M5.5 5.75A1.75 1.75 0 0 1 7.25 4h6.25l4.25 4.25v9.5a1.75 1.75 0 0 1-1.75 1.75h-8.75A1.75 1.75 0 0 1 5.5 17.75Z" />
+      <path d="M13.5 4v4.25h4.25" />
+      <path d="M8.5 11.25h6.5" />
+      <path d="M8.5 14.5h4.5" />
+    </IconBase>
+  );
+}
+
+export function CloseSmallIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="m8 8 8 8" />
+      <path d="m16 8-8 8" />
+    </IconBase>
+  );
+}
+
+export function CourseStackIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="m4.5 8 7.5-4 7.5 4-7.5 4-7.5-4Z" />
+      <path d="m7 11.5 5 2.75 5-2.75" />
+      <path d="m7 15 5 2.75 5-2.75" />
+    </IconBase>
+  );
+}
