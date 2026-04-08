@@ -31,3 +31,4 @@ dist/
 *.log
 .vscode/
 .idea/
+next-env.d.ts

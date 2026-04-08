@@ -30,7 +30,7 @@ SUPABASE_STORAGE_BUCKET=course-contents
 BACKEND_CORS_ORIGINS=http://127.0.0.1:3000,http://localhost:3000
 ```
 
-`access_url` stores the stable Supabase object URL written to `course_contents`. It is not a signed URL.
+`SUPABASE_STORAGE_BUCKET` must reference a public bucket. `access_url` stores the stable public object URL written to `course_contents`. It is not a signed URL.
 If `BACKEND_CORS_ORIGINS` is unset, the backend allows local frontend origins on port `3000` by default.
 
 ## Docker Run
@@ -73,7 +73,7 @@ Expected success response shape:
 {
   "id": 1,
   "material_name": "lecture1.pdf",
-  "access_url": "https://your-project.supabase.co/storage/v1/object/course-contents/course-contents/uuid/lecture1.pdf",
+  "access_url": "https://your-project.supabase.co/storage/v1/object/public/course-contents/course-contents/uuid/lecture1.pdf",
   "data_size": 12345
 }
 ```

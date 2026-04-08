@@ -26,6 +26,12 @@ def upload_course_content(*, filename: str, file_bytes: bytes) -> CourseContentR
     except ValueError as exc:
         raise MissingSupabaseConfigError(str(exc)) from exc
 
+    _ensure_bucket_is_public(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        bucket=settings.storage_bucket,
+    )
+
     storage_path = _build_storage_path(filename)
     content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
@@ -167,10 +173,45 @@ def _build_storage_endpoint(*, url: str, bucket: str, storage_path: str) -> str:
     return f"{url.rstrip('/')}/storage/v1/object/{quoted_bucket}/{quoted_path}"
 
 
+def _ensure_bucket_is_public(*, url: str, service_role_key: str, bucket: str) -> None:
+    bucket_details = _get_bucket_details(
+        url=url,
+        service_role_key=service_role_key,
+        bucket=bucket,
+    )
+
+    if bucket_details.get("public") is True:
+        return
+
+    raise SupabaseServiceError(
+        f"Supabase bucket '{bucket}' must be public to persist a stable access_url."
+    )
+
+
+def _get_bucket_details(*, url: str, service_role_key: str, bucket: str) -> dict[str, Any]:
+    quoted_bucket = parse.quote(bucket, safe="")
+    response_body = _send_request(
+        endpoint=f"{url.rstrip('/')}/storage/v1/bucket/{quoted_bucket}",
+        method="GET",
+        headers=_build_auth_headers(service_role_key),
+        expected_statuses={200},
+    )
+
+    try:
+        payload = json.loads(response_body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SupabaseServiceError("Supabase returned unreadable bucket details.") from exc
+
+    if not isinstance(payload, dict):
+        raise SupabaseServiceError("Supabase returned unexpected bucket details.")
+
+    return payload
+
+
 def _build_object_url(*, url: str, bucket: str, storage_path: str) -> str:
     quoted_bucket = parse.quote(bucket, safe="")
     quoted_path = parse.quote(storage_path, safe="/")
-    return f"{url.rstrip('/')}/storage/v1/object/{quoted_bucket}/{quoted_path}"
+    return f"{url.rstrip('/')}/storage/v1/object/public/{quoted_bucket}/{quoted_path}"
 
 
 def _send_request(
