@@ -33,10 +33,10 @@ const optionLabels: Array<{
   key: AnalysisOptionKey;
   label: string;
 }> = [
-  { key: "studyGuide", label: "Auto-generate study guide" },
-  { key: "terminology", label: "Extract key terminology" },
-  { key: "quiz", label: "Generate practice quiz" },
-];
+    { key: "studyGuide", label: "Auto-generate study guide" },
+    { key: "terminology", label: "Extract key terminology" },
+    { key: "quiz", label: "Generate practice quiz" },
+  ];
 
 export function MetadataPanel() {
   const [formState, setFormState] = useState<MetadataFormState>({
@@ -69,8 +69,8 @@ export function MetadataPanel() {
   }
 
   return (
-    <aside className="rounded-[24px] bg-[color:var(--panel)] p-6 shadow-[var(--shadow-soft)]">
-      <h2 className="font-[family:var(--font-display)] text-[1.75rem] font-semibold tracking-[-0.04em] text-[color:var(--foreground)]">
+    <aside className="rounded-3xl bg-(--panel) p-6 shadow-(--shadow-soft)">
+      <h2 className="text-[1.75rem] font-semibold tracking-[-0.04em] text-foreground">
         Metadata Context
       </h2>
 
@@ -78,12 +78,12 @@ export function MetadataPanel() {
         <div>
           <label
             htmlFor="course-name"
-            className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--muted-strong)]"
+            className="text-xs font-semibold uppercase tracking-[0.16em] text-(--muted-strong)"
           >
             Course Name
           </label>
           <div className="relative mt-2">
-            <CourseStackIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--muted)]" />
+            <CourseStackIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-(--muted)" />
             <input
               id="course-name"
               type="text"
@@ -94,7 +94,7 @@ export function MetadataPanel() {
                   courseName: event.target.value,
                 }));
               }}
-              className="h-12 w-full rounded-2xl border border-[color:var(--line-strong)] bg-white pl-11 pr-4 text-sm text-[color:var(--foreground)] outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+              className="h-12 w-full rounded-2xl border border-(--line-strong) bg-white pl-11 pr-4 text-sm text-foreground outline-none transition focus:border-(--accent) focus:ring-2 focus:ring-(--accent-soft)"
             />
           </div>
         </div>
@@ -102,12 +102,12 @@ export function MetadataPanel() {
         <div>
           <label
             htmlFor="lecture-title"
-            className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--muted-strong)]"
+            className="text-xs font-semibold uppercase tracking-[0.16em] text-(--muted-strong)"
           >
             Lecture Title
           </label>
           <div className="relative mt-2">
-            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-base font-semibold text-[color:var(--muted)]">
+            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-base font-semibold text-(--muted)">
               T
             </span>
             <input
@@ -121,7 +121,7 @@ export function MetadataPanel() {
                   lectureTitle: event.target.value,
                 }));
               }}
-              className="h-12 w-full rounded-2xl border border-[color:var(--line-strong)] bg-white pl-11 pr-4 text-sm text-[color:var(--foreground)] outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+              className="h-12 w-full rounded-2xl border border-(--line-strong) bg-white pl-11 pr-4 text-sm text-foreground outline-none transition placeholder:text-(--muted) focus:border-(--accent) focus:ring-2 focus:ring-(--accent-soft)"
             />
           </div>
         </div>
@@ -130,7 +130,7 @@ export function MetadataPanel() {
           <div>
             <label
               htmlFor="week"
-              className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--muted-strong)]"
+              className="text-xs font-semibold uppercase tracking-[0.16em] text-(--muted-strong)"
             >
               Week
             </label>
@@ -144,7 +144,7 @@ export function MetadataPanel() {
                     week: event.target.value,
                   }));
                 }}
-                className="h-12 w-full appearance-none rounded-2xl border border-[color:var(--line-strong)] bg-white px-4 pr-10 text-sm text-[color:var(--foreground)] outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+                className="h-12 w-full appearance-none rounded-2xl border border-(--line-strong) bg-white px-4 pr-10 text-sm text-foreground outline-none transition focus:border-(--accent) focus:ring-2 focus:ring-(--accent-soft)"
               >
                 {weekOptions.map((week) => (
                   <option key={week} value={week}>
@@ -152,14 +152,14 @@ export function MetadataPanel() {
                   </option>
                 ))}
               </select>
-              <ChevronDownIcon className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--muted)]" />
+              <ChevronDownIcon className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-(--muted)" />
             </div>
           </div>
 
           <div>
             <label
               htmlFor="topic"
-              className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--muted-strong)]"
+              className="text-xs font-semibold uppercase tracking-[0.16em] text-(--muted-strong)"
             >
               Topic
             </label>
@@ -173,7 +173,7 @@ export function MetadataPanel() {
                     topic: event.target.value,
                   }));
                 }}
-                className="h-12 w-full appearance-none rounded-2xl border border-[color:var(--line-strong)] bg-white px-4 pr-10 text-sm text-[color:var(--foreground)] outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+                className="h-12 w-full appearance-none rounded-2xl border border-(--line-strong) bg-white px-4 pr-10 text-sm text-foreground outline-none transition focus:border-(--accent) focus:ring-2 focus:ring-(--accent-soft)"
               >
                 {topicOptions.map((topic) => (
                   <option key={topic} value={topic}>
@@ -181,7 +181,7 @@ export function MetadataPanel() {
                   </option>
                 ))}
               </select>
-              <ChevronDownIcon className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--muted)]" />
+              <ChevronDownIcon className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-(--muted)" />
             </div>
           </div>
         </div>
@@ -189,7 +189,7 @@ export function MetadataPanel() {
         <div>
           <label
             htmlFor="keyword-input"
-            className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--muted-strong)]"
+            className="text-xs font-semibold uppercase tracking-[0.16em] text-(--muted-strong)"
           >
             Keywords
           </label>
@@ -204,7 +204,7 @@ export function MetadataPanel() {
                     keywords: current.keywords.filter((item) => item !== keyword),
                   }));
                 }}
-                className="inline-flex items-center gap-1 rounded-lg bg-[color:var(--chip-bg)] px-2.5 py-1 text-[0.6875rem] font-semibold text-[color:var(--chip-text)] transition hover:bg-[rgba(74,124,89,0.18)]"
+                className="inline-flex items-center gap-1 rounded-lg bg-(--chip-bg) px-2.5 py-1 text-[0.6875rem] font-semibold text-(--chip-text) transition hover:bg-(rgba(74,124,89,0.18))"
               >
                 <span>{keyword}</span>
                 <CloseSmallIcon className="h-3 w-3" />
@@ -229,7 +229,7 @@ export function MetadataPanel() {
                 addKeyword();
               }
             }}
-            className="mt-2 h-10 w-full border border-[color:var(--line-strong)] bg-transparent px-4 text-sm text-[color:var(--foreground)] outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+            className="mt-2 h-10 w-full border border-(--line-strong) bg-transparent px-4 text-sm text-foreground outline-none transition placeholder:text-(--muted) focus:border-(--accent) focus:ring-2 focus:ring-(--accent-soft)"
           />
         </div>
       </div>
@@ -242,7 +242,7 @@ export function MetadataPanel() {
             return (
               <label
                 key={key}
-                className="flex cursor-pointer items-center gap-3 text-sm text-[color:var(--foreground)]"
+                className="flex cursor-pointer items-center gap-3 text-sm text-foreground"
               >
                 <input
                   type="checkbox"
@@ -260,10 +260,10 @@ export function MetadataPanel() {
                 />
                 <span
                   className={[
-                    "flex h-[18px] w-[18px] items-center justify-center rounded-full border transition",
+                    "flex h-4.5 w-4.5 items-center justify-center rounded-full border transition",
                     checked
-                      ? "border-[color:var(--accent)] bg-[color:var(--accent)] text-white"
-                      : "border-[color:var(--line-strong)] bg-white text-transparent",
+                      ? "border-(--accent) bg-(--accent) text-white"
+                      : "border-(--line-strong) bg-white text-transparent",
                   ].join(" ")}
                 >
                   <svg
@@ -288,7 +288,7 @@ export function MetadataPanel() {
         </div>
       </div>
 
-      <div className="mt-6 rounded-2xl border border-[color:var(--warning-border)] bg-[color:var(--warning-bg)] px-4 py-3 text-[color:var(--warning-text)]">
+      <div className="mt-6 rounded-2xl border border-(--warning-border) bg-(--warning-bg) px-4 py-3 text-(--warning-text)">
         <div className="flex items-start gap-3">
           <InfoCircleIcon className="mt-0.5 h-5 w-5 shrink-0" />
           <p className="text-xs leading-6">

@@ -67,94 +67,98 @@ export function UploadedDocumentsCard({
 
       {hasItems ? (
         <ul className="mt-6 space-y-3">
-          {items?.map((item) => (
-            <li
-              key={item.id}
-              className={[
-                "rounded-[18px] border bg-(--surface-subtle) px-4 py-4 shadow-(--shadow-soft)",
-                item.status === "error"
-                  ? "border-[rgba(185,77,67,0.28)]"
-                  : "border-(--line)",
-              ].join(" ")}
-            >
-              <div className="flex items-start gap-4">
-                <div
-                  className={[
-                    "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-xs font-bold tracking-[0.12em]",
-                    item.status === "error"
-                      ? "bg-[rgba(185,77,67,0.12)] text-[#9d4037]"
-                      : "bg-(--accent-soft) text-(--accent)",
-                  ].join(" ")}
-                >
-                  {getFileExtension(item.fileName)}
-                </div>
+          {items?.map((item) => {
+            const showProgress = item.status !== "success";
 
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-foreground sm:text-base">
-                        {item.fileName}
-                      </p>
-                      <p className="mt-1 text-sm text-(--muted)">
-                        {item.status === "error"
-                          ? item.errorMessage ?? "Upload failed."
-                          : `${statusLabels[item.status]} • ${formatFileSize(item.fileSize)}`}
-                      </p>
-                    </div>
-
-                    <div className="flex shrink-0 items-center gap-3">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-(--muted)">
-                        {item.status === "error"
-                          ? "Needs attention"
-                          : formatFileSize(item.fileSize)}
-                      </p>
-                      <span
-                        className={[
-                          "inline-flex items-center rounded-full px-2.5 py-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em]",
-                          statusAccentClasses[item.status],
-                        ].join(" ")}
-                      >
-                        {statusLabels[item.status]}
-                      </span>
-                    </div>
+            return (
+              <li
+                key={item.id}
+                className={[
+                  "rounded-[18px] border bg-(--surface-subtle) px-4 py-4 shadow-(--shadow-soft)",
+                  item.status === "error"
+                    ? "border-[rgba(185,77,67,0.28)]"
+                    : "border-(--line)",
+                ].join(" ")}
+              >
+                <div className="flex items-start gap-4">
+                  <div
+                    className={[
+                      "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-xs font-bold tracking-[0.12em]",
+                      item.status === "error"
+                        ? "bg-[rgba(185,77,67,0.12)] text-[#9d4037]"
+                        : "bg-(--accent-soft) text-(--accent)",
+                    ].join(" ")}
+                  >
+                    {getFileExtension(item.fileName)}
                   </div>
 
-                  <div className="mt-4">
-                    <div className="h-2 overflow-hidden rounded-full bg-[#ddd7cc]">
-                      <div
-                        className={[
-                          "h-full rounded-full transition-[width] duration-300 ease-out",
-                          progressBarClasses[item.status],
-                        ].join(" ")}
-                        style={{ width: `${item.progress}%` }}
-                      />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-foreground sm:text-base">
+                          {item.fileName}
+                        </p>
+                        <p className="mt-1 text-sm text-(--muted)">
+                          {item.status === "error"
+                            ? item.errorMessage ?? "Upload failed."
+                            : `${statusLabels[item.status]} • ${formatFileSize(item.fileSize)}`}
+                        </p>
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-3">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-(--muted)">
+                          {item.status === "error"
+                            ? "Needs attention"
+                            : formatFileSize(item.fileSize)}
+                        </p>
+                        <span
+                          className={[
+                            "inline-flex items-center rounded-full px-2.5 py-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em]",
+                            statusAccentClasses[item.status],
+                          ].join(" ")}
+                        >
+                          {statusLabels[item.status]}
+                        </span>
+                      </div>
                     </div>
 
-                    <div className="mt-2 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.16em]">
-                      <span className="text-(--muted)">
-                        {item.status === "success"
-                          ? "Uploaded to backend"
-                          : item.status === "error"
-                            ? "Upload failed"
-                            : item.status === "queued"
-                              ? "Waiting to upload"
-                              : "Uploading now"}
-                      </span>
-                      <span
-                        className={
-                          item.status === "error"
-                            ? "text-[#9d4037]"
-                            : "text-(--muted-strong)"
-                        }
-                      >
-                        {item.progress}%
-                      </span>
-                    </div>
+                    {showProgress ? (
+                      <div className="mt-4">
+                        <div className="h-2 overflow-hidden rounded-full bg-[#ddd7cc]">
+                          <div
+                            className={[
+                              "h-full rounded-full transition-[width] duration-300 ease-out",
+                              progressBarClasses[item.status],
+                            ].join(" ")}
+                            style={{ width: `${item.progress}%` }}
+                          />
+                        </div>
+
+                        <div className="mt-2 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.16em]">
+                          <span className="text-(--muted)">
+                            {item.status === "error"
+                              ? "Upload failed"
+                              : item.status === "queued"
+                                ? "Waiting to upload"
+                                : "Uploading now"}
+                          </span>
+                          <span
+                            className={
+                              item.status === "error"
+                                ? "text-[#9d4037]"
+                                : "text-(--muted-strong)"
+                            }
+                          >
+                            {item.progress}%
+                          </span>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       ) : (
         <div className="mt-6 flex flex-1 items-center justify-center rounded-[20px] border border-dashed border-(--line-strong) bg-(--surface-subtle) p-8">
