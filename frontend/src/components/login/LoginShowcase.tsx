@@ -52,7 +52,7 @@ export function LoginShowcase() {
           </span>
         </div>
 
-        <p className="mt-5 max-w-[220px] text-sm leading-6 text-white/80">
+        <p className="mt-5 max-w-[320px] text-sm leading-6 text-white/80">
           Supporting curriculum development through structured, research-informed
           academic planning.
         </p>

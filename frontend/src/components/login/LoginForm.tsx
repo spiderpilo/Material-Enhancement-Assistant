@@ -15,17 +15,17 @@ export function LoginForm() {
           Welcome Back
         </h1>
         <p className="text-center mt-2 text-sm leading-6 text-[#7c776f]">
-          Sign in to access your academic curriculum management portal.
+          Sign in to access your account.
         </p>
 
         <form className="mt-8 space-y-4">
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.08em] text-[#625d56]">
-              Username
+              Email or Username
             </span>
             <input
               type="text"
-              placeholder="Enter your username"
+              placeholder="Enter your email or username"
               className="h-12 w-full rounded-[12px] border border-[#eee7db] bg-[#f4efe8] px-4 text-sm text-[#2f322d] outline-none transition placeholder:text-[#b0a79b] focus:border-[#5d8960] focus:bg-white focus:ring-4 focus:ring-[rgba(93,137,96,0.12)]"
             />
           </label>
@@ -56,7 +56,7 @@ export function LoginForm() {
             type="submit"
             className="inline-flex h-12 w-full items-center justify-center rounded-[10px] bg-[#5a8a5e] text-sm font-semibold text-white shadow-[0_14px_28px_-18px_rgba(90,138,94,0.8)] transition hover:bg-[#4f7b53] focus:outline-none focus:ring-4 focus:ring-[rgba(90,138,94,0.18)]"
           >
-            Login
+            Sign In
           </button>
         </form>
 
@@ -97,9 +97,9 @@ export function LoginForm() {
         </div>
 
         <p className="mt-5 text-center text-[11px] text-[#90897f]">
-          New to the institution?{" "}
+          Don&apos;t have an account?{" "}
           <Link href="#" className="text-[#5a8a5e] transition hover:text-[#4f7b53]">
-            Request Access
+            Create account
           </Link>
         </p>
       </div>
