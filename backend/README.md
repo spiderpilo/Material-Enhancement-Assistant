@@ -27,9 +27,11 @@ If you already have a repo-root `.env`, keep it and make sure it contains:
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SUPABASE_STORAGE_BUCKET=course-contents
+BACKEND_CORS_ORIGINS=http://127.0.0.1:3000,http://localhost:3000
 ```
 
 `access_url` stores the stable Supabase object URL written to `course_contents`. It is not a signed URL.
+If `BACKEND_CORS_ORIGINS` is unset, the backend allows local frontend origins on port `3000` by default.
 
 ## Docker Run
 

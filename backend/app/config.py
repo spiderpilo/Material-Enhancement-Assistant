@@ -14,6 +14,10 @@ GEMINI_ENV_VARS = (
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
 )
+DEFAULT_BACKEND_CORS_ORIGINS = (
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
+)
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,20 @@ def get_supabase_settings() -> SupabaseSettings:
         service_role_key=_get_required_env("SUPABASE_SERVICE_ROLE_KEY"),
         storage_bucket=_get_required_env("SUPABASE_STORAGE_BUCKET"),
     )
+
+
+def get_cors_origins() -> list[str]:
+    configured_origins = os.getenv("BACKEND_CORS_ORIGINS")
+    if not configured_origins:
+        return list(DEFAULT_BACKEND_CORS_ORIGINS)
+
+    parsed_origins = [
+        origin.strip().rstrip("/")
+        for origin in configured_origins.split(",")
+        if origin.strip()
+    ]
+
+    return parsed_origins or list(DEFAULT_BACKEND_CORS_ORIGINS)
 
 
 def _get_required_env(env_var: str) -> str:
