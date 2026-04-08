@@ -29,6 +29,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <body
+        suppressHydrationWarning
         className={`${uiFont.variable} ${displayFont.variable} flex min-h-full flex-col`}
       >
         {children}
