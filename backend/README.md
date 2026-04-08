@@ -14,14 +14,33 @@ Minimal FastAPI backend for local testing.
 From the repository root:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv backend/.venv
+source backend/.venv/bin/activate
 pip install -r backend/requirements.txt
 cp .env.example .env
 uvicorn app.main:app --reload --app-dir backend
 ```
 
 If you already have a repo-root `.env`, keep it and make sure it contains `GOOGLE_GEMINI_API_KEY`.
+
+## Docker Run
+
+From the repository root:
+
+```bash
+cp .env.example .env
+docker compose up --build backend
+```
+
+The backend will be available at `http://127.0.0.1:8000`.
+
+To run the backend in watch mode:
+
+```bash
+docker compose watch backend
+```
+
+Compose passes `GOOGLE_GEMINI_API_KEY`, `GEMINI_API_KEY`, and `GOOGLE_API_KEY` through from your shell or repo-root `.env`.
 
 ## curl Examples
 
