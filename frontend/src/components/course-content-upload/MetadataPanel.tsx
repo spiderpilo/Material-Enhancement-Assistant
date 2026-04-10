@@ -69,7 +69,7 @@ export function MetadataPanel() {
   }
 
   return (
-    <aside className="rounded-[24px] bg-[color:var(--panel)] p-6 shadow-[var(--shadow-soft)]">
+    <aside className="rounded-[24px] border border-[color:var(--line)] bg-[linear-gradient(180deg,rgba(255,253,249,0.9),rgba(201,195,189,0.54)_58%,rgba(244,139,154,0.12)_120%)] p-6 shadow-[var(--shadow-soft)] backdrop-blur-sm">
       <h2 className="font-[family:var(--font-display)] text-[1.75rem] font-semibold tracking-[-0.04em] text-[color:var(--foreground)]">
         Metadata Context
       </h2>
@@ -83,7 +83,7 @@ export function MetadataPanel() {
             Course Name
           </label>
           <div className="relative mt-2">
-            <CourseStackIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--muted)]" />
+            <CourseStackIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--secondary-text)]" />
             <input
               id="course-name"
               type="text"
@@ -94,7 +94,7 @@ export function MetadataPanel() {
                   courseName: event.target.value,
                 }));
               }}
-              className="h-12 w-full rounded-2xl border border-[color:var(--line-strong)] bg-white pl-11 pr-4 text-sm text-[color:var(--foreground)] outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+              className="h-12 w-full rounded-2xl border border-[color:var(--line-strong)] bg-[rgba(255,253,249,0.96)] pl-11 pr-4 text-sm text-[color:var(--foreground)] outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
             />
           </div>
         </div>
@@ -107,7 +107,7 @@ export function MetadataPanel() {
             Lecture Title
           </label>
           <div className="relative mt-2">
-            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-base font-semibold text-[color:var(--muted)]">
+            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-base font-semibold text-[color:var(--secondary-text)]">
               T
             </span>
             <input
@@ -121,7 +121,7 @@ export function MetadataPanel() {
                   lectureTitle: event.target.value,
                 }));
               }}
-              className="h-12 w-full rounded-2xl border border-[color:var(--line-strong)] bg-white pl-11 pr-4 text-sm text-[color:var(--foreground)] outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+              className="h-12 w-full rounded-2xl border border-[color:var(--line-strong)] bg-[rgba(255,253,249,0.96)] pl-11 pr-4 text-sm text-[color:var(--foreground)] outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
             />
           </div>
         </div>
@@ -144,7 +144,7 @@ export function MetadataPanel() {
                     week: event.target.value,
                   }));
                 }}
-                className="h-12 w-full appearance-none rounded-2xl border border-[color:var(--line-strong)] bg-white px-4 pr-10 text-sm text-[color:var(--foreground)] outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+                className="h-12 w-full appearance-none rounded-2xl border border-[color:var(--line-strong)] bg-[rgba(255,253,249,0.96)] px-4 pr-10 text-sm text-[color:var(--foreground)] outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
               >
                 {weekOptions.map((week) => (
                   <option key={week} value={week}>
@@ -152,7 +152,7 @@ export function MetadataPanel() {
                   </option>
                 ))}
               </select>
-              <ChevronDownIcon className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--muted)]" />
+              <ChevronDownIcon className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--secondary-text)]" />
             </div>
           </div>
 
@@ -173,7 +173,7 @@ export function MetadataPanel() {
                     topic: event.target.value,
                   }));
                 }}
-                className="h-12 w-full appearance-none rounded-2xl border border-[color:var(--line-strong)] bg-white px-4 pr-10 text-sm text-[color:var(--foreground)] outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+                className="h-12 w-full appearance-none rounded-2xl border border-[color:var(--line-strong)] bg-[rgba(255,253,249,0.96)] px-4 pr-10 text-sm text-[color:var(--foreground)] outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
               >
                 {topicOptions.map((topic) => (
                   <option key={topic} value={topic}>
@@ -181,7 +181,7 @@ export function MetadataPanel() {
                   </option>
                 ))}
               </select>
-              <ChevronDownIcon className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--muted)]" />
+              <ChevronDownIcon className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--secondary-text)]" />
             </div>
           </div>
         </div>
@@ -204,7 +204,7 @@ export function MetadataPanel() {
                     keywords: current.keywords.filter((item) => item !== keyword),
                   }));
                 }}
-                className="inline-flex items-center gap-1 rounded-lg bg-[color:var(--chip-bg)] px-2.5 py-1 text-[0.6875rem] font-semibold text-[color:var(--chip-text)] transition hover:bg-[rgba(74,124,89,0.18)]"
+                className="inline-flex items-center gap-1 rounded-lg bg-[color:var(--chip-bg)] px-2.5 py-1 text-[0.6875rem] font-semibold text-[color:var(--chip-text)] transition hover:bg-[color:var(--accent-surface)]"
               >
                 <span>{keyword}</span>
                 <CloseSmallIcon className="h-3 w-3" />
@@ -234,7 +234,7 @@ export function MetadataPanel() {
         </div>
       </div>
 
-      <div className="mt-6 border-t border-[rgba(196,200,188,0.45)] pt-6">
+      <div className="mt-6 border-t border-[color:var(--line)] pt-6">
         <div className="space-y-4">
           {optionLabels.map(({ key, label }) => {
             const checked = formState.options[key];
@@ -263,7 +263,7 @@ export function MetadataPanel() {
                     "flex h-[18px] w-[18px] items-center justify-center rounded-full border transition",
                     checked
                       ? "border-[color:var(--accent)] bg-[color:var(--accent)] text-white"
-                      : "border-[color:var(--line-strong)] bg-white text-transparent",
+                      : "border-[color:var(--line-strong)] bg-[rgba(255,253,249,0.94)] text-transparent",
                   ].join(" ")}
                 >
                   <svg

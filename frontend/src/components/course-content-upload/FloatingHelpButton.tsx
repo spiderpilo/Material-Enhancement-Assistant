@@ -5,7 +5,7 @@ export function FloatingHelpButton() {
     <button
       type="button"
       aria-label="Open help"
-      className="fixed bottom-5 right-5 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-[color:var(--fab)] text-white shadow-[0_18px_36px_-22px_rgba(85,64,32,0.72)] transition hover:-translate-y-0.5 hover:bg-[#7b602b] focus:outline-none focus:ring-4 focus:ring-[rgba(196,166,106,0.28)]"
+      className="fixed bottom-5 right-5 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--accent),#5CA484)] text-white shadow-[var(--shadow-button)] transition hover:-translate-y-0.5 hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-[color:var(--accent-soft)]"
     >
       <HelpCircleIcon className="h-5 w-5" />
     </button>
