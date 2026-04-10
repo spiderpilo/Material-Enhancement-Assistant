@@ -47,6 +47,15 @@ export function BellIcon(props: IconProps) {
   );
 }
 
+export function ClockIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.75v4.5l3 1.75" />
+    </IconBase>
+  );
+}
+
 export function GridIcon(props: IconProps) {
   return (
     <IconBase {...props}>
@@ -106,10 +115,9 @@ export function SettingsIcon(props: IconProps) {
 export function UploadCloudIcon(props: IconProps) {
   return (
     <IconBase {...props}>
-      <path d="M7.25 18.5h8.5a4 4 0 0 0 .85-7.9A5.75 5.75 0 0 0 5.9 8.85 3.75 3.75 0 0 0 7.25 18.5Z" />
-      <path d="m12 8.75 3.25 3.25" />
-      <path d="m12 8.75-3.25 3.25" />
-      <path d="M12 8.75v8" />
+      <path d="M16 16l-4-4-4 4" />
+      <path d="M12 12v9" />
+      <path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 16.25" />
     </IconBase>
   );
 }

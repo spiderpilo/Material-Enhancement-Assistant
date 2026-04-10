@@ -9,9 +9,9 @@ export function UploadDropzone() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   return (
-    <section className="rounded-[24px] border-2 border-dashed border-[color:var(--line-strong)] bg-[color:var(--surface-subtle)] px-6 py-10 sm:px-8 sm:py-12">
+    <section className="rounded-[24px] border-2 border-dashed border-[color:var(--line-strong)] bg-[linear-gradient(180deg,rgba(255,253,249,0.88),rgba(237,244,239,0.94))] px-6 py-10 shadow-[var(--shadow-soft)] sm:px-8 sm:py-12">
       <div className="mx-auto flex max-w-[420px] flex-col items-center text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[color:var(--accent-soft)] text-[color:var(--accent)]">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[color:var(--secondary-surface)] text-[color:var(--secondary-text)]">
           <UploadCloudIcon className="h-8 w-8" />
         </div>
 
@@ -29,7 +29,7 @@ export function UploadDropzone() {
             onClick={() => {
               inputRef.current?.click();
             }}
-            className="inline-flex cursor-pointer items-center justify-center rounded-2xl bg-[#eae6de] px-6 py-3 text-base font-medium text-[color:var(--foreground)] transition hover:bg-[#e1dbd1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-soft)]"
+            className="inline-flex cursor-pointer items-center justify-center rounded-2xl border border-[color:var(--line)] bg-[color:var(--surface-strong)] px-6 py-3 text-base font-medium text-[color:var(--foreground)] transition hover:border-[color:var(--line-strong)] hover:bg-[color:var(--accent-surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-soft)]"
           >
             Browse Files
           </button>
@@ -37,7 +37,7 @@ export function UploadDropzone() {
             type="button"
             disabled
             aria-label="Import from Drive (coming soon, currently unavailable)"
-            className="inline-flex cursor-not-allowed items-center justify-center rounded-2xl bg-[#eae6de] px-6 py-3 text-base font-medium text-[color:var(--foreground)] opacity-60 transition disabled:hover:bg-[#eae6de] focus:outline-none"
+            className="inline-flex cursor-not-allowed items-center justify-center rounded-2xl border border-[color:var(--line)] bg-[rgba(201,195,189,0.34)] px-6 py-3 text-base font-medium text-[color:var(--foreground)] opacity-60 transition disabled:hover:bg-[rgba(201,195,189,0.34)] focus:outline-none"
           >
             Import from Drive
           </button>
