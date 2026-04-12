@@ -6,8 +6,11 @@ Minimal FastAPI backend for local testing.
 
 - `GET /health`
 - `POST /upload-doc`
+- `POST /create-account`
 
 `POST /upload-doc` accepts a PDF, DOCX, or PPTX file, uploads it to Supabase Storage, inserts a `course_contents` row, and returns the inserted record.
+
+`POST /create-account` creates a Supabase auth user and inserts the matching `users` profile row on the backend.
 
 ## Local Run
 
@@ -27,6 +30,7 @@ If you already have a repo-root `.env`, keep it and make sure it contains:
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SUPABASE_STORAGE_BUCKET=course-contents
+NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000
 ```
 
 `access_url` stores the stable Supabase object URL written to `course_contents`. It is not a signed URL.

@@ -25,7 +25,7 @@ class SupabaseSettings:
     storage_bucket: str
 
 
-def get_gemini_api_key() -> str | None:
+def get_gemini_api_key() -> str:
     for env_var in GEMINI_ENV_VARS:
         value = os.getenv(env_var)
         if value:
@@ -43,6 +43,8 @@ def get_supabase_settings() -> SupabaseSettings:
 
 def _get_required_env(env_var: str) -> str:
     value = os.getenv(env_var)
-    if value:
-        return value
+    if value is not None:
+        normalized = value.strip()
+        if normalized:
+            return normalized
     raise ValueError(f"{env_var} is not set.")
