@@ -3,7 +3,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+from datetime import timedelta
 
+from sqlalchemy import create_engine
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT_DIR / ".env")
@@ -23,7 +25,7 @@ class SupabaseSettings:
     storage_bucket: str
 
 
-def get_gemini_api_key() -> str | None:
+def get_gemini_api_key() -> str:
     for env_var in GEMINI_ENV_VARS:
         value = os.getenv(env_var)
         if value:
@@ -41,6 +43,8 @@ def get_supabase_settings() -> SupabaseSettings:
 
 def _get_required_env(env_var: str) -> str:
     value = os.getenv(env_var)
-    if value:
-        return value
+    if value is not None:
+        normalized = value.strip()
+        if normalized:
+            return normalized
     raise ValueError(f"{env_var} is not set.")
