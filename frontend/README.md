@@ -10,6 +10,28 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+## Run With Docker
+
+From the repository root:
+
+```bash
+docker compose up --build frontend
+```
+
+Or start both frontend and backend together:
+
+```bash
+docker compose up --build
+```
+
+The frontend will be available at `http://localhost:3000`.
+
+To keep the frontend synced with local file edits:
+
+```bash
+docker compose watch frontend
+```
+
 ## Available Commands
 
 ```bash

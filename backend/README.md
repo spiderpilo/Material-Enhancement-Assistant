@@ -7,21 +7,48 @@ Minimal FastAPI backend for local testing.
 - `GET /health`
 - `POST /upload-doc`
 
-`POST /upload-doc` accepts a PDF or DOCX file, extracts text, and sends a short clarity-improvement prompt to Gemini.
+`POST /upload-doc` accepts a PDF, DOCX, or PPTX file, uploads it to Supabase Storage, inserts a `course_contents` row, and returns the inserted record.
 
 ## Local Run
 
 From the repository root:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv backend/.venv
+source backend/.venv/bin/activate
 pip install -r backend/requirements.txt
 cp .env.example .env
 uvicorn app.main:app --reload --app-dir backend
 ```
 
-If you already have a repo-root `.env`, keep it and make sure it contains `GOOGLE_GEMINI_API_KEY`.
+If you already have a repo-root `.env`, keep it and make sure it contains:
+
+```bash
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_STORAGE_BUCKET=course-contents
+```
+
+`access_url` stores the stable Supabase object URL written to `course_contents`. It is not a signed URL.
+
+## Docker Run
+
+From the repository root:
+
+```bash
+cp .env.example .env
+docker compose up --build backend
+```
+
+The backend will be available at `http://127.0.0.1:8000`.
+
+To run the backend in watch mode:
+
+```bash
+docker compose watch backend
+```
+
+Compose passes `GOOGLE_GEMINI_API_KEY`, `GEMINI_API_KEY`, and `GOOGLE_API_KEY` through from your shell or repo-root `.env`.
 
 ## curl Examples
 
@@ -42,10 +69,9 @@ Expected success response shape:
 
 ```json
 {
-  "filename": "lecture1.pdf",
-  "file_type": "pdf",
-  "text_length": 12345,
-  "preview": "First few hundred characters...",
-  "gemini_response": "Clearer rewrite..."
+  "id": 1,
+  "material_name": "lecture1.pdf",
+  "access_url": "https://your-project.supabase.co/storage/v1/object/course-contents/course-contents/uuid/lecture1.pdf",
+  "data_size": 12345
 }
 ```

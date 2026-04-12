@@ -1,14 +1,39 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f5f2ea;
-  --foreground: #1f1b16;
+  --background: #f2eee8;
+  --foreground: #1c362c;
+  --surface: #f7f4ef;
+  --surface-strong: #fffdf9;
+  --surface-subtle: #edf4ef;
+  --panel: #ddd6cf;
+  --line: rgba(18, 104, 66, 0.14);
+  --line-strong: rgba(18, 104, 66, 0.28);
+  --muted: #66756c;
+  --muted-strong: #365647;
+  --accent: #126842;
+  --accent-strong: #0d5334;
+  --accent-soft: rgba(18, 104, 66, 0.14);
+  --accent-surface: rgba(92, 164, 132, 0.2);
+  --secondary: #f48b9a;
+  --secondary-soft: rgba(244, 139, 154, 0.16);
+  --secondary-surface: rgba(244, 139, 154, 0.22);
+  --secondary-text: #9b4b5b;
+  --chip-bg: rgba(92, 164, 132, 0.18);
+  --chip-text: #126842;
+  --warning-bg: rgba(207, 177, 119, 0.24);
+  --warning-border: rgba(207, 177, 119, 0.38);
+  --warning-text: #715624;
+  --fab: #126842;
+  --shadow-card: 0 18px 40px -32px rgba(18, 104, 66, 0.22);
+  --shadow-soft: 0 10px 24px -20px rgba(18, 104, 66, 0.18);
+  --shadow-button: 0 14px 28px -18px rgba(18, 104, 66, 0.44);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: "Avenir Next", "Segoe UI", sans-serif;
+  --font-sans: var(--font-ui);
   --font-mono: "SFMono-Regular", "SF Mono", monospace;
 }
 
@@ -17,7 +42,18 @@ html {
 }
 
 body {
-  background: var(--background);
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(92, 164, 132, 0.18), transparent 24%),
+    radial-gradient(circle at top right, rgba(244, 139, 154, 0.14), transparent 20%),
+    linear-gradient(180deg, #faf8f4 0%, #f2eee8 48%, #eeebe5 100%);
   color: var(--foreground);
-  font-family: var(--font-sans);
+  font-family: var(--font-ui), "Segoe UI", sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display), Georgia, serif;
 }

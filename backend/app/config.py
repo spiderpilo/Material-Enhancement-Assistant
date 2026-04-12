@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,47 +18,31 @@ GEMINI_ENV_VARS = (
 )
 
 
-# def get_gemini_api_key() -> str | None:
-#     for env_var in GEMINI_ENV_VARS:
-#         value = os.getenv(env_var)
-#         if value:
-#             return value
-#     return None
+@dataclass(frozen=True)
+class SupabaseSettings:
+    url: str
+    service_role_key: str
+    storage_bucket: str
 
 
-# from sqlalchemy.pool import NullPool
-
-
-def _get_db_env_value(*names: str):
-    for name in names:
-        value = os.getenv(name)
+def get_gemini_api_key() -> str | None:
+    for env_var in GEMINI_ENV_VARS:
+        value = os.getenv(env_var)
         if value:
-            value = value.strip()
-            if value:
-                return value
+            return value
     return None
 
-def get_database_engine():
-    DATABASE_URL = _get_db_env_value("DATABASE_URL")
 
-    if not DATABASE_URL:
-        USER = _get_db_env_value("DATABASE_USER", "DB_USER", "user")
-        PASSWORD = _get_db_env_value("DATABASE_PASSWORD", "DB_PASSWORD", "password")
-        HOST = _get_db_env_value("DATABASE_HOST", "DB_HOST", "host")
-        PORT = _get_db_env_value("DATABASE_PORT", "DB_PORT", "port")
-        DBNAME = _get_db_env_value("DATABASE_NAME", "DB_NAME", "dbname")
-
-        if all([USER, PASSWORD, HOST, PORT, DBNAME]):
-            DATABASE_URL = f"postgresql+psycopg2://{USER}:{PASSWORD}@{HOST}:{PORT}/{DBNAME}?sslmode=require"
-
-    engine = create_engine(DATABASE_URL) if DATABASE_URL else None
-    return engine
-print(False if get_database_engine() is None else "a")
-# Database Configuration
-SQLALCHEMY_TRACK_MODIFICATIONS = False
-SQLALCHEMY_ECHO = True  # Set to False in production
+def get_supabase_settings() -> SupabaseSettings:
+    return SupabaseSettings(
+        url=_get_required_env("SUPABASE_URL"),
+        service_role_key=_get_required_env("SUPABASE_SERVICE_ROLE_KEY"),
+        storage_bucket=_get_required_env("SUPABASE_STORAGE_BUCKET"),
+    )
 
 
-# Application Configuration
-# DEBUG = os.getenv('DEBUG', True)
-# TESTING = os.getenv('TESTING', False)
+def _get_required_env(env_var: str) -> str:
+    value = os.getenv(env_var)
+    if value:
+        return value
+    raise ValueError(f"{env_var} is not set.")
