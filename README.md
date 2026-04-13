@@ -54,7 +54,7 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-Set `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000` in the repo-root `.env` so the account creation page can submit to the FastAPI backend.
+Set `NEXT_PUBLIC_BACKEND_URL= ` in the repo-root `.env` so the account creation page can submit to the FastAPI backend.
 
 ## Docker Development
 
