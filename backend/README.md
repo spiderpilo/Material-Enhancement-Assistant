@@ -7,7 +7,7 @@ Minimal FastAPI backend for local testing.
 - `GET /health`
 - `POST /upload-doc`
 - `POST /create-account`
-
+- POST /login-account
 `POST /upload-doc` accepts a PDF, DOCX, or PPTX file, uploads it to Supabase Storage, inserts a `course_contents` row, and returns the inserted record.
 
 `POST /create-account` creates a Supabase auth user and inserts the matching `users` profile row on the backend.
