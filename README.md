@@ -41,7 +41,8 @@ Backend URLs:
 The current backend exposes:
 - `GET /health`
 - `POST /upload-doc`
-
+- `POST /create-account`
+`POST /login-account`
 ### Frontend
 
 From the `frontend/` directory:
@@ -53,7 +54,7 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-The frontend currently does not require any frontend-specific environment variables, and the checked-in UI is not yet wired to the backend API.
+Set `NEXT_PUBLIC_BACKEND_URL= ` in the repo-root `.env` so the account creation page can submit to the FastAPI backend.
 
 ## Docker Development
 
