@@ -42,7 +42,7 @@ The current backend exposes:
 - `GET /health`
 - `POST /upload-doc`
 - `POST /create-account`
-
+POST /login-account
 ### Frontend
 
 From the `frontend/` directory:
