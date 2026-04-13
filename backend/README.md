@@ -30,7 +30,7 @@ If you already have a repo-root `.env`, keep it and make sure it contains:
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SUPABASE_STORAGE_BUCKET=course-contents
-NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_BACKEND_URL=
 ```
 
 `access_url` stores the stable Supabase object URL written to `course_contents`. It is not a signed URL.
