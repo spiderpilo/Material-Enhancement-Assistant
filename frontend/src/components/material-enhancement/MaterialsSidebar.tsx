@@ -1,10 +1,7 @@
-import type { ChangeEvent, DragEvent, RefObject } from "react";
+import type { DragEvent } from "react";
 
 import type { Material, PreviewItem } from "@/lib/material-enhancement/workspace";
-import {
-  SUPPORTED_FILE_TYPE_LABEL,
-  getMaterialMeta,
-} from "@/lib/material-enhancement/workspace";
+import { SUPPORTED_FILE_TYPE_LABEL, getMaterialMeta } from "@/lib/material-enhancement/workspace";
 
 import {
   AddIcon,
@@ -20,7 +17,6 @@ import {
 
 type MaterialsSidebarProps = {
   checkedMaterialIds: string[];
-  fileInputRef: RefObject<HTMLInputElement | null>;
   isCollapsed: boolean;
   isDragging: boolean;
   materials: Material[];
@@ -28,8 +24,7 @@ type MaterialsSidebarProps = {
   onDragLeave: (event: DragEvent<HTMLDivElement>) => void;
   onDragOver: (event: DragEvent<HTMLDivElement>) => void;
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
-  onFileInputChange: (event: ChangeEvent<HTMLInputElement>) => void;
-  onOpenFilePicker: () => void;
+  onOpenAddMaterials: () => void;
   onSelectMaterial: (materialId: string) => void;
   onSelectPreviewItem: (materialId: string, previewItemId: string) => void;
   onToggleCollapsed: () => void;
@@ -40,7 +35,6 @@ type MaterialsSidebarProps = {
 
 export function MaterialsSidebar({
   checkedMaterialIds,
-  fileInputRef,
   isCollapsed,
   isDragging,
   materials,
@@ -48,8 +42,7 @@ export function MaterialsSidebar({
   onDragLeave,
   onDragOver,
   onDrop,
-  onFileInputChange,
-  onOpenFilePicker,
+  onOpenAddMaterials,
   onSelectMaterial,
   onSelectPreviewItem,
   onToggleCollapsed,
@@ -76,15 +69,6 @@ export function MaterialsSidebar({
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          multiple
-          accept={SUPPORTED_FILE_TYPE_LABEL}
-          onChange={onFileInputChange}
-        />
-
         <div className="flex w-full flex-col items-center gap-3">
           <button
             type="button"
@@ -97,7 +81,7 @@ export function MaterialsSidebar({
 
           <button
             type="button"
-            onClick={onOpenFilePicker}
+            onClick={onOpenAddMaterials}
             className="shadow-card-soft flex h-10 w-10 items-center justify-center rounded-[14px] bg-[color:var(--accent-green)] text-[#1c1917] transition hover:brightness-[1.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--bg-app-alt)]"
             aria-label="Add materials"
           >
@@ -171,7 +155,7 @@ export function MaterialsSidebar({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={onOpenFilePicker}
+            onClick={onOpenAddMaterials}
             className="shadow-card-soft inline-flex h-9 items-center gap-2 rounded-[12px] bg-[color:var(--accent-green)] px-4 text-[12.7px] font-bold text-[#1c1917] transition hover:brightness-[1.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--bg-app-alt)]"
           >
             <AddIcon className="h-[18px] w-[18px]" />
@@ -189,18 +173,9 @@ export function MaterialsSidebar({
         </div>
       </div>
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        className="hidden"
-        multiple
-        accept={SUPPORTED_FILE_TYPE_LABEL}
-        onChange={onFileInputChange}
-      />
-
       <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
         {materials.length === 0 ? (
-          <EmptyMaterialsState isDragging={isDragging} onOpenFilePicker={onOpenFilePicker} />
+          <EmptyMaterialsState isDragging={isDragging} onOpenAddMaterials={onOpenAddMaterials} />
         ) : (
           <div className="space-y-3">
             {materials.map((material) => {
@@ -290,10 +265,10 @@ export function MaterialsSidebar({
 
 function EmptyMaterialsState({
   isDragging,
-  onOpenFilePicker,
+  onOpenAddMaterials,
 }: {
   isDragging: boolean;
-  onOpenFilePicker: () => void;
+  onOpenAddMaterials: () => void;
 }) {
   return (
     <div
@@ -317,7 +292,7 @@ function EmptyMaterialsState({
 
       <button
         type="button"
-        onClick={onOpenFilePicker}
+        onClick={onOpenAddMaterials}
         className="mt-6 inline-flex h-10 items-center rounded-[12px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] px-4 text-[12.5px] font-semibold text-[color:var(--text-primary)] transition hover:bg-[rgba(255,255,255,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
       >
         Choose files

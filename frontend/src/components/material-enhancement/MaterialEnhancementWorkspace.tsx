@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useEffectEvent, useRef, useState } from "react";
-import type { ChangeEvent, DragEvent } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
+import type { DragEvent } from "react";
 
+import {
+  AddMaterialsModal,
+  type AddMaterialsSubmitResult,
+} from "@/components/material-enhancement/AddMaterialsModal";
 import { AIToolsSidebar } from "@/components/material-enhancement/AIToolsSidebar";
 import {
   CreateProjectModal,
@@ -29,6 +33,7 @@ const COLLAPSED_GRID_COLUMNS = "84px minmax(0,1fr) 320px";
 
 export function MaterialEnhancementWorkspace() {
   const [projectName, setProjectName] = useState("");
+  const [isAddMaterialsModalOpen, setIsAddMaterialsModalOpen] = useState(false);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
   const [isLeftPanelCollapsed, setIsLeftPanelCollapsed] = useState(false);
@@ -41,7 +46,6 @@ export function MaterialEnhancementWorkspace() {
   );
   const [isDragging, setIsDragging] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedMaterial = getSelectedMaterial(materials, selectedMaterialId);
   const selectedPreviewItem = getSelectedPreviewItem(
@@ -132,11 +136,7 @@ export function MaterialEnhancementWorkspace() {
     };
   }, []);
 
-  const handleFiles = (files: File[]) => {
-    if (files.length === 0) {
-      return;
-    }
-
+  const appendMaterials = (files: File[]): AddMaterialsSubmitResult => {
     const { materials: nextMaterials, rejected } = processUploadFiles(files);
 
     if (rejected.length > 0) {
@@ -145,13 +145,16 @@ export function MaterialEnhancementWorkspace() {
     }
 
     if (nextMaterials.length === 0) {
-      return;
+      return {
+        success: false,
+        errorMessage: "Add at least one supported file type before uploading.",
+      };
     }
 
     setMaterials((currentMaterials) => {
       const mergedMaterials = [...currentMaterials, ...nextMaterials];
 
-      if (!selectedMaterialId && nextMaterials[0]) {
+      if (currentMaterials.length === 0 && nextMaterials[0]) {
         const firstPreviewItem = nextMaterials[0].previewItems[0];
         setSelectedMaterialId(nextMaterials[0].id);
         setSelectedPreviewItemId(firstPreviewItem?.id ?? null);
@@ -164,11 +167,13 @@ export function MaterialEnhancementWorkspace() {
       ...new Set([...currentCheckedIds, ...nextMaterials.map((material) => material.id)]),
     ]);
 
-    if (selectedMaterialId && nextMaterials.length > 0) {
+    if (materials.length > 0 && nextMaterials.length > 0) {
       setToastMessage(
         `${nextMaterials.length} material${nextMaterials.length > 1 ? "s" : ""} uploaded`,
       );
     }
+
+    return { success: true };
   };
 
   const handleCreateProject = () => {
@@ -176,41 +181,24 @@ export function MaterialEnhancementWorkspace() {
   };
 
   const handleCreateProjectSubmit = ({
-    files,
     projectName: nextProjectName,
   }: {
-    files: File[];
     projectName: string;
   }): CreateProjectSubmitResult => {
-    const { materials: nextMaterials, rejected } = processUploadFiles(files);
-
-    if (rejected.length > 0) {
-      const rejectedNames = rejected.map((item) => item.fileName).join(", ");
-      setToastMessage(`Some files were not added: ${rejectedNames}`);
-    }
-
-    if (nextMaterials.length === 0) {
-      return {
-        success: false,
-        errorMessage:
-          "Add at least one supported file type before creating the project.",
-      };
-    }
-
-    const firstMaterial = nextMaterials[0];
-    const firstPreviewItem = firstMaterial?.previewItems[0];
-
     setProjectName(nextProjectName);
-    setMaterials(nextMaterials);
-    setSelectedMaterialId(firstMaterial?.id ?? null);
-    setSelectedPreviewItemId(firstPreviewItem?.id ?? null);
-    setCheckedMaterialIds(nextMaterials.map((material) => material.id));
-    setToastMessage(
-      `Project "${nextProjectName}" created with ${nextMaterials.length} material${nextMaterials.length === 1 ? "" : "s"}.`,
-    );
-
+    setToastMessage(`Project name updated to "${nextProjectName}".`);
     return { success: true };
   };
+
+  const handleAddMaterials = () => {
+    setIsAddMaterialsModalOpen(true);
+  };
+
+  const handleAddMaterialsSubmit = ({
+    files,
+  }: {
+    files: File[];
+  }): AddMaterialsSubmitResult => appendMaterials(files);
 
   const handleShareProject = () => {
     setToastMessage("Share controls will connect to collaborative project actions later.");
@@ -226,12 +214,6 @@ export function MaterialEnhancementWorkspace() {
 
   const handleOpenHelp = () => {
     setToastMessage("Help actions will connect to guidance and support flows later.");
-  };
-
-  const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    handleFiles(files);
-    event.target.value = "";
   };
 
   const handleDragEnter = (event: DragEvent<HTMLDivElement>) => {
@@ -255,7 +237,7 @@ export function MaterialEnhancementWorkspace() {
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragging(false);
-    handleFiles(Array.from(event.dataTransfer.files));
+    appendMaterials(Array.from(event.dataTransfer.files));
   };
 
   const handleSelectMaterial = (materialId: string) => {
@@ -309,7 +291,6 @@ export function MaterialEnhancementWorkspace() {
         >
           <MaterialsSidebar
             checkedMaterialIds={checkedMaterialIds}
-            fileInputRef={fileInputRef}
             isCollapsed={isLeftPanelCollapsed}
             isDragging={isDragging}
             materials={materials}
@@ -317,8 +298,7 @@ export function MaterialEnhancementWorkspace() {
             onDragLeave={handleDragLeave}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
-            onFileInputChange={handleFileInputChange}
-            onOpenFilePicker={() => fileInputRef.current?.click()}
+            onOpenAddMaterials={handleAddMaterials}
             onSelectMaterial={handleSelectMaterial}
             onSelectPreviewItem={handleSelectPreviewItem}
             onToggleCollapsed={() => setIsLeftPanelCollapsed((current) => !current)}
@@ -350,7 +330,14 @@ export function MaterialEnhancementWorkspace() {
         </div>
       ) : null}
 
+      <AddMaterialsModal
+        isOpen={isAddMaterialsModalOpen}
+        onAddMaterials={handleAddMaterialsSubmit}
+        onClose={() => setIsAddMaterialsModalOpen(false)}
+      />
+
       <CreateProjectModal
+        initialProjectName={projectName}
         isOpen={isCreateProjectModalOpen}
         onClose={() => setIsCreateProjectModalOpen(false)}
         onCreateProject={handleCreateProjectSubmit}
