@@ -20,10 +20,10 @@ export function TopHeader({
   showSearch = true,
 }: TopHeaderProps) {
   return (
-    <header className="border-b border-[color:var(--line)] bg-[rgba(255,253,249,0.76)] backdrop-blur-md">
+    <header className="border-b border-[color:var(--line)] bg-[rgba(18,18,14,0.62)] backdrop-blur-md">
       <div className="flex flex-col gap-4 px-4 py-4 sm:px-6 lg:h-16 lg:flex-row lg:items-center lg:justify-between lg:px-8 lg:py-0">
         <div className="min-w-0">
-          <h2 className="truncate font-[family:var(--font-display)] text-[1.75rem] font-semibold tracking-[-0.04em] text-[color:var(--accent)]">
+          <h2 className="truncate font-[family:var(--font-display)] text-[1.75rem] font-semibold tracking-[-0.04em] text-[color:var(--text-primary)]">
             {title}
           </h2>
         </div>
@@ -36,7 +36,7 @@ export function TopHeader({
               <input
                 type="search"
                 placeholder={searchPlaceholder}
-                className="h-9 w-full rounded-full border border-transparent bg-[rgba(255,253,249,0.85)] pl-11 pr-4 text-sm text-[color:var(--foreground)] outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--line-strong)] focus:bg-[color:var(--surface-strong)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+                className="h-9 w-full rounded-full border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.05)] pl-11 pr-4 text-sm text-[color:var(--foreground)] outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--line-strong)] focus:bg-[rgba(255,255,255,0.08)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
               />
             </label>
           ) : null}
@@ -46,14 +46,14 @@ export function TopHeader({
           <button
             type="button"
             aria-label="Open notifications"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[color:var(--muted-strong)] transition hover:bg-[color:var(--secondary-soft)] hover:text-[color:var(--secondary-text)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-[color:var(--muted-strong)] transition hover:bg-[rgba(255,255,255,0.08)] hover:text-[color:var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent-soft)]"
           >
             <BellIcon className="h-4 w-4" />
           </button>
           <button
             type="button"
             aria-label="Open utility menu"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[color:var(--muted-strong)] transition hover:bg-[color:var(--secondary-soft)] hover:text-[color:var(--secondary-text)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-[color:var(--muted-strong)] transition hover:bg-[rgba(255,255,255,0.08)] hover:text-[color:var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent-soft)]"
           >
             <GridIcon className="h-4 w-4" />
           </button>

@@ -14,7 +14,7 @@ export function DashboardSectionCard({
   children,
 }: DashboardSectionCardProps) {
   return (
-    <section className="rounded-[24px] border border-[color:var(--line)] bg-[color:var(--surface-strong)] p-6 shadow-[var(--shadow-card)] sm:p-7">
+    <section className="rounded-[24px] border border-[color:var(--line)] bg-[rgba(255,255,255,0.05)] p-6 shadow-[var(--shadow-card)] sm:p-7">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h2 className="font-[family:var(--font-display)] text-[1.75rem] font-semibold tracking-[-0.04em] text-[color:var(--foreground)]">
