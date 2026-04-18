@@ -28,7 +28,7 @@ export function DashboardActivityFeed({ items }: DashboardActivityFeedProps) {
           {items.map((item) => (
             <article
               key={item.id}
-              className="rounded-[20px] border border-[color:var(--line)] bg-[rgba(255,253,249,0.82)] px-4 py-4"
+              className="rounded-[20px] border border-[color:var(--line)] bg-[rgba(255,255,255,0.04)] px-4 py-4"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">

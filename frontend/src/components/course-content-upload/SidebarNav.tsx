@@ -29,7 +29,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { key: "dashboard", label: "Dashboard", icon: GridIcon, href: "/dashboard" },
-  { key: "uploads", label: "Uploads", icon: UploadCloudIcon, href: "/upload" },
+  { key: "uploads", label: "Project Page", icon: UploadCloudIcon, href: "/project" },
   { key: "reviewQueue", label: "Review Queue", icon: ReviewBubbleIcon },
   { key: "exports", label: "Exports", icon: ExportArrowIcon },
   { key: "settings", label: "Settings", icon: SettingsIcon },
@@ -41,14 +41,14 @@ type SidebarNavProps = {
 
 export function SidebarNav({ activeItem = "uploads" }: SidebarNavProps) {
   return (
-    <aside className="shrink-0 border-b border-[color:var(--line)] bg-[color:var(--surface-strong)] lg:min-h-screen lg:w-16 lg:border-b-0 lg:border-r">
+    <aside className="shrink-0 border-b border-[color:var(--line)] bg-[rgba(255,255,255,0.04)] backdrop-blur-sm lg:min-h-screen lg:w-16 lg:border-b-0 lg:border-r">
       <div className="flex items-center justify-between gap-4 px-4 py-3 lg:h-full lg:flex-col lg:justify-start lg:px-0 lg:py-0">
         <div className="flex items-center gap-3 lg:w-full lg:flex-col lg:gap-0">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[color:var(--accent-surface)] text-[color:var(--accent)] lg:h-16 lg:w-full lg:rounded-none lg:border-b lg:border-[color:var(--line)] lg:bg-transparent">
             <BrandMarkIcon className="h-5 w-5" />
           </div>
           <p className="text-sm font-semibold text-[color:var(--foreground)] lg:hidden">
-            Curriculum Updater
+            Material Enhancement Assistant
           </p>
         </div>
 
@@ -62,7 +62,7 @@ export function SidebarNav({ activeItem = "uploads" }: SidebarNavProps) {
               "flex h-11 w-11 shrink-0 items-center justify-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-[color:var(--accent-soft)] focus:ring-offset-2 focus:ring-offset-[color:var(--surface-strong)] lg:h-10 lg:w-10",
               isActive
                 ? "border-[color:var(--accent-soft)] bg-[color:var(--accent-surface)] text-[color:var(--accent)]"
-                : "border-transparent text-[color:var(--muted-strong)] hover:border-[color:var(--line)] hover:bg-[color:var(--surface)] hover:text-[color:var(--foreground)]",
+                : "border-transparent text-[color:var(--muted-strong)] hover:border-[color:var(--line)] hover:bg-[rgba(255,255,255,0.06)] hover:text-[color:var(--foreground)]",
               href ? "" : "cursor-not-allowed opacity-70",
             ].join(" ");
 

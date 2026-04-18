@@ -66,10 +66,10 @@ export function DashboardClientPage({
 
   return (
     <div className="mx-auto flex w-full max-w-[1152px] flex-col gap-8">
-      <section className="overflow-hidden rounded-[28px] border border-[color:var(--line)] bg-[linear-gradient(135deg,rgba(255,253,249,0.98),rgba(237,244,239,0.95)_56%,rgba(244,139,154,0.1)_82%,rgba(207,177,119,0.12)_100%)] p-6 shadow-[var(--shadow-card)] sm:p-7">
+      <section className="overflow-hidden rounded-[28px] border border-[color:var(--line)] bg-[linear-gradient(135deg,rgba(255,255,255,0.06),rgba(255,255,255,0.04)_48%,rgba(243,158,182,0.08)_100%)] p-6 shadow-[var(--shadow-card)] sm:p-7">
         <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-3xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-strong)]">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--accent-green)]">
               Academic Operations
             </p>
             <h1 className="mt-3 font-[family:var(--font-display)] text-[2.5rem] font-semibold tracking-[-0.05em] text-[color:var(--foreground)] sm:text-[3rem] sm:leading-[1.08]">
@@ -84,7 +84,7 @@ export function DashboardClientPage({
           </div>
 
           <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
-            <div className="inline-flex rounded-full bg-[color:var(--surface-subtle)] p-1">
+            <div className="inline-flex rounded-full bg-[rgba(255,255,255,0.06)] p-1">
               {rangeOptions.map((option) => (
                 <button
                   key={option.value}
@@ -95,7 +95,7 @@ export function DashboardClientPage({
                   className={[
                     "rounded-full px-4 py-2 text-sm font-semibold transition",
                     option.value === range
-                      ? "bg-[linear-gradient(135deg,var(--accent),#5CA484)] text-white shadow-[var(--shadow-button)]"
+                      ? "bg-[linear-gradient(135deg,var(--accent),#d2ec9f)] text-[#1c1917] shadow-[var(--shadow-button)]"
                       : "text-[color:var(--muted-strong)] hover:text-[color:var(--foreground)]",
                   ].join(" ")}
                 >
@@ -105,10 +105,10 @@ export function DashboardClientPage({
             </div>
 
             <Link
-              href="/upload"
-              className="inline-flex items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--accent),#5CA484)] px-6 py-3 text-sm font-semibold text-white shadow-[var(--shadow-button)] transition hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-[color:var(--accent-soft)]"
+              href="/project"
+              className="inline-flex items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--accent),#d2ec9f)] px-6 py-3 text-sm font-semibold text-[#1c1917] shadow-[var(--shadow-button)] transition hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-[color:var(--accent-soft)]"
             >
-              Upload material
+              Open project page
             </Link>
           </div>
         </div>
@@ -128,7 +128,7 @@ export function DashboardClientPage({
             ]}
           />
 
-          <div className="rounded-2xl border border-[color:var(--line)] bg-[linear-gradient(135deg,rgba(255,253,249,0.88),rgba(244,139,154,0.12))] px-4 py-3 text-sm text-[color:var(--muted-strong)]">
+          <div className="rounded-2xl border border-[color:var(--line)] bg-[linear-gradient(135deg,rgba(255,255,255,0.06),rgba(243,158,182,0.08))] px-4 py-3 text-sm text-[color:var(--muted-strong)]">
             <span className="block text-[11px] font-semibold uppercase tracking-[0.16em] text-[color:var(--muted)]">
               Active window
             </span>
@@ -183,7 +183,7 @@ function DashboardSelect({
           onChange={(event) => {
             onChange(event.target.value);
           }}
-          className="h-12 w-full appearance-none rounded-2xl border border-[color:var(--line)] bg-[color:var(--surface-subtle)] px-4 pr-10 text-sm font-medium text-[color:var(--foreground)] outline-none transition focus:border-[color:var(--accent)] focus:bg-white focus:ring-2 focus:ring-[color:var(--accent-soft)]"
+          className="h-12 w-full appearance-none rounded-2xl border border-[color:var(--line)] bg-[rgba(255,255,255,0.06)] px-4 pr-10 text-sm font-medium text-[color:var(--foreground)] outline-none transition focus:border-[color:var(--accent)] focus:bg-[rgba(255,255,255,0.08)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
         >
           {options.map((option) => (
             <option key={option.value} value={option.value}>

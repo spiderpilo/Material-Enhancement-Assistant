@@ -1,24 +1,10 @@
 import type { Metadata } from "next";
-import { Literata, Nunito_Sans } from "next/font/google";
 
 import "./globals.css";
 
-const uiFont = Nunito_Sans({
-  subsets: ["latin"],
-  variable: "--font-ui",
-  display: "swap",
-});
-
-const displayFont = Literata({
-  subsets: ["latin"],
-  variable: "--font-display",
-  display: "swap",
-});
-
 export const metadata: Metadata = {
-  title: "Curriculum Updater",
-  description:
-    "Upload and organize curriculum materials for AI-assisted analysis.",
+  title: "Material Enhancement Assistant",
+  description: "AI feedback for lecture slides and documents.",
 };
 
 export default function RootLayout({
@@ -28,10 +14,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="h-full antialiased">
-      <body
-        suppressHydrationWarning
-        className={`${uiFont.variable} ${displayFont.variable} flex min-h-full flex-col`}
-      >
+      <body suppressHydrationWarning className="flex min-h-full flex-col">
         {children}
       </body>
     </html>

@@ -24,7 +24,7 @@ export function DashboardMetricCard({
         : "bg-[color:var(--surface-subtle)] text-[color:var(--muted-strong)]";
 
   return (
-    <article className="rounded-[24px] border border-[color:var(--line)] bg-[color:var(--surface-strong)] p-5 shadow-[var(--shadow-card)] sm:p-6">
+    <article className="rounded-[24px] border border-[color:var(--line)] bg-[rgba(255,255,255,0.05)] p-5 shadow-[var(--shadow-card)] sm:p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--muted-strong)]">

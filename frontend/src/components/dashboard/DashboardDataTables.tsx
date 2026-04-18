@@ -47,7 +47,7 @@ export function DashboardRecentUploadsTable({
               {rows.map((row) => (
                 <tr
                   key={row.id}
-                  className="rounded-[18px] bg-[rgba(255,253,249,0.84)]"
+                  className="rounded-[18px] bg-[rgba(255,255,255,0.04)]"
                 >
                   <td className="rounded-l-[18px] px-4 py-4 font-semibold text-[color:var(--foreground)]">
                     {row.title}
