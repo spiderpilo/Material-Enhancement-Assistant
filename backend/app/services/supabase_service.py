@@ -1,10 +1,12 @@
 import json
 import mimetypes
-from typing import Any
+import os
+from typing import Any, Optional
 from urllib import error, parse, request
 from uuid import uuid4
 
 from app.config import get_supabase_settings
+from app.models.account_model import CreateAccountResponse, LoginAccountResponse, UserProfileRecord
 from app.models.document_model import CourseContentRecord
 from app.utils.file_utils import sanitize_filename
 
@@ -18,6 +20,118 @@ class MissingSupabaseConfigError(Exception):
 
 class SupabaseServiceError(Exception):
     """Raised when Supabase storage or database operations fail."""
+
+
+class InvalidCredentialsError(SupabaseServiceError):
+    """Raised when login credentials are invalid."""
+
+
+def login_account(*, email: str, password: str) -> LoginAccountResponse:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_api_key = (
+        os.getenv("SUPABASE_ANON_KEY")
+        or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+        or settings.service_role_key
+    )
+
+    payload = json.dumps({"email": email, "password": password}).encode("utf-8")
+
+    try:
+        response_body = _send_request(
+            endpoint=f"{settings.url.rstrip('/')}/auth/v1/token?grant_type=password",
+            method="POST",
+            data=payload,
+            headers={
+                "apikey": auth_api_key,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            expected_statuses={200},
+        )
+    except SupabaseServiceError as exc:
+        error_message = str(exc).lower()
+        if "invalid login credentials" in error_message or "invalid_grant" in error_message:
+            raise InvalidCredentialsError("Incorrect email or password") from exc
+        raise
+
+    try:
+        auth_response = json.loads(response_body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SupabaseServiceError("Supabase returned an unreadable login response.") from exc
+
+    if not isinstance(auth_response, dict):
+        raise SupabaseServiceError("Supabase did not return a valid login payload.")
+
+    access_token = auth_response.get("access_token")
+    refresh_token = auth_response.get("refresh_token")
+    token_type = auth_response.get("token_type")
+    user = auth_response.get("user")
+
+    if (
+        not isinstance(access_token, str)
+        or not isinstance(refresh_token, str)
+        or not isinstance(token_type, str)
+        or not isinstance(user, dict)
+    ):
+        raise SupabaseServiceError("Supabase login response is missing required fields.")
+
+    user_id = user.get("id")
+    user_email = user.get("email")
+    user_metadata = user.get("user_metadata") if isinstance(user.get("user_metadata"), dict) else {}
+    username = user_metadata.get("username") if isinstance(user_metadata.get("username"), str) else ""
+    profession = user_metadata.get("profession") if isinstance(user_metadata.get("profession"), str) else ""
+
+    if not isinstance(user_id, str) or not isinstance(user_email, str):
+        raise SupabaseServiceError("Supabase login response is missing user identity data.")
+
+    return LoginAccountResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type=token_type,
+        user_id=user_id,
+        email=user_email,
+        username=username,
+        profession=profession,
+    )
+
+
+def create_account(*, email: str, password: str, username: str, profession: str) -> CreateAccountResponse:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _create_supabase_auth_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        email=email,
+        password=password,
+        username=username,
+        profession=profession,
+    )
+
+    try:
+        profile = _insert_user_profile(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            username=username,
+            profession=profession,
+        )
+    except SupabaseServiceError as exc:
+        cleanup_error = _delete_supabase_auth_user(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            user_id=auth_user["id"],
+        )
+        if cleanup_error:
+            raise SupabaseServiceError(f"{exc} Cleanup failed: {cleanup_error}") from exc
+        raise
+
+    return CreateAccountResponse(auth_user_id=auth_user["id"], profile=profile)
 
 
 def upload_course_content(*, filename: str, file_bytes: bytes) -> CourseContentRecord:
@@ -67,6 +181,104 @@ def upload_course_content(*, filename: str, file_bytes: bytes) -> CourseContentR
 def _build_storage_path(filename: str) -> str:
     sanitized_filename = sanitize_filename(filename)
     return f"course-contents/{uuid4()}/{sanitized_filename}"
+
+
+def _create_supabase_auth_user(
+    *,
+    url: str,
+    service_role_key: str,
+    email: str,
+    password: str,
+    username: str,
+    profession: str,
+) -> dict[str, Any]:
+    payload = json.dumps(
+        {
+            "email": email,
+            "password": password,
+            "email_confirm": True,
+            "user_metadata": {
+                "username": username,
+                "profession": profession,
+            },
+        }
+    ).encode("utf-8")
+
+    response_body = _send_request(
+        endpoint=f"{url.rstrip('/')}/auth/v1/admin/users",
+        method="POST",
+        data=payload,
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        expected_statuses={200, 201},
+    )
+
+    try:
+        created_user = json.loads(response_body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SupabaseServiceError("Supabase returned an unreadable auth response.") from exc
+
+    if not isinstance(created_user, dict) or "id" not in created_user:
+        raise SupabaseServiceError("Supabase did not return the created auth user.")
+
+    return created_user
+
+
+def _insert_user_profile(
+    *,
+    url: str,
+    service_role_key: str,
+    username: str,
+    profession: str,
+) -> UserProfileRecord:
+    payload = json.dumps(
+        {
+            "username": username,
+            "profession": profession,
+        }
+    ).encode("utf-8")
+
+    response_body = _send_request(
+        endpoint=f"{url.rstrip('/')}/rest/v1/users",
+        method="POST",
+        data=payload,
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Prefer": "return=representation",
+        },
+        expected_statuses={200, 201},
+    )
+
+    try:
+        inserted_rows = json.loads(response_body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SupabaseServiceError("Supabase returned an unreadable users response.") from exc
+
+    if not isinstance(inserted_rows, list) or not inserted_rows:
+        raise SupabaseServiceError("Supabase did not return the inserted users row.")
+
+    return UserProfileRecord.model_validate(inserted_rows[0])
+
+
+def _delete_supabase_auth_user(*, url: str, service_role_key: str, user_id: str) -> Optional[str]:
+    endpoint = f"{url.rstrip('/')}/auth/v1/admin/users/{parse.quote(user_id, safe='')}"
+
+    try:
+        _send_request(
+            endpoint=endpoint,
+            method="DELETE",
+            headers=_build_auth_headers(service_role_key),
+            expected_statuses={200, 204},
+        )
+    except SupabaseServiceError as exc:
+        return str(exc)
+
+    return None
 
 
 def _upload_storage_object(
@@ -138,7 +350,7 @@ def _delete_storage_object(
     service_role_key: str,
     bucket: str,
     storage_path: str,
-) -> str | None:
+) -> Optional[str]:
     endpoint = _build_storage_endpoint(url=url, bucket=bucket, storage_path=storage_path)
 
     try:
@@ -179,7 +391,7 @@ def _send_request(
     method: str,
     headers: dict[str, str],
     expected_statuses: set[int],
-    data: bytes | None = None,
+    data: Optional[bytes] = None,
 ) -> bytes:
     api_request = request.Request(
         url=endpoint,
