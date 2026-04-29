@@ -954,10 +954,21 @@ def _send_request_optional(
             status_code = response.getcode()
             response_body = response.read()
     except error.HTTPError as exc:
+        response_body = exc.read()
         if exc.code == 404:
+            logger.info(
+                "Optional Supabase object missing via HTTP 404 for endpoint=%s",
+                endpoint,
+            )
+            return None
+        if _is_missing_storage_object_error(status_code=exc.code, response_body=response_body):
+            logger.info(
+                "Optional Supabase object missing via normalized %s for endpoint=%s",
+                exc.code,
+                endpoint,
+            )
             return None
 
-        response_body = exc.read()
         message = _extract_error_message(response_body)
         raise SupabaseServiceError(f"Supabase request failed with status {exc.code}: {message}") from exc
     except error.URLError as exc:
@@ -981,6 +992,33 @@ def _detect_source_type(filename: str) -> SourceType:
         return "pptx"
 
     raise SupabaseServiceError("Unsupported source type.")
+
+
+def _is_missing_storage_object_error(*, status_code: int, response_body: bytes) -> bool:
+    if status_code != 400 or not response_body:
+        return False
+
+    try:
+        payload: Any = json.loads(response_body.decode("utf-8"))
+    except json.JSONDecodeError:
+        return False
+
+    if not isinstance(payload, dict):
+        return False
+
+    status_value = payload.get("statusCode")
+    error_value = payload.get("error")
+    message_value = payload.get("message")
+
+    status_text = str(status_value).strip().lower() if status_value is not None else ""
+    error_text = error_value.strip().lower() if isinstance(error_value, str) else ""
+    message_text = message_value.strip().lower() if isinstance(message_value, str) else ""
+
+    return (
+        status_text == "404"
+        or error_text == "not_found"
+        or message_text == "object not found"
+    )
 
 
 def _extract_error_message(response_body: bytes) -> str:
