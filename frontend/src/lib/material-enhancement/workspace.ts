@@ -1,13 +1,15 @@
+import {
+  type CourseContentRecord,
+  SUPPORTED_COURSE_CONTENT_ACCEPT,
+  formatCourseContentSize,
+  getCourseContentExtension,
+  getCourseContentFileValidationError,
+} from "@/lib/api/course-content";
+
 export const ACCEPTED_FILE_EXTENSIONS = [
   "pdf",
-  "doc",
   "docx",
-  "ppt",
   "pptx",
-  "png",
-  "jpg",
-  "jpeg",
-  "webp",
 ] as const;
 
 export type AcceptedExtension = (typeof ACCEPTED_FILE_EXTENSIONS)[number];
@@ -37,6 +39,8 @@ export type Material = {
   size: number;
   mimeType: string;
   uploadedAt: number;
+  accessUrl?: string;
+  databaseId?: number;
   previewItems: PreviewItem[];
 };
 
@@ -64,14 +68,8 @@ const ACCEPTED_EXTENSION_SET = new Set<string>(ACCEPTED_FILE_EXTENSIONS);
 
 const FILE_TYPE_BY_EXTENSION: Record<AcceptedExtension, MaterialKind> = {
   pdf: "pdf",
-  doc: "doc",
   docx: "doc",
-  ppt: "ppt",
   pptx: "ppt",
-  png: "image",
-  jpg: "image",
-  jpeg: "image",
-  webp: "image",
 };
 
 const PREVIEW_COPY: Record<
@@ -154,7 +152,7 @@ const RECOMMENDATION_TEXT: Record<
 > = {
   empty: {
     clarity:
-      "Upload a slide deck, document, or image to unlock clarity suggestions.",
+      "Upload a slide deck or document to unlock clarity suggestions.",
     visuals:
       "Visual refinement prompts will appear here once we have material to inspect.",
     interaction:
@@ -195,7 +193,7 @@ const RECOMMENDATION_TEXT: Record<
 };
 
 export function detectFileType(file: File): DetectedFileType | null {
-  const extension = getExtension(file.name);
+  const extension = getCourseContentExtension(file.name);
 
   if (!extension || !ACCEPTED_EXTENSION_SET.has(extension)) {
     return null;
@@ -210,10 +208,10 @@ export function detectFileType(file: File): DetectedFileType | null {
 }
 
 export function validateUpload(file: File): string | null {
-  const detectedType = detectFileType(file);
+  const uploadError = getCourseContentFileValidationError(file);
 
-  if (!detectedType) {
-    return "Unsupported file type. Upload a PDF, DOC, DOCX, PPT, PPTX, PNG, JPG, JPEG, or WEBP file.";
+  if (uploadError) {
+    return uploadError;
   }
 
   return null;
@@ -254,6 +252,36 @@ export function processUploadFiles(files: File[]): UploadResult {
   }
 
   return { materials, rejected };
+}
+
+export function createMaterialFromCourseContentRecord(
+  file: File,
+  record: CourseContentRecord,
+): Material | null {
+  const validationError = validateUpload(file);
+
+  if (validationError) {
+    return null;
+  }
+
+  const detectedType = detectFileType(file);
+
+  if (!detectedType) {
+    return null;
+  }
+
+  return {
+    id: `course-content-${record.id}`,
+    name: record.material_name,
+    extension: detectedType.extension,
+    kind: detectedType.kind,
+    size: record.data_size,
+    mimeType: file.type,
+    uploadedAt: Date.now(),
+    accessUrl: record.access_url,
+    databaseId: record.id,
+    previewItems: generatePreviewItems(file, detectedType),
+  };
 }
 
 export function generatePreviewItems(
@@ -372,7 +400,7 @@ export function getMaterialMeta(material: Material, expanded: boolean): string {
   const countLabel = getPreviewCountLabel(material);
 
   if (expanded) {
-    return `${countLabel} • ${formatUploadMoment(material.uploadedAt)}`;
+    return `${formatFileSize(material.size)} • ${formatUploadMoment(material.uploadedAt)}`;
   }
 
   return `${material.extension.toUpperCase()} • ${countLabel}`;
@@ -403,11 +431,7 @@ export function getMaterialBaseName(name: string): string {
 }
 
 export function formatFileSize(size: number): string {
-  if (size < 1024 * 1024) {
-    return `${Math.max(1, Math.round(size / 1024))} KB`;
-  }
-
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  return formatCourseContentSize(size);
 }
 
 export function revokeMaterialObjectUrls(materials: Material[]): void {
@@ -421,12 +445,7 @@ export function revokeMaterialObjectUrls(materials: Material[]): void {
 }
 
 export const SUPPORTED_FILE_TYPE_LABEL =
-  ".pdf, .doc, .docx, .ppt, .pptx, .png, .jpg, .jpeg, .webp";
-
-function getExtension(fileName: string): string | null {
-  const match = fileName.toLowerCase().match(/\.([a-z0-9]+)$/);
-  return match?.[1] ?? null;
-}
+  SUPPORTED_COURSE_CONTENT_ACCEPT;
 
 function createId(prefix: string): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {

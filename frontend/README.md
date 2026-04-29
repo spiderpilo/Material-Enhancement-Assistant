@@ -10,6 +10,14 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+Set this in the repo-root `.env` when the backend runs on a non-default URL:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+```
+
+The upload UI posts PDF, DOCX, and PPTX files to `POST /upload-doc`. Successful responses are appended to the Uploaded Documents list from the returned `course_contents` row.
+
 ## Run With Docker
 
 From the repository root:
@@ -50,5 +58,5 @@ npm run lint
 ## Next Steps
 
 - Build `UploadPanel`, `DiffViewer`, and `ApprovalPanel` under `src/components/`.
-- Add API integration for upload, review, and approval flows.
+- Add review and approval API integration.
 - Expand the starter page into the professor review interface.

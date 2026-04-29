@@ -21,12 +21,14 @@ import type {
   Recommendation,
 } from "@/lib/material-enhancement/workspace";
 import {
+  createMaterialFromCourseContentRecord,
   generateRecommendations,
   getSelectedMaterial,
   getSelectedPreviewItem,
-  processUploadFiles,
   revokeMaterialObjectUrls,
+  validateUpload,
 } from "@/lib/material-enhancement/workspace";
+import { uploadCourseContent } from "@/lib/api/course-content";
 
 const EXPANDED_GRID_COLUMNS = "320px minmax(0,1fr) 320px";
 const COLLAPSED_GRID_COLUMNS = "84px minmax(0,1fr) 320px";
@@ -136,18 +138,68 @@ export function MaterialEnhancementWorkspace() {
     };
   }, []);
 
-  const appendMaterials = (files: File[]): AddMaterialsSubmitResult => {
-    const { materials: nextMaterials, rejected } = processUploadFiles(files);
+  const appendMaterials = async (files: File[]): Promise<AddMaterialsSubmitResult> => {
+    const acceptedFiles: File[] = [];
+    const rejected: Array<{ fileName: string; reason: string }> = [];
+
+    for (const file of files) {
+      const validationError = validateUpload(file);
+
+      if (validationError) {
+        rejected.push({ fileName: file.name, reason: validationError });
+        continue;
+      }
+
+      acceptedFiles.push(file);
+    }
 
     if (rejected.length > 0) {
       const rejectedNames = rejected.map((item) => item.fileName).join(", ");
       setToastMessage(`Some files were not added: ${rejectedNames}`);
     }
 
+    if (acceptedFiles.length === 0) {
+      return {
+        success: false,
+        errorMessage:
+          rejected[0]?.reason ?? "Add at least one supported file type before uploading.",
+      };
+    }
+
+    const nextMaterials: Material[] = [];
+    const failedUploads: Array<{ fileName: string; reason: string }> = [];
+
+    for (const file of acceptedFiles) {
+      try {
+        const record = await uploadCourseContent(file);
+        const material = createMaterialFromCourseContentRecord(file, record);
+
+        if (material) {
+          nextMaterials.push(material);
+        } else {
+          failedUploads.push({
+            fileName: file.name,
+            reason: "The upload succeeded, but the response could not be displayed.",
+          });
+        }
+      } catch (cause) {
+        failedUploads.push({
+          fileName: file.name,
+          reason: cause instanceof Error ? cause.message : "Upload failed.",
+        });
+      }
+    }
+
+    if (failedUploads.length > 0) {
+      const failedNames = failedUploads.map((item) => item.fileName).join(", ");
+      setToastMessage(`Some files failed to upload: ${failedNames}`);
+    }
+
     if (nextMaterials.length === 0) {
       return {
         success: false,
-        errorMessage: "Add at least one supported file type before uploading.",
+        errorMessage:
+          failedUploads[0]?.reason ?? "No files were uploaded to the database.",
       };
     }
 
@@ -167,11 +219,9 @@ export function MaterialEnhancementWorkspace() {
       ...new Set([...currentCheckedIds, ...nextMaterials.map((material) => material.id)]),
     ]);
 
-    if (materials.length > 0 && nextMaterials.length > 0) {
-      setToastMessage(
-        `${nextMaterials.length} material${nextMaterials.length > 1 ? "s" : ""} uploaded`,
-      );
-    }
+    setToastMessage(
+      `${nextMaterials.length} material${nextMaterials.length > 1 ? "s" : ""} uploaded to database`,
+    );
 
     return { success: true };
   };
@@ -198,7 +248,7 @@ export function MaterialEnhancementWorkspace() {
     files,
   }: {
     files: File[];
-  }): AddMaterialsSubmitResult => appendMaterials(files);
+  }): Promise<AddMaterialsSubmitResult> => appendMaterials(files);
 
   const handleShareProject = () => {
     setToastMessage("Share controls will connect to collaborative project actions later.");
@@ -234,10 +284,14 @@ export function MaterialEnhancementWorkspace() {
     setIsDragging(true);
   };
 
-  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+  const handleDrop = async (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragging(false);
-    appendMaterials(Array.from(event.dataTransfer.files));
+    const result = await appendMaterials(Array.from(event.dataTransfer.files));
+
+    if (!result.success) {
+      setToastMessage(result.errorMessage ?? "Unable to upload those materials.");
+    }
   };
 
   const handleSelectMaterial = (materialId: string) => {
@@ -337,6 +391,7 @@ export function MaterialEnhancementWorkspace() {
       />
 
       <CreateProjectModal
+        key={projectName}
         initialProjectName={projectName}
         isOpen={isCreateProjectModalOpen}
         onClose={() => setIsCreateProjectModalOpen(false)}

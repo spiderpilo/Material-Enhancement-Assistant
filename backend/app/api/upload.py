@@ -12,6 +12,7 @@ from app.services.supabase_service import (
 
 router = APIRouter()
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx"}
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 @router.post("/upload-doc", response_model=CourseContentRecord, status_code=status.HTTP_201_CREATED)
@@ -32,6 +33,12 @@ async def upload_doc(file: UploadFile = File(...)) -> CourseContentRecord:
 
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Uploaded file is too large. Max file size is 50MB.",
+        )
 
     try:
         return upload_course_content(filename=filename, file_bytes=file_bytes)

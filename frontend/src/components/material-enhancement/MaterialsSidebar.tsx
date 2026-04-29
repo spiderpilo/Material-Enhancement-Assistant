@@ -287,7 +287,7 @@ function EmptyMaterialsState({
         No materials uploaded yet
       </h3>
       <p className="mt-2 max-w-[220px] text-[13px] leading-[22px] text-[color:var(--text-secondary)]">
-        Upload slides, documents, or images to begin previewing and reviewing AI guidance.
+        Upload slides or documents to begin previewing and reviewing AI guidance.
       </p>
 
       <button

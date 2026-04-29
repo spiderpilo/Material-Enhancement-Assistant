@@ -47,16 +47,6 @@ export function CreateProjectModal({
       return;
     }
 
-    setProjectName(initialProjectName);
-    setHasTouchedProjectName(false);
-    setSubmitError(null);
-  }, [initialProjectName, isOpen]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
     const previousOverflow = document.body.style.overflow;
     const previousFocusedElement =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
