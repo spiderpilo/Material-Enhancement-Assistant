@@ -226,19 +226,66 @@ export function createMaterialFromCourseContentRecord(
     return null;
   }
 
+  return createMaterialFromRecord({
+    detectedType,
+    mimeType: file.type,
+    record,
+    uploadedAt: Date.now(),
+  });
+}
+
+export function createMaterialFromProjectMaterialRecord(
+  record: CourseContentRecord,
+): Material | null {
+  const extension = getCourseContentExtension(record.material_name);
+
+  if (!extension) {
+    return null;
+  }
+
+  const detectedType = {
+    extension,
+    kind: FILE_TYPE_BY_EXTENSION[extension],
+  };
+  const uploadedAt = record.uploaded_at ? Date.parse(record.uploaded_at) : Date.now();
+
+  return createMaterialFromRecord({
+    detectedType,
+    mimeType: getMimeTypeForExtension(extension),
+    record,
+    uploadedAt: Number.isFinite(uploadedAt) ? uploadedAt : Date.now(),
+  });
+}
+
+function createMaterialFromRecord({
+  detectedType,
+  mimeType,
+  record,
+  uploadedAt,
+}: {
+  detectedType: DetectedFileType;
+  mimeType: string;
+  record: CourseContentRecord;
+  uploadedAt: number;
+}): Material {
   return {
     id: `course-content-${record.id}`,
     name: record.material_name,
     extension: detectedType.extension,
     kind: detectedType.kind,
     size: record.data_size,
-    mimeType: file.type,
-    uploadedAt: Date.now(),
+    mimeType,
+    uploadedAt,
     accessUrl: record.access_url,
     databaseId: record.id,
     previewError: undefined,
     previewStatus: record.preview_status ?? "pending",
-    previewItems: generatePreviewItems(file, detectedType),
+    previewItems: createStatusPlaceholderItems(
+      detectedType.kind as Exclude<MaterialKind, "image">,
+      record.preview_status ?? "pending",
+      undefined,
+      `course-content-${record.id}-preview`,
+    ),
   };
 }
 
@@ -495,4 +542,17 @@ function createStatusPlaceholderItems(
       placeholderLayout: baseItem.placeholderLayout,
     },
   ];
+}
+
+function getMimeTypeForExtension(extension: AcceptedExtension): string {
+  switch (extension) {
+    case "pdf":
+      return "application/pdf";
+    case "docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "pptx":
+      return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    default:
+      return "application/octet-stream";
+  }
 }

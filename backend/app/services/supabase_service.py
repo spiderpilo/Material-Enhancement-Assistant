@@ -2,6 +2,7 @@ import json
 import logging
 import mimetypes
 import os
+from dataclasses import dataclass
 from typing import Any, Optional
 from urllib import error, parse, request
 from uuid import uuid4
@@ -15,6 +16,7 @@ from app.models.document_model import (
     PreviewStatus,
     SourceType,
 )
+from app.models.project_model import ProjectMaterialRecord, ProjectRecord
 from app.services.preview_service import DocumentPreviewError, render_course_content_previews
 from app.utils.file_utils import sanitize_filename
 
@@ -38,6 +40,22 @@ class PreviewNotFoundError(SupabaseServiceError):
 
 class InvalidCredentialsError(SupabaseServiceError):
     """Raised when login credentials are invalid."""
+
+
+class AuthenticationError(SupabaseServiceError):
+    """Raised when a request is missing valid user authentication."""
+
+
+class ProjectNotFoundError(SupabaseServiceError):
+    """Raised when a project does not exist or is not owned by the current user."""
+
+
+@dataclass(frozen=True)
+class AuthenticatedUser:
+    user_id: str
+    email: str
+    username: str
+    profession: str
 
 
 def login_account(*, email: str, password: str) -> LoginAccountResponse:
@@ -148,11 +166,161 @@ def create_account(*, email: str, password: str, username: str, profession: str)
     return CreateAccountResponse(auth_user_id=auth_user["id"], profile=profile)
 
 
-def upload_course_content(*, filename: str, file_bytes: bytes) -> CourseContentRecord:
+def list_projects_for_user(*, access_token: str, limit: int | None = None) -> list[ProjectRecord]:
     try:
         settings = get_supabase_settings()
     except ValueError as exc:
         raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+
+    projects = _fetch_project_rows_for_owner(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        owner_auth_user_id=auth_user.user_id,
+        limit=limit,
+    )
+
+    return [
+        _build_project_record(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            project_row=project,
+            include_materials=False,
+        )
+        for project in projects
+    ]
+
+
+def create_project_for_user(*, access_token: str, name: str) -> ProjectRecord:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    profile = _get_user_profile_optional(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        auth_user=auth_user,
+    )
+
+    project_row = _insert_project_record(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        name=name,
+        created_by=_build_project_creator_label(auth_user),
+        owner_auth_user_id=auth_user.user_id,
+    )
+
+    if profile:
+        try:
+            _insert_user_project_link(
+                url=settings.url,
+                service_role_key=settings.service_role_key,
+                user_id=profile.id,
+                project_id=_read_int(project_row, "id"),
+            )
+        except SupabaseServiceError as exc:
+            logger.warning("Skipping user_projects link for project_id=%s: %s", project_row.get("id"), exc)
+
+    return _build_project_record(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_row=project_row,
+        include_materials=True,
+    )
+
+
+def get_project_for_user(*, access_token: str, project_id: int) -> ProjectRecord:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    project_row = _fetch_owned_project_row(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project_id,
+        owner_auth_user_id=auth_user.user_id,
+    )
+
+    return _build_project_record(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_row=project_row,
+        include_materials=True,
+    )
+
+
+def update_project_for_user(*, access_token: str, project_id: int, name: str) -> ProjectRecord:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    _fetch_owned_project_row(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project_id,
+        owner_auth_user_id=auth_user.user_id,
+    )
+    updated_row = _update_project_record(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project_id,
+        name=name,
+    )
+
+    return _build_project_record(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_row=updated_row,
+        include_materials=True,
+    )
+
+
+def upload_course_content(
+    *,
+    filename: str,
+    file_bytes: bytes,
+    project_id: int,
+    access_token: str,
+) -> CourseContentRecord:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    _fetch_owned_project_row(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project_id,
+        owner_auth_user_id=auth_user.user_id,
+    )
 
     storage_path = _build_storage_path(filename)
     content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
@@ -179,6 +347,12 @@ def upload_course_content(*, filename: str, file_bytes: bytes) -> CourseContentR
             filename=filename,
             access_url=access_url,
             data_size=len(file_bytes),
+        )
+        _insert_project_material_link(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            project_id=project_id,
+            material_id=inserted_record.id,
         )
         source_type = _detect_source_type(filename)
         preview_record = inserted_record.model_copy(
@@ -215,6 +389,15 @@ def upload_course_content(*, filename: str, file_bytes: bytes) -> CourseContentR
         cleanup_messages: list[str] = []
 
         if "inserted_record" in locals():
+            cleanup_link_error = _delete_project_material_link(
+                url=settings.url,
+                service_role_key=settings.service_role_key,
+                project_id=project_id,
+                material_id=inserted_record.id,
+            )
+            if cleanup_link_error:
+                cleanup_messages.append(cleanup_link_error)
+
             cleanup_record_error = _delete_course_content_record(
                 url=settings.url,
                 service_role_key=settings.service_role_key,
@@ -422,6 +605,31 @@ def get_course_content_preview(*, course_content_id: int) -> CourseContentPrevie
     )
 
 
+def get_course_content_preview_for_user(
+    *,
+    access_token: str,
+    course_content_id: int,
+) -> CourseContentPreviewManifest:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    _assert_course_content_owned_by_username(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        course_content_id=course_content_id,
+        owner_auth_user_id=auth_user.user_id,
+    )
+
+    return get_course_content_preview(course_content_id=course_content_id)
+
+
 def _build_storage_path(filename: str) -> str:
     sanitized_filename = sanitize_filename(filename)
     return f"course-contents/{uuid4()}/{sanitized_filename}"
@@ -535,6 +743,542 @@ def _delete_supabase_auth_user(*, url: str, service_role_key: str, user_id: str)
         return str(exc)
 
     return None
+
+
+def _resolve_authenticated_user(
+    *,
+    url: str,
+    service_role_key: str,
+    access_token: str,
+) -> AuthenticatedUser:
+    if not access_token.strip():
+        raise AuthenticationError("Sign in required.")
+
+    auth_api_key = (
+        os.getenv("SUPABASE_ANON_KEY")
+        or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+        or service_role_key
+    )
+
+    try:
+        response_body = _send_request(
+            endpoint=f"{url.rstrip('/')}/auth/v1/user",
+            method="GET",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "apikey": auth_api_key,
+                "Accept": "application/json",
+            },
+            expected_statuses={200},
+        )
+    except SupabaseServiceError as exc:
+        raise AuthenticationError("Sign in required.") from exc
+
+    payload = _decode_json_payload(response_body, "Supabase auth user")
+    if not isinstance(payload, dict):
+        raise AuthenticationError("Supabase did not return a valid auth user.")
+
+    user_id = payload.get("id")
+    email = payload.get("email")
+    metadata = payload.get("user_metadata") if isinstance(payload.get("user_metadata"), dict) else {}
+    metadata_username = metadata.get("username")
+    profession = metadata.get("profession")
+
+    if not isinstance(user_id, str) or not user_id.strip():
+        raise AuthenticationError("Supabase auth user is missing an id.")
+    if not isinstance(email, str):
+        email = ""
+    username = metadata_username if isinstance(metadata_username, str) else ""
+    if not isinstance(profession, str):
+        profession = ""
+
+    return AuthenticatedUser(
+        user_id=user_id,
+        email=email,
+        username=username.strip(),
+        profession=profession.strip(),
+    )
+
+
+def _get_user_profile_optional(
+    *,
+    url: str,
+    service_role_key: str,
+    auth_user: AuthenticatedUser,
+) -> UserProfileRecord | None:
+    if not auth_user.username:
+        return None
+
+    profile = _fetch_user_profile_by_username(
+        url=url,
+        service_role_key=service_role_key,
+        username=auth_user.username,
+    )
+    if profile:
+        return profile
+
+    if auth_user.profession not in {"student", "professor"}:
+        return None
+
+    return _insert_user_profile(
+        url=url,
+        service_role_key=service_role_key,
+        username=auth_user.username,
+        profession=auth_user.profession,
+    )
+
+
+def _build_project_creator_label(auth_user: AuthenticatedUser) -> str:
+    return auth_user.username or auth_user.email or auth_user.user_id
+
+
+def _fetch_user_profile_by_username(
+    *,
+    url: str,
+    service_role_key: str,
+    username: str,
+) -> UserProfileRecord | None:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/users"
+        f"?username=eq.{parse.quote(username, safe='')}&select=*"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+    rows = _decode_json_rows(response_body, "users")
+
+    if not rows:
+        return None
+
+    return UserProfileRecord.model_validate(rows[0])
+
+
+def _fetch_project_rows_for_owner(
+    *,
+    url: str,
+    service_role_key: str,
+    owner_auth_user_id: str,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    limit_clause = f"&limit={limit}" if isinstance(limit, int) and limit > 0 else ""
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/projects"
+        f"?owner_auth_user_id=eq.{parse.quote(owner_auth_user_id, safe='')}"
+        "&select=*&order=created_on.desc.nullslast,id.desc"
+        f"{limit_clause}"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+
+    return _decode_json_rows(response_body, "projects")
+
+
+def _fetch_owned_project_row(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    owner_auth_user_id: str,
+) -> dict[str, Any]:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/projects"
+        f"?id=eq.{project_id}&owner_auth_user_id=eq.{parse.quote(owner_auth_user_id, safe='')}&select=*"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+    rows = _decode_json_rows(response_body, "projects")
+
+    if not rows:
+        raise ProjectNotFoundError("Project was not found.")
+
+    return rows[0]
+
+
+def _insert_project_record(
+    *,
+    url: str,
+    service_role_key: str,
+    name: str,
+    created_by: str,
+    owner_auth_user_id: str,
+) -> dict[str, Any]:
+    payload = json.dumps(
+        {
+            "name": name,
+            "created_by": created_by,
+            "owner_auth_user_id": owner_auth_user_id,
+        }
+    ).encode("utf-8")
+
+    response_body = _send_request(
+        endpoint=f"{url.rstrip('/')}/rest/v1/projects",
+        method="POST",
+        data=payload,
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Prefer": "return=representation",
+        },
+        expected_statuses={200, 201},
+    )
+    rows = _decode_json_rows(response_body, "projects")
+
+    if not rows:
+        raise SupabaseServiceError("Supabase did not return the inserted projects row.")
+
+    return rows[0]
+
+
+def _update_project_record(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    name: str,
+) -> dict[str, Any]:
+    payload = json.dumps({"name": name}).encode("utf-8")
+
+    response_body = _send_request(
+        endpoint=f"{url.rstrip('/')}/rest/v1/projects?id=eq.{project_id}",
+        method="PATCH",
+        data=payload,
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Prefer": "return=representation",
+        },
+        expected_statuses={200, 204},
+    )
+    rows = _decode_json_rows(response_body, "projects") if response_body else []
+
+    if not rows:
+        raise ProjectNotFoundError("Project was not found.")
+
+    return rows[0]
+
+
+def _delete_project_record(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+) -> Optional[str]:
+    endpoint = f"{url.rstrip('/')}/rest/v1/projects?id=eq.{project_id}"
+
+    try:
+        _send_request(
+            endpoint=endpoint,
+            method="DELETE",
+            headers={
+                **_build_auth_headers(service_role_key),
+                "Accept": "application/json",
+            },
+            expected_statuses={200, 204},
+        )
+    except SupabaseServiceError as exc:
+        return str(exc)
+
+    return None
+
+
+def _insert_user_project_link(
+    *,
+    url: str,
+    service_role_key: str,
+    user_id: int,
+    project_id: int,
+) -> None:
+    payload = json.dumps(
+        {
+            "user_id": user_id,
+            "project_id": project_id,
+        }
+    ).encode("utf-8")
+
+    _send_request(
+        endpoint=f"{url.rstrip('/')}/rest/v1/user_projects",
+        method="POST",
+        data=payload,
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        expected_statuses={200, 201},
+    )
+
+
+def _insert_project_material_link(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    material_id: int,
+) -> None:
+    payload = json.dumps(
+        {
+            "project_id": project_id,
+            "material_id": material_id,
+        }
+    ).encode("utf-8")
+
+    _send_request(
+        endpoint=f"{url.rstrip('/')}/rest/v1/project_materials",
+        method="POST",
+        data=payload,
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        expected_statuses={200, 201},
+    )
+
+
+def _delete_project_material_link(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    material_id: int,
+) -> Optional[str]:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/project_materials"
+        f"?project_id=eq.{project_id}&material_id=eq.{material_id}"
+    )
+
+    try:
+        _send_request(
+            endpoint=endpoint,
+            method="DELETE",
+            headers={
+                **_build_auth_headers(service_role_key),
+                "Accept": "application/json",
+            },
+            expected_statuses={200, 204},
+        )
+    except SupabaseServiceError as exc:
+        return str(exc)
+
+    return None
+
+
+def _build_project_record(
+    *,
+    url: str,
+    service_role_key: str,
+    project_row: dict[str, Any],
+    include_materials: bool,
+) -> ProjectRecord:
+    project_id = _read_int(project_row, "id")
+    material_links = _fetch_project_material_links(
+        url=url,
+        service_role_key=service_role_key,
+        project_id=project_id,
+    )
+    materials = (
+        _fetch_project_material_records(
+            url=url,
+            service_role_key=service_role_key,
+            material_links=material_links,
+        )
+        if include_materials
+        else []
+    )
+    last_updated = _read_latest_project_material_timestamp(material_links)
+
+    return ProjectRecord.model_validate(
+        {
+            **project_row,
+            "materials": materials,
+            "material_count": len(material_links),
+            "last_updated": last_updated,
+        }
+    )
+
+
+def _fetch_project_material_links(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+) -> list[dict[str, Any]]:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/project_materials"
+        f"?project_id=eq.{project_id}&select=created_at,material_id&order=created_at.desc"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+
+    return _decode_json_rows(response_body, "project_materials")
+
+
+def _fetch_project_material_records(
+    *,
+    url: str,
+    service_role_key: str,
+    material_links: list[dict[str, Any]],
+) -> list[ProjectMaterialRecord]:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    material_ids = [
+        material_id
+        for material_id in (_read_optional_int(link, "material_id") for link in material_links)
+        if material_id is not None
+    ]
+    if not material_ids:
+        return []
+
+    records_by_id = _fetch_course_content_records_by_id(
+        url=url,
+        service_role_key=service_role_key,
+        material_ids=material_ids,
+    )
+    materials: list[ProjectMaterialRecord] = []
+
+    for link in material_links:
+        material_id = _read_optional_int(link, "material_id")
+        if material_id is None or material_id not in records_by_id:
+            continue
+
+        base_record = CourseContentRecord.model_validate(records_by_id[material_id])
+        preview_status_payload = _download_preview_status(
+            url=url,
+            service_role_key=service_role_key,
+            bucket=settings.storage_bucket,
+            course_content_id=base_record.id,
+        )
+        source_type = base_record.source_type or _detect_source_type(base_record.material_name)
+        preview_status = preview_status_payload.get("preview_status", base_record.preview_status)
+        preview_count = preview_status_payload.get("preview_count", base_record.preview_count)
+        if preview_status not in {"pending", "ready", "failed"}:
+            preview_status = base_record.preview_status
+        if not isinstance(preview_count, int):
+            preview_count = base_record.preview_count
+
+        materials.append(
+            ProjectMaterialRecord.model_validate(
+                {
+                    **base_record.model_dump(),
+                    "source_type": source_type,
+                    "preview_status": preview_status,
+                    "preview_count": preview_count,
+                    "uploaded_at": link.get("created_at"),
+                }
+            )
+        )
+
+    return materials
+
+
+def _assert_course_content_owned_by_username(
+    *,
+    url: str,
+    service_role_key: str,
+    course_content_id: int,
+    owner_auth_user_id: str,
+) -> None:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/project_materials"
+        f"?material_id=eq.{course_content_id}&select=project_id"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+    rows = _decode_json_rows(response_body, "project_materials")
+
+    for row in rows:
+        project_id = _read_optional_int(row, "project_id")
+        if project_id is None:
+            continue
+        try:
+            _fetch_owned_project_row(
+                url=url,
+                service_role_key=service_role_key,
+                project_id=project_id,
+                owner_auth_user_id=owner_auth_user_id,
+            )
+            return
+        except ProjectNotFoundError:
+            continue
+
+    raise ProjectNotFoundError("Course content was not found.")
+
+
+def _fetch_course_content_records_by_id(
+    *,
+    url: str,
+    service_role_key: str,
+    material_ids: list[int],
+) -> dict[int, dict[str, Any]]:
+    encoded_ids = ",".join(str(material_id) for material_id in material_ids)
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/course_contents"
+        f"?id=in.({encoded_ids})&select=*"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+    rows = _decode_json_rows(response_body, "course_contents")
+    records_by_id: dict[int, dict[str, Any]] = {}
+
+    for row in rows:
+        row_id = _read_optional_int(row, "id")
+        if row_id is not None:
+            records_by_id[row_id] = row
+
+    return records_by_id
+
+
+def _read_latest_project_material_timestamp(material_links: list[dict[str, Any]]) -> Any:
+    if not material_links:
+        return None
+
+    return material_links[0].get("created_at")
 
 
 def _upload_storage_object(
@@ -1019,6 +1763,40 @@ def _is_missing_storage_object_error(*, status_code: int, response_body: bytes) 
         or error_text == "not_found"
         or message_text == "object not found"
     )
+
+
+def _decode_json_payload(response_body: bytes, label: str) -> Any:
+    try:
+        return json.loads(response_body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SupabaseServiceError(f"Supabase returned an unreadable {label} response.") from exc
+
+
+def _decode_json_rows(response_body: bytes, label: str) -> list[dict[str, Any]]:
+    payload = _decode_json_payload(response_body, label)
+
+    if not isinstance(payload, list):
+        raise SupabaseServiceError(f"Supabase did not return valid {label} rows.")
+
+    return [row for row in payload if isinstance(row, dict)]
+
+
+def _read_int(row: dict[str, Any], field: str) -> int:
+    value = _read_optional_int(row, field)
+    if value is None:
+        raise SupabaseServiceError(f"Supabase row is missing integer field {field}.")
+
+    return value
+
+
+def _read_optional_int(row: dict[str, Any], field: str) -> int | None:
+    value = row.get(field)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+
+    return None
 
 
 def _extract_error_message(response_body: bytes) -> str:

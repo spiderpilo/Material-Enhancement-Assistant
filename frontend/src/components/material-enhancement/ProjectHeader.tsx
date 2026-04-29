@@ -150,7 +150,10 @@ function EditableProjectTitle({
   return (
     <button
       type="button"
-      onClick={() => setIsEditing(true)}
+      onClick={() => {
+        setDraftProjectName(projectName);
+        setIsEditing(true);
+      }}
       className="group flex min-w-0 items-center gap-2 rounded-[12px] px-2 py-2 text-left transition hover:bg-[rgba(255,255,255,0.03)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.2)]"
       aria-label="Edit project title"
     >

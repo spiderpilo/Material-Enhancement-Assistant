@@ -23,21 +23,34 @@ import type {
 import {
   applyPreviewManifestToMaterial,
   createMaterialFromCourseContentRecord,
+  createMaterialFromProjectMaterialRecord,
   generateRecommendations,
   getSelectedMaterial,
   getSelectedPreviewItem,
   revokeMaterialObjectUrls,
   validateUpload,
 } from "@/lib/material-enhancement/workspace";
+import { getStoredAccessToken } from "@/lib/api/auth";
 import { getCourseContentPreview, uploadCourseContent } from "@/lib/api/course-content";
+import {
+  createProject,
+  getProject,
+  listProjects,
+  updateProjectName,
+  type Project,
+} from "@/lib/api/projects";
 
 const EXPANDED_GRID_COLUMNS = "320px minmax(0,1fr) 320px";
 const COLLAPSED_GRID_COLUMNS = "84px minmax(0,1fr) 320px";
 const PREVIEW_POLL_INTERVAL_MS = 1400;
 const PREVIEW_POLL_ATTEMPTS = 40;
+const DEFAULT_PROJECT_NAME = "Untitled project";
 
 export function MaterialEnhancementWorkspace() {
-  const [projectName, setProjectName] = useState("");
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(true);
+  const [isLoadingProject, setIsLoadingProject] = useState(false);
   const [isAddMaterialsModalOpen, setIsAddMaterialsModalOpen] = useState(false);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
@@ -53,7 +66,10 @@ export function MaterialEnhancementWorkspace() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const isMountedRef = useRef(true);
   const selectedMaterialIdRef = useRef<string | null>(null);
+  const selectedProjectIdRef = useRef<number | null>(null);
 
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  const projectName = selectedProject?.name ?? "";
   const selectedMaterial = getSelectedMaterial(materials, selectedMaterialId);
   const selectedPreviewItem = getSelectedPreviewItem(
     selectedMaterial,
@@ -70,6 +86,10 @@ export function MaterialEnhancementWorkspace() {
   useEffect(() => {
     selectedMaterialIdRef.current = selectedMaterialId;
   }, [selectedMaterialId]);
+
+  useEffect(() => {
+    selectedProjectIdRef.current = selectedProjectId;
+  }, [selectedProjectId]);
 
   useEffect(() => {
     return () => {
@@ -97,10 +117,127 @@ export function MaterialEnhancementWorkspace() {
     };
   }, [toastMessage]);
 
-  const syncPreviewManifest = async (materialId: string, databaseId: number) => {
+  useEffect(() => {
+    const accessToken = getStoredAccessToken();
+
+    if (!accessToken) {
+      setIsLoadingProjects(false);
+      setToastMessage("Sign in to load your projects.");
+      return;
+    }
+
+    const signedInAccessToken = accessToken;
+    let isCancelled = false;
+
+    async function loadInitialProjects() {
+      setIsLoadingProjects(true);
+
+      try {
+        const nextProjects = await listProjects(signedInAccessToken, 1);
+
+        if (isCancelled || !isMountedRef.current) {
+          return;
+        }
+
+        setProjects(nextProjects);
+
+        if (nextProjects[0]) {
+          await loadProjectById(nextProjects[0].id, signedInAccessToken);
+        } else {
+          const project = await createProject({
+            accessToken: signedInAccessToken,
+            name: DEFAULT_PROJECT_NAME,
+          });
+          applyProjectDetail(project, signedInAccessToken);
+        }
+      } catch (cause) {
+        if (!isCancelled && isMountedRef.current) {
+          setToastMessage(cause instanceof Error ? cause.message : "Unable to load projects.");
+        }
+      } finally {
+        if (!isCancelled && isMountedRef.current) {
+          setIsLoadingProjects(false);
+        }
+      }
+    }
+
+    void loadInitialProjects();
+
+    return () => {
+      isCancelled = true;
+    };
+    // Initial project hydration runs once; later loads are user-driven.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const applyProjectDetail = (project: Project, accessToken: string) => {
+    const nextMaterials = project.materials
+      .map((record) => createMaterialFromProjectMaterialRecord(record))
+      .filter((material): material is Material => Boolean(material));
+    const firstMaterial = nextMaterials[0];
+
+    setProjects((currentProjects) => {
+      const withoutProject = currentProjects.filter((item) => item.id !== project.id);
+      return [project, ...withoutProject].sort((firstProject, secondProject) => {
+        const firstTime = Date.parse(firstProject.created_on ?? "");
+        const secondTime = Date.parse(secondProject.created_on ?? "");
+        return (Number.isFinite(secondTime) ? secondTime : 0) - (Number.isFinite(firstTime) ? firstTime : 0);
+      });
+    });
+    setSelectedProjectId(project.id);
+    setMaterials(nextMaterials);
+    setCheckedMaterialIds([]);
+    setSelectedMaterialId(firstMaterial?.id ?? null);
+    setSelectedPreviewItemId(firstMaterial?.previewItems[0]?.id ?? null);
+
+    for (const material of nextMaterials) {
+      if (material.databaseId) {
+        void syncPreviewManifest(material.id, material.databaseId, accessToken);
+      }
+    }
+  };
+
+  const loadProjectById = async (projectId: number, accessToken: string) => {
+    setIsLoadingProject(true);
+
+    try {
+      const project = await getProject({ accessToken, projectId });
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      applyProjectDetail(project, accessToken);
+    } catch (cause) {
+      if (isMountedRef.current) {
+        setToastMessage(cause instanceof Error ? cause.message : "Unable to load project.");
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsLoadingProject(false);
+      }
+    }
+  };
+
+  const ensureActiveProject = async (accessToken: string): Promise<Project> => {
+    const activeProject = projects.find((project) => project.id === selectedProjectIdRef.current);
+    if (activeProject) {
+      return activeProject;
+    }
+
+    const project = await createProject({ accessToken, name: DEFAULT_PROJECT_NAME });
+    applyProjectDetail(project, accessToken);
+    return project;
+  };
+
+  const syncPreviewManifest = async (
+    materialId: string,
+    databaseId: number,
+    accessToken: string,
+  ) => {
     for (let attempt = 0; attempt < PREVIEW_POLL_ATTEMPTS; attempt += 1) {
       try {
-        const manifest = await getCourseContentPreview(databaseId);
+        const manifest = await getCourseContentPreview(databaseId, accessToken);
 
         if (!isMountedRef.current) {
           return;
@@ -222,6 +359,35 @@ export function MaterialEnhancementWorkspace() {
   }, []);
 
   const appendMaterials = async (files: File[]): Promise<AddMaterialsSubmitResult> => {
+    const accessToken = getStoredAccessToken();
+
+    if (!accessToken) {
+      return {
+        success: false,
+        errorMessage: "Sign in before uploading materials.",
+      };
+    }
+
+    let activeProjectId = selectedProjectIdRef.current;
+    if (!activeProjectId) {
+      try {
+        const project = await ensureActiveProject(accessToken);
+        activeProjectId = project.id;
+      } catch (cause) {
+        return {
+          success: false,
+          errorMessage: cause instanceof Error ? cause.message : "Unable to create a project.",
+        };
+      }
+    }
+
+    if (!activeProjectId) {
+      return {
+        success: false,
+        errorMessage: "Unable to select a project for this upload.",
+      };
+    }
+
     const acceptedFiles: File[] = [];
     const rejected: Array<{ fileName: string; reason: string }> = [];
 
@@ -255,7 +421,11 @@ export function MaterialEnhancementWorkspace() {
 
     for (const file of acceptedFiles) {
       try {
-        const record = await uploadCourseContent(file);
+        const record = await uploadCourseContent({
+          accessToken,
+          file,
+          projectId: activeProjectId,
+        });
         const material = createMaterialFromCourseContentRecord(file, record);
 
         if (material) {
@@ -305,6 +475,18 @@ export function MaterialEnhancementWorkspace() {
       return mergedMaterials;
     });
 
+    setProjects((currentProjects) =>
+      currentProjects.map((project) =>
+        project.id === activeProjectId
+          ? {
+              ...project,
+              material_count: project.material_count + nextMaterials.length,
+              last_updated: new Date().toISOString(),
+            }
+          : project,
+      ),
+    );
+
     setCheckedMaterialIds((currentCheckedIds) => [
       ...new Set([...currentCheckedIds, ...nextMaterials.map((material) => material.id)]),
     ]);
@@ -314,7 +496,7 @@ export function MaterialEnhancementWorkspace() {
     );
 
     for (const previewTarget of previewTargets) {
-      void syncPreviewManifest(previewTarget.materialId, previewTarget.databaseId);
+      void syncPreviewManifest(previewTarget.materialId, previewTarget.databaseId, accessToken);
     }
 
     return { success: true };
@@ -324,17 +506,47 @@ export function MaterialEnhancementWorkspace() {
     setIsCreateProjectModalOpen(true);
   };
 
-  const handleCreateProjectSubmit = ({
+  const handleCreateProjectSubmit = async ({
     projectName: nextProjectName,
   }: {
     projectName: string;
-  }): CreateProjectSubmitResult => {
-    setProjectName(nextProjectName);
-    setToastMessage(`Project name updated to "${nextProjectName}".`);
-    return { success: true };
+  }): Promise<CreateProjectSubmitResult> => {
+    const accessToken = getStoredAccessToken();
+
+    if (!accessToken) {
+      return { success: false, errorMessage: "Sign in before creating a project." };
+    }
+
+    try {
+      const project = await createProject({ accessToken, name: nextProjectName });
+      applyProjectDetail(project, accessToken);
+      setToastMessage(`Project "${project.name}" created.`);
+      return { success: true };
+    } catch (cause) {
+      return {
+        success: false,
+        errorMessage: cause instanceof Error ? cause.message : "Unable to create project.",
+      };
+    }
   };
 
-  const handleAddMaterials = () => {
+  const handleAddMaterials = async () => {
+    const accessToken = getStoredAccessToken();
+
+    if (!accessToken) {
+      setToastMessage("Sign in before uploading materials.");
+      return;
+    }
+
+    if (!selectedProjectIdRef.current) {
+      try {
+        await ensureActiveProject(accessToken);
+      } catch (cause) {
+        setToastMessage(cause instanceof Error ? cause.message : "Unable to create a project.");
+        return;
+      }
+    }
+
     setIsAddMaterialsModalOpen(true);
   };
 
@@ -358,6 +570,47 @@ export function MaterialEnhancementWorkspace() {
 
   const handleOpenHelp = () => {
     setToastMessage("Help actions will connect to guidance and support flows later.");
+  };
+
+  const handleProjectNameChange = (nextProjectName: string) => {
+    const accessToken = getStoredAccessToken();
+    const activeProject = selectedProject;
+
+    if (!accessToken || !activeProject) {
+      setToastMessage("Select a project before renaming it.");
+      return;
+    }
+
+    const previousProjectName = activeProject.name;
+    setProjects((currentProjects) =>
+      currentProjects.map((project) =>
+        project.id === activeProject.id ? { ...project, name: nextProjectName } : project,
+      ),
+    );
+
+    void updateProjectName({
+      accessToken,
+      name: nextProjectName,
+      projectId: activeProject.id,
+    })
+      .then((project) => {
+        setProjects((currentProjects) =>
+          currentProjects.map((currentProject) =>
+            currentProject.id === project.id
+              ? { ...currentProject, ...project, materials: currentProject.materials }
+              : currentProject,
+          ),
+        );
+        setToastMessage(`Project name updated to "${project.name}".`);
+      })
+      .catch((cause) => {
+        setProjects((currentProjects) =>
+          currentProjects.map((project) =>
+            project.id === activeProject.id ? { ...project, name: previousProjectName } : project,
+          ),
+        );
+        setToastMessage(cause instanceof Error ? cause.message : "Unable to rename project.");
+      });
   };
 
   const handleDragEnter = (event: DragEvent<HTMLDivElement>) => {
@@ -425,7 +678,7 @@ export function MaterialEnhancementWorkspace() {
           onCreateProject={handleCreateProject}
           onOpenProfile={handleOpenProfile}
           onOpenSettings={handleOpenSettings}
-          onProjectNameChange={setProjectName}
+          onProjectNameChange={handleProjectNameChange}
           onShareProject={handleShareProject}
         />
 
@@ -441,6 +694,7 @@ export function MaterialEnhancementWorkspace() {
             checkedMaterialIds={checkedMaterialIds}
             isCollapsed={isLeftPanelCollapsed}
             isDragging={isDragging}
+            isLoadingSources={isLoadingProjects || isLoadingProject}
             materials={materials}
             onDragEnter={handleDragEnter}
             onDragLeave={handleDragLeave}

@@ -13,7 +13,7 @@ type CreateProjectModalProps = {
   initialProjectName: string;
   isOpen: boolean;
   onClose: () => void;
-  onCreateProject: (args: { projectName: string }) => CreateProjectSubmitResult;
+  onCreateProject: (args: { projectName: string }) => CreateProjectSubmitResult | Promise<CreateProjectSubmitResult>;
 };
 
 export function CreateProjectModal({
@@ -24,6 +24,7 @@ export function CreateProjectModal({
 }: CreateProjectModalProps) {
   const [projectName, setProjectName] = useState(initialProjectName);
   const [hasTouchedProjectName, setHasTouchedProjectName] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const projectNameInputRef = useRef<HTMLInputElement>(null);
@@ -34,6 +35,7 @@ export function CreateProjectModal({
   const resetModalState = useCallback(() => {
     setProjectName(initialProjectName);
     setHasTouchedProjectName(false);
+    setIsSubmitting(false);
     setSubmitError(null);
   }, [initialProjectName]);
 
@@ -108,14 +110,16 @@ export function CreateProjectModal({
     return null;
   }
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (trimmedProjectName.length === 0) {
       setHasTouchedProjectName(true);
       projectNameInputRef.current?.focus();
       return;
     }
 
-    const result = onCreateProject({ projectName: trimmedProjectName });
+    setIsSubmitting(true);
+    const result = await onCreateProject({ projectName: trimmedProjectName });
+    setIsSubmitting(false);
 
     if (!result.success) {
       setSubmitError(result.errorMessage ?? "Unable to save this project name.");
@@ -219,10 +223,11 @@ export function CreateProjectModal({
           <button
             type="button"
             onClick={handleSubmit}
+            disabled={isSubmitting}
             className="inline-flex h-12 min-w-[180px] items-center justify-center gap-3 rounded-full bg-[linear-gradient(180deg,#DDF598_0%,#D0F07E_100%)] px-6 text-[16px] font-semibold tracking-[-0.03em] text-[#10120E] shadow-[0_22px_42px_rgba(143,173,73,0.18)] transition duration-200 hover:-translate-y-0.5 hover:brightness-[1.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.28)]"
           >
             <AddIcon className="h-[18px] w-[18px]" />
-            Save Project
+            {isSubmitting ? "Saving..." : "Save Project"}
           </button>
         </div>
       </section>

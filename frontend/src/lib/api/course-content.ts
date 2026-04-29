@@ -16,6 +16,7 @@ export type CourseContentRecord = {
   source_type?: CourseContentSourceType | null;
   preview_status?: CourseContentPreviewStatus;
   preview_count?: number;
+  uploaded_at?: string | null;
 };
 
 export type CourseContentPreviewItem = {
@@ -44,7 +45,15 @@ export type CourseContentPreviewManifest = {
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
 const SUPPORTED_EXTENSION_SET = new Set<string>(SUPPORTED_COURSE_CONTENT_EXTENSIONS);
 
-export async function uploadCourseContent(file: File): Promise<CourseContentRecord> {
+export async function uploadCourseContent({
+  accessToken,
+  file,
+  projectId,
+}: {
+  accessToken: string;
+  file: File;
+  projectId: number;
+}): Promise<CourseContentRecord> {
   const validationError = getCourseContentFileValidationError(file);
 
   if (validationError) {
@@ -52,10 +61,14 @@ export async function uploadCourseContent(file: File): Promise<CourseContentReco
   }
 
   const formData = new FormData();
+  formData.append("project_id", String(projectId));
   formData.append("file", file);
 
   const response = await fetch(`${getApiBaseUrl()}/upload-doc`, {
     method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
     body: formData,
   });
 
@@ -76,9 +89,13 @@ export async function uploadCourseContent(file: File): Promise<CourseContentReco
 
 export async function getCourseContentPreview(
   courseContentId: number,
+  accessToken: string,
 ): Promise<CourseContentPreviewManifest> {
   const response = await fetch(`${getApiBaseUrl()}/course-contents/${courseContentId}/preview`, {
     method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
   });
 
   const payload = (await response.json().catch(() => ({}))) as
@@ -135,7 +152,7 @@ export function getCourseContentExtension(
   return extension as SupportedCourseContentExtension;
 }
 
-function getApiBaseUrl(): string {
+export function getApiBaseUrl(): string {
   const configuredUrl =
     process.env.NEXT_PUBLIC_API_BASE_URL ||
     process.env.NEXT_PUBLIC_BACKEND_URL ||

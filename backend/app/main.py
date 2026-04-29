@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.account import router as account_router
+from app.api.projects import router as projects_router
 from app.api.upload import router as upload_router
 
 
@@ -17,6 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(account_router)
+app.include_router(projects_router)
 app.include_router(upload_router)
 
 @app.get("/")

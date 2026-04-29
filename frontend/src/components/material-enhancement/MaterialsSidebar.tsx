@@ -19,6 +19,7 @@ type MaterialsSidebarProps = {
   checkedMaterialIds: string[];
   isCollapsed: boolean;
   isDragging: boolean;
+  isLoadingSources: boolean;
   materials: Material[];
   onDragEnter: (event: DragEvent<HTMLDivElement>) => void;
   onDragLeave: (event: DragEvent<HTMLDivElement>) => void;
@@ -37,6 +38,7 @@ export function MaterialsSidebar({
   checkedMaterialIds,
   isCollapsed,
   isDragging,
+  isLoadingSources,
   materials,
   onDragEnter,
   onDragLeave,
@@ -148,34 +150,39 @@ export function MaterialsSidebar({
       onDrop={onDrop}
     >
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-[16px] font-bold tracking-[-0.045em] text-[color:var(--text-primary)]">
-          Materials
+        <h2 className="text-[16px] font-bold text-[color:var(--text-primary)]">
+          Sources
         </h2>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onOpenAddMaterials}
-            className="shadow-card-soft inline-flex h-9 items-center gap-2 rounded-[12px] bg-[color:var(--accent-green)] px-4 text-[12.7px] font-bold text-[#1c1917] transition hover:brightness-[1.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--bg-app-alt)]"
-          >
-            <AddIcon className="h-[18px] w-[18px]" />
-            Add Materials
-          </button>
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] text-[color:var(--accent-cream)] transition hover:bg-[rgba(255,255,255,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
+          aria-label="Collapse materials sidebar"
+        >
+          <PanelCollapseIcon className="h-[18px] w-[18px]" />
+        </button>
+      </div>
 
-          <button
-            type="button"
-            onClick={onToggleCollapsed}
-            className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] text-[color:var(--accent-cream)] transition hover:bg-[rgba(255,255,255,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
-            aria-label="Collapse materials sidebar"
-          >
-            <PanelCollapseIcon className="h-[18px] w-[18px]" />
-          </button>
-        </div>
+      <div className="mt-5">
+        <button
+          type="button"
+          onClick={onOpenAddMaterials}
+          className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.04)] px-4 text-[13px] font-semibold text-[color:var(--text-primary)] transition hover:bg-[rgba(255,255,255,0.07)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
+        >
+          <AddIcon className="h-[18px] w-[18px]" />
+          Add sources
+        </button>
       </div>
 
       <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
-        {materials.length === 0 ? (
-          <EmptyMaterialsState isDragging={isDragging} onOpenAddMaterials={onOpenAddMaterials} />
+        {isLoadingSources ? (
+          <PanelMessage label="Loading sources" />
+        ) : materials.length === 0 ? (
+          <EmptyMaterialsState
+            isDragging={isDragging}
+            onOpenAddMaterials={onOpenAddMaterials}
+          />
         ) : (
           <div className="space-y-3">
             {materials.map((material) => {
@@ -263,6 +270,14 @@ export function MaterialsSidebar({
   );
 }
 
+function PanelMessage({ label }: { label: string }) {
+  return (
+    <div className="rounded-[16px] border border-[rgba(255,255,255,0.07)] bg-[rgba(255,255,255,0.04)] px-4 py-4 text-[12px] font-semibold text-[color:var(--text-muted)]">
+      {label}
+    </div>
+  );
+}
+
 function EmptyMaterialsState({
   isDragging,
   onOpenAddMaterials,
@@ -284,10 +299,10 @@ function EmptyMaterialsState({
       </div>
 
       <h3 className="text-[16px] font-bold tracking-[-0.04em] text-[color:var(--text-primary)]">
-        No materials uploaded yet
+        Saved sources will appear here
       </h3>
       <p className="mt-2 max-w-[220px] text-[13px] leading-[22px] text-[color:var(--text-secondary)]">
-        Upload slides or documents to begin previewing and reviewing AI guidance.
+        Add PDFs, DOCX, or PPTX files to personalize this project workspace.
       </p>
 
       <button
@@ -295,7 +310,7 @@ function EmptyMaterialsState({
         onClick={onOpenAddMaterials}
         className="mt-6 inline-flex h-10 items-center rounded-[12px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] px-4 text-[12.5px] font-semibold text-[color:var(--text-primary)] transition hover:bg-[rgba(255,255,255,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
       >
-        Choose files
+        Add sources
       </button>
 
       <p className="mt-5 max-w-[230px] text-[10px] uppercase tracking-[0.14em] text-[color:var(--text-subtle)]">
