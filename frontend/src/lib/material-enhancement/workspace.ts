@@ -1,5 +1,7 @@
 import {
   type CourseContentRecord,
+  type CourseContentPreviewManifest,
+  type CourseContentPreviewStatus,
   SUPPORTED_COURSE_CONTENT_ACCEPT,
   formatCourseContentSize,
   getCourseContentExtension,
@@ -41,6 +43,8 @@ export type Material = {
   uploadedAt: number;
   accessUrl?: string;
   databaseId?: number;
+  previewError?: string;
+  previewStatus: CourseContentPreviewStatus;
   previewItems: PreviewItem[];
 };
 
@@ -72,78 +76,28 @@ const FILE_TYPE_BY_EXTENSION: Record<AcceptedExtension, MaterialKind> = {
   pptx: "ppt",
 };
 
-const PREVIEW_COPY: Record<
+const PENDING_PREVIEW_COPY: Record<
   Exclude<MaterialKind, "image">,
-  Array<{ label: string; title: string; subtitle: string; placeholderLayout: PlaceholderLayout }>
+  { label: string; title: string; subtitle: string; placeholderLayout: PlaceholderLayout }
 > = {
-  pdf: [
-    {
-      label: "Page 1",
-      title: "Overview page",
-      subtitle: "Structured page placeholder while PDF parsing is being connected.",
-      placeholderLayout: "document",
-    },
-    {
-      label: "Page 2",
-      title: "Annotated page",
-      subtitle:
-        "Paragraph and callout placement will update when real page extraction is available.",
-      placeholderLayout: "document",
-    },
-    {
-      label: "Page 3",
-      title: "Reference page",
-      subtitle:
-        "Page sequencing is ready for future parsed thumbnails and annotations.",
-      placeholderLayout: "document",
-    },
-  ],
-  ppt: [
-    {
-      label: "Slide 1",
-      title: "Title slide",
-      subtitle:
-        "Structured slide placeholder while presentation parsing is being connected.",
-      placeholderLayout: "diagram",
-    },
-    {
-      label: "Slide 2",
-      title: "Content slide",
-      subtitle:
-        "Hierarchy and diagram placeholders will swap to real slide previews later.",
-      placeholderLayout: "diagram",
-    },
-    {
-      label: "Slide 3",
-      title: "Discussion slide",
-      subtitle:
-        "Slide navigation is wired for future thumbnail extraction and AI markup.",
-      placeholderLayout: "diagram",
-    },
-  ],
-  doc: [
-    {
-      label: "Section 1",
-      title: "Introduction",
-      subtitle:
-        "Structured document placeholder while section parsing is being connected.",
-      placeholderLayout: "outline",
-    },
-    {
-      label: "Section 2",
-      title: "Key points",
-      subtitle:
-        "Outline cards will update with real headings and excerpts after parsing.",
-      placeholderLayout: "outline",
-    },
-    {
-      label: "Section 3",
-      title: "Supporting notes",
-      subtitle:
-        "Selection logic is ready for downstream document segmentation.",
-      placeholderLayout: "outline",
-    },
-  ],
+  pdf: {
+    label: "Page 1",
+    title: "Rendering preview",
+    subtitle: "Preparing page render for the preview workspace.",
+    placeholderLayout: "document",
+  },
+  ppt: {
+    label: "Slide 1",
+    title: "Rendering preview",
+    subtitle: "Preparing slide render for the preview workspace.",
+    placeholderLayout: "diagram",
+  },
+  doc: {
+    label: "Page 1",
+    title: "Rendering preview",
+    subtitle: "Preparing document pages for the preview workspace.",
+    placeholderLayout: "document",
+  },
 };
 
 const RECOMMENDATION_TEXT: Record<
@@ -247,6 +201,8 @@ export function processUploadFiles(files: File[]): UploadResult {
       size: file.size,
       mimeType: file.type,
       uploadedAt: Date.now(),
+      previewError: undefined,
+      previewStatus: "pending",
       previewItems: generatePreviewItems(file, detectedType),
     });
   }
@@ -280,6 +236,8 @@ export function createMaterialFromCourseContentRecord(
     uploadedAt: Date.now(),
     accessUrl: record.access_url,
     databaseId: record.id,
+    previewError: undefined,
+    previewStatus: record.preview_status ?? "pending",
     previewItems: generatePreviewItems(file, detectedType),
   };
 }
@@ -308,17 +266,59 @@ export function generatePreviewItems(
       ? "page"
       : detectedType.kind === "ppt"
         ? "slide"
-        : "section";
+        : "page";
+  const item = PENDING_PREVIEW_COPY[detectedType.kind];
 
-  return PREVIEW_COPY[detectedType.kind].map((item, index) => ({
+  return [{
     id: createId("preview"),
-    index,
+    index: 0,
     kind: itemKind,
     label: item.label,
     title: item.title,
     subtitle: item.subtitle,
     placeholderLayout: item.placeholderLayout,
-  }));
+  }];
+}
+
+export function applyPreviewManifestToMaterial(
+  material: Material,
+  manifest: CourseContentPreviewManifest,
+): Material {
+  if (material.kind === "image") {
+    return material;
+  }
+
+  const previewItems =
+    manifest.items.length > 0
+      ? manifest.items.map((item) => {
+          const placeholderLayout: PlaceholderLayout =
+            item.kind === "slide" ? "diagram" : "document";
+
+          return {
+            id: item.id,
+            index: item.index,
+            kind: item.kind,
+            label: item.label,
+            title: item.title,
+            subtitle: item.subtitle,
+            placeholderLayout,
+            imageUrl: item.image_url,
+          };
+        })
+      : createStatusPlaceholderItems(
+          material.kind,
+          manifest.preview_status,
+          manifest.preview_error,
+          material.previewItems[0]?.id,
+        );
+
+  return {
+    ...material,
+    accessUrl: manifest.access_url,
+    previewError: manifest.preview_error ?? undefined,
+    previewStatus: manifest.preview_status,
+    previewItems,
+  };
 }
 
 export function generateRecommendations(material: Material | null): Recommendation[] {
@@ -381,18 +381,17 @@ export function getSelectedPreviewItem(
 export function getPreviewLabel(material: Material, previewItem: PreviewItem | null): string {
   const currentIndex = previewItem ? previewItem.index + 1 : 0;
   const total = material.previewItems.length;
+  const previewKind = previewItem?.kind ?? material.previewItems[0]?.kind;
 
-  switch (material.kind) {
-    case "pdf":
+  switch (previewKind) {
+    case "page":
       return `Page ${currentIndex} of ${total}`;
-    case "ppt":
+    case "slide":
       return `Slide ${currentIndex} of ${total}`;
-    case "doc":
-      return `Section ${currentIndex} of ${total}`;
     case "image":
       return `Image ${currentIndex || 1} of ${total}`;
     default:
-      return `${currentIndex} of ${total}`;
+      return `Page ${currentIndex} of ${total}`;
   }
 }
 
@@ -408,14 +407,13 @@ export function getMaterialMeta(material: Material, expanded: boolean): string {
 
 export function getPreviewCountLabel(material: Material): string {
   const count = material.previewItems.length;
+  const previewKind = material.previewItems[0]?.kind;
   const noun =
-    material.kind === "pdf"
-      ? "page"
-      : material.kind === "ppt"
-        ? "slide"
-        : material.kind === "doc"
-          ? "section"
-          : "image";
+    previewKind === "slide"
+      ? "slide"
+      : previewKind === "image"
+        ? "image"
+        : "page";
 
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
@@ -437,7 +435,7 @@ export function formatFileSize(size: number): string {
 export function revokeMaterialObjectUrls(materials: Material[]): void {
   for (const material of materials) {
     for (const previewItem of material.previewItems) {
-      if (previewItem.imageUrl) {
+      if (previewItem.imageUrl?.startsWith("blob:")) {
         URL.revokeObjectURL(previewItem.imageUrl);
       }
     }
@@ -472,4 +470,29 @@ function formatUploadMoment(uploadedAt: number): string {
     month: "short",
     day: "numeric",
   });
+}
+
+function createStatusPlaceholderItems(
+  kind: Exclude<MaterialKind, "image">,
+  previewStatus: CourseContentPreviewStatus,
+  previewError?: string | null,
+  existingId?: string,
+): PreviewItem[] {
+  const baseItem = PENDING_PREVIEW_COPY[kind];
+  const subtitle =
+    previewStatus === "failed"
+      ? previewError ?? "Preview rendering failed for this source."
+      : baseItem.subtitle;
+
+  return [
+    {
+      id: existingId ?? createId("preview"),
+      index: 0,
+      kind: kind === "ppt" ? "slide" : "page",
+      label: baseItem.label,
+      title: previewStatus === "failed" ? "Preview unavailable" : baseItem.title,
+      subtitle,
+      placeholderLayout: baseItem.placeholderLayout,
+    },
+  ];
 }

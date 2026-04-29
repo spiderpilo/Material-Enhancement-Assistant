@@ -7,7 +7,14 @@ WORKDIR /workspace
 
 COPY backend/requirements.txt /tmp/requirements.txt
 
-RUN pip install --no-cache-dir --upgrade pip \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        fonts-dejavu-core \
+        libreoffice-core \
+        libreoffice-impress \
+        libreoffice-writer \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY backend /workspace/backend

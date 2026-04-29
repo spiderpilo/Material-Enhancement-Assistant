@@ -1,4 +1,5 @@
 import json
+import logging
 import mimetypes
 import os
 from typing import Any, Optional
@@ -7,11 +8,20 @@ from uuid import uuid4
 
 from app.config import get_supabase_settings
 from app.models.account_model import CreateAccountResponse, LoginAccountResponse, UserProfileRecord
-from app.models.document_model import CourseContentRecord
+from app.models.document_model import (
+    CourseContentPreviewItem,
+    CourseContentPreviewManifest,
+    CourseContentRecord,
+    PreviewStatus,
+    SourceType,
+)
+from app.services.preview_service import DocumentPreviewError, render_course_content_previews
 from app.utils.file_utils import sanitize_filename
 
 
 REQUEST_TIMEOUT_SECONDS = 30
+PREVIEW_STORAGE_PREFIX = "course-content-previews"
+logger = logging.getLogger(__name__)
 
 
 class MissingSupabaseConfigError(Exception):
@@ -20,6 +30,10 @@ class MissingSupabaseConfigError(Exception):
 
 class SupabaseServiceError(Exception):
     """Raised when Supabase storage or database operations fail."""
+
+
+class PreviewNotFoundError(SupabaseServiceError):
+    """Raised when no preview bootstrap or manifest exists for a source id."""
 
 
 class InvalidCredentialsError(SupabaseServiceError):
@@ -159,14 +173,56 @@ def upload_course_content(*, filename: str, file_bytes: bytes) -> CourseContentR
     )
 
     try:
-        return _insert_course_content_record(
+        inserted_record = _insert_course_content_record(
             url=settings.url,
             service_role_key=settings.service_role_key,
             filename=filename,
             access_url=access_url,
             data_size=len(file_bytes),
         )
+        source_type = _detect_source_type(filename)
+        preview_record = inserted_record.model_copy(
+            update={
+                "source_type": source_type,
+                "preview_status": "pending",
+                "preview_count": 0,
+            }
+        )
+        _upload_preview_status(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            bucket=settings.storage_bucket,
+            course_content_id=preview_record.id,
+            material_name=preview_record.material_name,
+            access_url=preview_record.access_url,
+            source_type=source_type,
+            preview_status="pending",
+            preview_count=0,
+            preview_error=None,
+        )
+        logger.info(
+            "Stored preview bootstrap for course_content_id=%s",
+            preview_record.id,
+        )
+        return preview_record
     except SupabaseServiceError as exc:
+        logger.error(
+            "Preview bootstrap write failed for filename=%s: %s",
+            filename,
+            exc,
+        )
+
+        cleanup_messages: list[str] = []
+
+        if "inserted_record" in locals():
+            cleanup_record_error = _delete_course_content_record(
+                url=settings.url,
+                service_role_key=settings.service_role_key,
+                course_content_id=inserted_record.id,
+            )
+            if cleanup_record_error:
+                cleanup_messages.append(cleanup_record_error)
+
         cleanup_error = _delete_storage_object(
             url=settings.url,
             service_role_key=settings.service_role_key,
@@ -174,13 +230,213 @@ def upload_course_content(*, filename: str, file_bytes: bytes) -> CourseContentR
             storage_path=storage_path,
         )
         if cleanup_error:
-            raise SupabaseServiceError(f"{exc} Cleanup failed: {cleanup_error}") from exc
+            cleanup_messages.append(cleanup_error)
+
+        if cleanup_messages:
+            raise SupabaseServiceError(
+                f"{exc} Cleanup failed: {' | '.join(cleanup_messages)}"
+            ) from exc
         raise
+
+
+def generate_course_content_preview_assets(
+    *,
+    course_content_id: int,
+    filename: str,
+    access_url: str,
+    file_bytes: bytes,
+) -> None:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    source_type = _detect_source_type(filename)
+
+    try:
+        _upload_preview_status(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            bucket=settings.storage_bucket,
+            course_content_id=course_content_id,
+            material_name=filename,
+            access_url=access_url,
+            source_type=source_type,
+            preview_status="pending",
+            preview_count=0,
+            preview_error=None,
+        )
+        rendered_source_type, rendered_items = render_course_content_previews(
+            filename=filename,
+            file_bytes=file_bytes,
+        )
+        manifest_items: list[CourseContentPreviewItem] = []
+
+        for item in rendered_items:
+            storage_path = _build_preview_item_storage_path(
+                course_content_id=course_content_id,
+                image_name=item.image_name,
+            )
+            _upload_or_replace_storage_object(
+                url=settings.url,
+                service_role_key=settings.service_role_key,
+                bucket=settings.storage_bucket,
+                storage_path=storage_path,
+                file_bytes=item.image_bytes,
+                content_type="image/png",
+            )
+            manifest_items.append(
+                CourseContentPreviewItem(
+                    id=f"{course_content_id}-{item.index}",
+                    index=item.index,
+                    kind=item.kind,
+                    label=item.label,
+                    title=item.title,
+                    subtitle=item.subtitle,
+                    image_url=_build_object_url(
+                        url=settings.url,
+                        bucket=settings.storage_bucket,
+                        storage_path=storage_path,
+                    ),
+                    width=item.width,
+                    height=item.height,
+                )
+            )
+
+        manifest = CourseContentPreviewManifest(
+            course_content_id=course_content_id,
+            material_name=filename,
+            source_type=rendered_source_type,
+            preview_status="ready",
+            preview_count=len(manifest_items),
+            access_url=access_url,
+            preview_error=None,
+            items=manifest_items,
+        )
+
+        _upload_preview_manifest(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            bucket=settings.storage_bucket,
+            course_content_id=course_content_id,
+            manifest=manifest,
+        )
+        _upload_preview_status(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            bucket=settings.storage_bucket,
+            course_content_id=course_content_id,
+            material_name=filename,
+            access_url=access_url,
+            source_type=rendered_source_type,
+            preview_status="ready",
+            preview_count=len(manifest_items),
+            preview_error=None,
+        )
+        logger.info(
+            "Stored preview manifest for course_content_id=%s with %s items",
+            course_content_id,
+            len(manifest_items),
+        )
+    except (DocumentPreviewError, SupabaseServiceError, MissingSupabaseConfigError) as exc:
+        logger.error(
+            "Preview render failed for course_content_id=%s: %s",
+            course_content_id,
+            exc,
+        )
+        _upload_preview_status(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            bucket=settings.storage_bucket,
+            course_content_id=course_content_id,
+            material_name=filename,
+            access_url=access_url,
+            source_type=source_type,
+            preview_status="failed",
+            preview_count=0,
+            preview_error=str(exc),
+        )
+
+
+def get_course_content_preview(*, course_content_id: int) -> CourseContentPreviewManifest:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    manifest = _download_preview_manifest(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        bucket=settings.storage_bucket,
+        course_content_id=course_content_id,
+    )
+    if manifest:
+        logger.info(
+            "Preview GET source=manifest course_content_id=%s",
+            course_content_id,
+        )
+        return manifest.model_copy(update={"preview_count": len(manifest.items)})
+
+    preview_status_payload = _download_preview_status(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        bucket=settings.storage_bucket,
+        course_content_id=course_content_id,
+    )
+    preview_manifest = _build_preview_manifest_from_status_payload(preview_status_payload)
+    if preview_manifest:
+        logger.info(
+            "Preview GET source=status course_content_id=%s",
+            course_content_id,
+        )
+        return preview_manifest
+
+    record = _fetch_course_content_record_optional(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        course_content_id=course_content_id,
+    )
+    if record:
+        logger.info(
+            "Preview GET source=db-fallback course_content_id=%s",
+            course_content_id,
+        )
+        source_type = record.source_type or _detect_source_type(record.material_name)
+        return CourseContentPreviewManifest(
+            course_content_id=record.id,
+            material_name=record.material_name,
+            source_type=source_type,
+            preview_status="pending",
+            preview_count=0,
+            access_url=record.access_url,
+            preview_error=None,
+            items=[],
+        )
+
+    logger.info(
+        "Preview GET source=not-found course_content_id=%s",
+        course_content_id,
+    )
+    raise PreviewNotFoundError(
+        f"Course content {course_content_id} was not found."
+    )
 
 
 def _build_storage_path(filename: str) -> str:
     sanitized_filename = sanitize_filename(filename)
     return f"course-contents/{uuid4()}/{sanitized_filename}"
+
+
+def _build_preview_manifest_storage_path(*, course_content_id: int) -> str:
+    return f"{PREVIEW_STORAGE_PREFIX}/{course_content_id}/manifest.json"
+
+
+def _build_preview_status_storage_path(*, course_content_id: int) -> str:
+    return f"{PREVIEW_STORAGE_PREFIX}/{course_content_id}/status.json"
+
+
+def _build_preview_item_storage_path(*, course_content_id: int, image_name: str) -> str:
+    return f"{PREVIEW_STORAGE_PREFIX}/{course_content_id}/{image_name}"
 
 
 def _create_supabase_auth_user(
@@ -304,6 +560,29 @@ def _upload_storage_object(
     )
 
 
+def _upload_or_replace_storage_object(
+    *,
+    url: str,
+    service_role_key: str,
+    bucket: str,
+    storage_path: str,
+    file_bytes: bytes,
+    content_type: str,
+) -> None:
+    endpoint = _build_storage_endpoint(url=url, bucket=bucket, storage_path=storage_path)
+    _send_request(
+        endpoint=endpoint,
+        method="POST",
+        data=file_bytes,
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": content_type,
+            "x-upsert": "true",
+        },
+        expected_statuses={200, 201},
+    )
+
+
 def _insert_course_content_record(
     *,
     url: str,
@@ -344,6 +623,68 @@ def _insert_course_content_record(
     return CourseContentRecord.model_validate(inserted_rows[0])
 
 
+def _fetch_course_content_record(
+    *,
+    url: str,
+    service_role_key: str,
+    course_content_id: int,
+) -> CourseContentRecord:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/course_contents"
+        f"?id=eq.{course_content_id}&select=*"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+
+    try:
+        rows = json.loads(response_body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SupabaseServiceError("Supabase returned an unreadable course content response.") from exc
+
+    if not isinstance(rows, list) or not rows:
+        raise SupabaseServiceError(f"Course content {course_content_id} was not found.")
+
+    return CourseContentRecord.model_validate(rows[0])
+
+
+def _fetch_course_content_record_optional(
+    *,
+    url: str,
+    service_role_key: str,
+    course_content_id: int,
+) -> CourseContentRecord | None:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/course_contents"
+        f"?id=eq.{course_content_id}&select=*"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+
+    try:
+        rows = json.loads(response_body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SupabaseServiceError("Supabase returned an unreadable course content response.") from exc
+
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    return CourseContentRecord.model_validate(rows[0])
+
+
 def _delete_storage_object(
     *,
     url: str,
@@ -366,6 +707,164 @@ def _delete_storage_object(
     return None
 
 
+def _delete_course_content_record(
+    *,
+    url: str,
+    service_role_key: str,
+    course_content_id: int,
+) -> Optional[str]:
+    endpoint = f"{url.rstrip('/')}/rest/v1/course_contents?id=eq.{course_content_id}"
+
+    try:
+        _send_request(
+            endpoint=endpoint,
+            method="DELETE",
+            headers={
+                **_build_auth_headers(service_role_key),
+                "Accept": "application/json",
+            },
+            expected_statuses={200, 204},
+        )
+    except SupabaseServiceError as exc:
+        return str(exc)
+
+    return None
+
+
+def _upload_preview_manifest(
+    *,
+    url: str,
+    service_role_key: str,
+    bucket: str,
+    course_content_id: int,
+    manifest: CourseContentPreviewManifest,
+) -> None:
+    _upload_or_replace_storage_object(
+        url=url,
+        service_role_key=service_role_key,
+        bucket=bucket,
+        storage_path=_build_preview_manifest_storage_path(course_content_id=course_content_id),
+        file_bytes=manifest.model_dump_json().encode("utf-8"),
+        content_type="application/json",
+    )
+
+
+def _upload_preview_status(
+    *,
+    url: str,
+    service_role_key: str,
+    bucket: str,
+    course_content_id: int,
+    material_name: str,
+    access_url: str,
+    source_type: SourceType,
+    preview_status: PreviewStatus,
+    preview_count: int,
+    preview_error: str | None,
+) -> None:
+    payload = {
+        "course_content_id": course_content_id,
+        "material_name": material_name,
+        "access_url": access_url,
+        "source_type": source_type,
+        "preview_status": preview_status,
+        "preview_count": preview_count,
+        "preview_error": preview_error,
+    }
+    _upload_or_replace_storage_object(
+        url=url,
+        service_role_key=service_role_key,
+        bucket=bucket,
+        storage_path=_build_preview_status_storage_path(course_content_id=course_content_id),
+        file_bytes=json.dumps(payload).encode("utf-8"),
+        content_type="application/json",
+    )
+
+
+def _download_preview_manifest(
+    *,
+    url: str,
+    service_role_key: str,
+    bucket: str,
+    course_content_id: int,
+) -> CourseContentPreviewManifest | None:
+    response_body = _download_storage_object_optional(
+        url=url,
+        service_role_key=service_role_key,
+        bucket=bucket,
+        storage_path=_build_preview_manifest_storage_path(course_content_id=course_content_id),
+    )
+    if response_body is None:
+        return None
+
+    try:
+        payload = json.loads(response_body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SupabaseServiceError("Stored preview manifest is unreadable.") from exc
+
+    return CourseContentPreviewManifest.model_validate(payload)
+
+
+def _download_preview_status(
+    *,
+    url: str,
+    service_role_key: str,
+    bucket: str,
+    course_content_id: int,
+) -> dict[str, Any]:
+    response_body = _download_storage_object_optional(
+        url=url,
+        service_role_key=service_role_key,
+        bucket=bucket,
+        storage_path=_build_preview_status_storage_path(course_content_id=course_content_id),
+    )
+    if response_body is None:
+        return {}
+
+    try:
+        payload = json.loads(response_body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SupabaseServiceError("Stored preview status is unreadable.") from exc
+
+    return payload if isinstance(payload, dict) else {}
+
+
+def _build_preview_manifest_from_status_payload(
+    preview_status_payload: dict[str, Any],
+) -> CourseContentPreviewManifest | None:
+    course_content_id = preview_status_payload.get("course_content_id")
+    material_name = preview_status_payload.get("material_name")
+    access_url = preview_status_payload.get("access_url")
+    source_type = preview_status_payload.get("source_type")
+    preview_status = preview_status_payload.get("preview_status", "pending")
+    preview_count = preview_status_payload.get("preview_count", 0)
+    preview_error = preview_status_payload.get("preview_error")
+
+    if not isinstance(course_content_id, int):
+        return None
+    if not isinstance(material_name, str) or not material_name.strip():
+        return None
+    if not isinstance(access_url, str) or not access_url.strip():
+        return None
+    if source_type not in {"pdf", "docx", "pptx"}:
+        return None
+    if preview_status not in {"pending", "ready", "failed"}:
+        return None
+    if not isinstance(preview_count, int):
+        preview_count = 0
+
+    return CourseContentPreviewManifest(
+        course_content_id=course_content_id,
+        material_name=material_name,
+        source_type=source_type,
+        preview_status=preview_status,
+        preview_count=preview_count,
+        access_url=access_url,
+        preview_error=preview_error if isinstance(preview_error, str) else None,
+        items=[],
+    )
+
+
 def _build_auth_headers(service_role_key: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {service_role_key}",
@@ -383,6 +882,22 @@ def _build_object_url(*, url: str, bucket: str, storage_path: str) -> str:
     quoted_bucket = parse.quote(bucket, safe="")
     quoted_path = parse.quote(storage_path, safe="/")
     return f"{url.rstrip('/')}/storage/v1/object/{quoted_bucket}/{quoted_path}"
+
+
+def _download_storage_object_optional(
+    *,
+    url: str,
+    service_role_key: str,
+    bucket: str,
+    storage_path: str,
+) -> bytes | None:
+    endpoint = _build_storage_endpoint(url=url, bucket=bucket, storage_path=storage_path)
+    return _send_request_optional(
+        endpoint=endpoint,
+        method="GET",
+        headers=_build_auth_headers(service_role_key),
+        expected_statuses={200},
+    )
 
 
 def _send_request(
@@ -417,6 +932,55 @@ def _send_request(
         )
 
     return response_body
+
+
+def _send_request_optional(
+    *,
+    endpoint: str,
+    method: str,
+    headers: dict[str, str],
+    expected_statuses: set[int],
+    data: Optional[bytes] = None,
+) -> bytes | None:
+    api_request = request.Request(
+        url=endpoint,
+        data=data,
+        headers=headers,
+        method=method,
+    )
+
+    try:
+        with request.urlopen(api_request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            status_code = response.getcode()
+            response_body = response.read()
+    except error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+
+        response_body = exc.read()
+        message = _extract_error_message(response_body)
+        raise SupabaseServiceError(f"Supabase request failed with status {exc.code}: {message}") from exc
+    except error.URLError as exc:
+        raise SupabaseServiceError(f"Supabase request failed: {exc.reason}") from exc
+
+    if status_code not in expected_statuses:
+        raise SupabaseServiceError(
+            f"Supabase request returned unexpected status {status_code}."
+        )
+
+    return response_body
+
+
+def _detect_source_type(filename: str) -> SourceType:
+    suffix = os.path.splitext(filename)[1].lower()
+    if suffix == ".pdf":
+        return "pdf"
+    if suffix == ".docx":
+        return "docx"
+    if suffix == ".pptx":
+        return "pptx"
+
+    raise SupabaseServiceError("Unsupported source type.")
 
 
 def _extract_error_message(response_body: bytes) -> str:

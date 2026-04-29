@@ -16,7 +16,7 @@ Set this in the repo-root `.env` when the backend runs on a non-default URL:
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
-The upload UI posts PDF, DOCX, and PPTX files to `POST /upload-doc`. Successful responses are appended to the Uploaded Documents list from the returned `course_contents` row.
+The upload UI posts PDF, DOCX, and PPTX files to `POST /upload-doc`. After upload, the project workspace polls `GET /course-contents/{id}/preview` and swaps placeholder cards with rendered page or slide previews as soon as the backend finishes processing.
 
 ## Run With Docker
 

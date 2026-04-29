@@ -5,11 +5,40 @@ export const SUPPORTED_COURSE_CONTENT_ACCEPT = ".pdf,.docx,.pptx";
 export type SupportedCourseContentExtension =
   (typeof SUPPORTED_COURSE_CONTENT_EXTENSIONS)[number];
 
+export type CourseContentPreviewStatus = "pending" | "ready" | "failed";
+export type CourseContentSourceType = SupportedCourseContentExtension;
+
 export type CourseContentRecord = {
   id: number;
   material_name: string;
   access_url: string;
   data_size: number;
+  source_type?: CourseContentSourceType | null;
+  preview_status?: CourseContentPreviewStatus;
+  preview_count?: number;
+};
+
+export type CourseContentPreviewItem = {
+  id: string;
+  index: number;
+  kind: "page" | "slide";
+  label: string;
+  title: string;
+  subtitle: string;
+  image_url: string;
+  width: number;
+  height: number;
+};
+
+export type CourseContentPreviewManifest = {
+  course_content_id: number;
+  material_name: string;
+  source_type: CourseContentSourceType;
+  preview_status: CourseContentPreviewStatus;
+  preview_count: number;
+  access_url: string;
+  preview_error?: string | null;
+  items: CourseContentPreviewItem[];
 };
 
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
@@ -43,6 +72,28 @@ export async function uploadCourseContent(file: File): Promise<CourseContentReco
   }
 
   return payload as CourseContentRecord;
+}
+
+export async function getCourseContentPreview(
+  courseContentId: number,
+): Promise<CourseContentPreviewManifest> {
+  const response = await fetch(`${getApiBaseUrl()}/course-contents/${courseContentId}/preview`, {
+    method: "GET",
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as
+    | CourseContentPreviewManifest
+    | { detail?: string };
+
+  if (!response.ok) {
+    throw new Error(
+      "detail" in payload && payload.detail
+        ? payload.detail
+        : "Unable to load preview.",
+    );
+  }
+
+  return payload as CourseContentPreviewManifest;
 }
 
 export function getCourseContentFileValidationError(file: File): string | null {

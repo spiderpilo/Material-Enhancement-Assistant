@@ -19,6 +19,9 @@ app.add_middleware(
 app.include_router(account_router)
 app.include_router(upload_router)
 
+@app.get("/")
+async def root() -> dict[str, str]:
+    return {"message": "Welcome to the Backend!"}
 
 @app.get("/health")
 async def health_check() -> dict[str, str]:

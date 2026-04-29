@@ -29,7 +29,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { key: "dashboard", label: "Dashboard", icon: GridIcon, href: "/dashboard" },
-  { key: "uploads", label: "Uploads", icon: UploadCloudIcon, href: "/uploads" },
+  { key: "uploads", label: "Project Page", icon: UploadCloudIcon, href: "/project" },
   { key: "reviewQueue", label: "Review Queue", icon: ReviewBubbleIcon },
   { key: "exports", label: "Exports", icon: ExportArrowIcon },
   { key: "settings", label: "Settings", icon: SettingsIcon },

@@ -6,10 +6,13 @@ Minimal FastAPI backend for local testing.
 
 - `GET /health`
 - `POST /upload-doc`
+- `GET /course-contents/{id}/preview`
 - `POST /create-account`
 - `POST /login-account`
 
-`POST /upload-doc` accepts a PDF, DOCX, or PPTX file up to 50MB, uploads it to Supabase Storage, inserts a `course_contents` row, and returns the inserted record.
+`POST /upload-doc` accepts a PDF, DOCX, or PPTX file up to 50MB, uploads it to Supabase Storage, inserts a `course_contents` row, queues preview rendering, and returns the inserted record with preview metadata.
+
+`GET /course-contents/{id}/preview` returns the current preview manifest for a source. While rendering is still running it returns `preview_status: "pending"`. When ready it returns ordered page or slide image URLs.
 
 `POST /create-account` creates a Supabase auth user and inserts the matching `users` profile row on the backend.
 
@@ -53,7 +56,7 @@ To run the backend in watch mode:
 docker compose watch backend
 ```
 
-Compose passes Gemini and Supabase settings through from your shell or repo-root `.env`.
+Compose passes Gemini and Supabase settings through from your shell or repo-root `.env`. The backend container also installs LibreOffice so DOCX and PPTX uploads can be converted into rendered preview images.
 
 ## curl Examples
 
@@ -77,6 +80,15 @@ Expected success response shape:
   "id": 1,
   "material_name": "lecture1.pdf",
   "access_url": "https://your-project.supabase.co/storage/v1/object/course-contents/course-contents/uuid/lecture1.pdf",
-  "data_size": 12345
+  "data_size": 12345,
+  "source_type": "pdf",
+  "preview_status": "pending",
+  "preview_count": 0
 }
+```
+
+Fetch the preview manifest:
+
+```bash
+curl http://127.0.0.1:8000/course-contents/1/preview
 ```

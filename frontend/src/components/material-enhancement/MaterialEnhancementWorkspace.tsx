@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useEffectEvent, useState } from "react";
+import { startTransition, useEffect, useEffectEvent, useRef, useState } from "react";
 import type { DragEvent } from "react";
 
 import {
@@ -21,6 +21,7 @@ import type {
   Recommendation,
 } from "@/lib/material-enhancement/workspace";
 import {
+  applyPreviewManifestToMaterial,
   createMaterialFromCourseContentRecord,
   generateRecommendations,
   getSelectedMaterial,
@@ -28,10 +29,12 @@ import {
   revokeMaterialObjectUrls,
   validateUpload,
 } from "@/lib/material-enhancement/workspace";
-import { uploadCourseContent } from "@/lib/api/course-content";
+import { getCourseContentPreview, uploadCourseContent } from "@/lib/api/course-content";
 
 const EXPANDED_GRID_COLUMNS = "320px minmax(0,1fr) 320px";
 const COLLAPSED_GRID_COLUMNS = "84px minmax(0,1fr) 320px";
+const PREVIEW_POLL_INTERVAL_MS = 1400;
+const PREVIEW_POLL_ATTEMPTS = 40;
 
 export function MaterialEnhancementWorkspace() {
   const [projectName, setProjectName] = useState("");
@@ -48,6 +51,8 @@ export function MaterialEnhancementWorkspace() {
   );
   const [isDragging, setIsDragging] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const isMountedRef = useRef(true);
+  const selectedMaterialIdRef = useRef<string | null>(null);
 
   const selectedMaterial = getSelectedMaterial(materials, selectedMaterialId);
   const selectedPreviewItem = getSelectedPreviewItem(
@@ -63,10 +68,20 @@ export function MaterialEnhancementWorkspace() {
   }, [selectedMaterial]);
 
   useEffect(() => {
+    selectedMaterialIdRef.current = selectedMaterialId;
+  }, [selectedMaterialId]);
+
+  useEffect(() => {
     return () => {
       revokeMaterialObjectUrls(materials);
     };
   }, [materials]);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!toastMessage) {
@@ -81,6 +96,74 @@ export function MaterialEnhancementWorkspace() {
       window.clearTimeout(timeoutId);
     };
   }, [toastMessage]);
+
+  const syncPreviewManifest = async (materialId: string, databaseId: number) => {
+    for (let attempt = 0; attempt < PREVIEW_POLL_ATTEMPTS; attempt += 1) {
+      try {
+        const manifest = await getCourseContentPreview(databaseId);
+
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        startTransition(() => {
+          setMaterials((currentMaterials) =>
+            currentMaterials.map((material) =>
+              material.id === materialId
+                ? applyPreviewManifestToMaterial(material, manifest)
+                : material,
+            ),
+          );
+
+          if (selectedMaterialIdRef.current === materialId) {
+            setSelectedPreviewItemId((currentSelectedPreviewItemId) => {
+              const matchingItem = manifest.items.find(
+                (previewItem) => previewItem.id === currentSelectedPreviewItemId,
+              );
+
+              return matchingItem?.id ?? currentSelectedPreviewItemId;
+            });
+          }
+        });
+
+        if (manifest.preview_status === "ready") {
+          if (selectedMaterialIdRef.current === materialId && manifest.items[0]) {
+            setSelectedPreviewItemId((currentSelectedPreviewItemId) =>
+              manifest.items.some((previewItem) => previewItem.id === currentSelectedPreviewItemId)
+                ? currentSelectedPreviewItemId
+                : manifest.items[0]?.id ?? null,
+            );
+          }
+
+          return;
+        }
+
+        if (manifest.preview_status === "failed") {
+          setToastMessage(
+            manifest.preview_error
+              ? `${manifest.material_name}: ${manifest.preview_error}`
+              : `${manifest.material_name}: preview rendering failed.`,
+          );
+          return;
+        }
+      } catch (cause) {
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        setToastMessage(
+          cause instanceof Error ? cause.message : "Unable to load rendered preview.",
+        );
+        return;
+      }
+
+      await wait(PREVIEW_POLL_INTERVAL_MS);
+    }
+
+    if (isMountedRef.current) {
+      setToastMessage("Preview rendering is taking longer than expected.");
+    }
+  };
 
   const navigatePreview = (direction: "previous" | "next") => {
     if (!selectedMaterial || !selectedPreviewItem) {
@@ -168,6 +251,7 @@ export function MaterialEnhancementWorkspace() {
 
     const nextMaterials: Material[] = [];
     const failedUploads: Array<{ fileName: string; reason: string }> = [];
+    const previewTargets: Array<{ materialId: string; databaseId: number }> = [];
 
     for (const file of acceptedFiles) {
       try {
@@ -176,6 +260,12 @@ export function MaterialEnhancementWorkspace() {
 
         if (material) {
           nextMaterials.push(material);
+          if (material.databaseId) {
+            previewTargets.push({
+              materialId: material.id,
+              databaseId: material.databaseId,
+            });
+          }
         } else {
           failedUploads.push({
             fileName: file.name,
@@ -222,6 +312,10 @@ export function MaterialEnhancementWorkspace() {
     setToastMessage(
       `${nextMaterials.length} material${nextMaterials.length > 1 ? "s" : ""} uploaded to database`,
     );
+
+    for (const previewTarget of previewTargets) {
+      void syncPreviewManifest(previewTarget.materialId, previewTarget.databaseId);
+    }
 
     return { success: true };
   };
@@ -399,4 +493,10 @@ export function MaterialEnhancementWorkspace() {
       />
     </main>
   );
+}
+
+function wait(durationMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, durationMs);
+  });
 }
