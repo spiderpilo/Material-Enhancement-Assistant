@@ -6,7 +6,6 @@ import type { ChangeEvent, DragEvent, KeyboardEvent } from "react";
 import { SUPPORTED_FILE_TYPE_LABEL } from "@/lib/material-enhancement/workspace";
 
 import {
-  AddIcon,
   CloseIcon,
   ShieldCheckIcon,
   UploadCloudIcon,
@@ -120,21 +119,43 @@ export function AddMaterialsModal({
     return null;
   }
 
-  const stageFiles = (files: File[]) => {
+  const uploadFiles = async (files: File[]) => {
     if (isSubmitting) {
       return;
     }
 
-    if (files.length === 0) {
+    const nextFiles = mergePendingFiles([], files);
+
+    if (nextFiles.length === 0) {
       return;
     }
 
-    setPendingFiles((currentFiles) => mergePendingFiles(currentFiles, files));
+    setPendingFiles(nextFiles);
     setSubmitError(null);
+
+    setIsSubmitting(true);
+
+    const result = await Promise.resolve(onAddMaterials({ files: nextFiles }))
+      .catch((cause) => ({
+        success: false,
+        errorMessage:
+          cause instanceof Error ? cause.message : "Unable to add those materials.",
+      }))
+      .finally(() => {
+        setIsSubmitting(false);
+      });
+
+    if (!result.success) {
+      setSubmitError(result.errorMessage ?? "Unable to add those materials.");
+      return;
+    }
+
+    resetModalState();
+    onClose();
   };
 
   const handleFileSelection = (event: ChangeEvent<HTMLInputElement>) => {
-    stageFiles(Array.from(event.target.files ?? []));
+    void uploadFiles(Array.from(event.target.files ?? []));
     event.target.value = "";
   };
 
@@ -159,38 +180,15 @@ export function AddMaterialsModal({
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragActive(false);
-    stageFiles(Array.from(event.dataTransfer.files));
+    void uploadFiles(Array.from(event.dataTransfer.files));
   };
 
-  const handlePrimaryAction = async () => {
+  const handlePrimaryAction = () => {
     if (isSubmitting) {
       return;
     }
 
-    if (!hasStagedFiles) {
-      fileInputRef.current?.click();
-      return;
-    }
-
-    setIsSubmitting(true);
-
-    const result = await Promise.resolve(onAddMaterials({ files: pendingFiles }))
-      .catch((cause) => ({
-        success: false,
-        errorMessage:
-          cause instanceof Error ? cause.message : "Unable to add those materials.",
-      }))
-      .finally(() => {
-        setIsSubmitting(false);
-      });
-
-    if (!result.success) {
-      setSubmitError(result.errorMessage ?? "Unable to add those materials.");
-      return;
-    }
-
-    resetModalState();
-    onClose();
+    fileInputRef.current?.click();
   };
 
   const handleDropzoneKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -237,7 +235,7 @@ export function AddMaterialsModal({
                 id="add-materials-modal-subtitle"
                 className="mt-3 text-[13px] leading-[22px] text-[color:var(--text-muted)]"
               >
-                Upload course content to append new files into this project.
+                Choose or drop files to upload. Upload starts immediately.
               </p>
             </div>
 
@@ -281,7 +279,7 @@ export function AddMaterialsModal({
             </div>
 
             <p className="mt-10 text-[18px] font-medium tracking-[-0.03em] text-[color:var(--text-primary)]">
-              Drag and drop your files here
+              Drag and drop files to upload
             </p>
             <p className="mt-4 text-[13px] text-[color:var(--text-subtle)]">
               PDF, DOCX, PPTX up to 50MB
@@ -323,8 +321,8 @@ export function AddMaterialsModal({
           ) : hasStagedFiles ? (
             <p className="relative mt-4 text-[12px] text-[color:var(--accent-green)]">
               {isSubmitting
-                ? "Uploading files to the database..."
-                : `${pendingFiles.length} file${pendingFiles.length === 1 ? "" : "s"} staged to add.`}
+                ? `Uploading ${pendingFiles.length} file${pendingFiles.length === 1 ? "" : "s"} to the database...`
+                : `${pendingFiles.length} file${pendingFiles.length === 1 ? "" : "s"} ready to retry.`}
             </p>
           ) : null}
 
@@ -335,17 +333,16 @@ export function AddMaterialsModal({
               disabled={isSubmitting}
               className="inline-flex h-[64px] min-w-[238px] items-center justify-center gap-3 rounded-full bg-[linear-gradient(180deg,#DDF598_0%,#D0F07E_100%)] px-8 text-[18px] font-semibold tracking-[-0.03em] text-[#10120E] shadow-[0_22px_42px_rgba(143,173,73,0.18)] transition duration-200 hover:-translate-y-0.5 hover:brightness-[1.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.28)] disabled:cursor-wait disabled:opacity-70 disabled:hover:translate-y-0"
             >
-              <AddIcon className="h-[22px] w-[22px]" />
-              {isSubmitting ? "Uploading..." : "Upload Files"}
+              {isSubmitting ? "Uploading..." : submitError ? "Choose New Files" : "Browse from Device"}
             </button>
 
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={handleClose}
               disabled={isSubmitting}
               className="inline-flex h-[64px] min-w-[270px] items-center justify-center rounded-full border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] px-8 text-[17px] font-medium tracking-[-0.02em] text-[color:var(--text-secondary)] transition duration-200 hover:-translate-y-0.5 hover:border-[rgba(255,255,255,0.14)] hover:bg-[rgba(255,255,255,0.06)] hover:text-[color:var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(247,246,211,0.18)] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0"
             >
-              Browse from device
+              Cancel
             </button>
           </div>
         </section>
