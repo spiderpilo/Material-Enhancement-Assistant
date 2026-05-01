@@ -15,6 +15,11 @@ import {
 import { MaterialsSidebar } from "@/components/material-enhancement/MaterialsSidebar";
 import { PreviewWorkspace } from "@/components/material-enhancement/PreviewWorkspace";
 import { ProjectHeader } from "@/components/material-enhancement/ProjectHeader";
+import {
+  QuizPanel,
+  type QuizGenerationStatus,
+} from "@/components/material-enhancement/QuizPanel";
+import { generateQuiz, type GeneratedQuiz } from "@/lib/api/quiz";
 import type {
   ActiveTool,
   Material,
@@ -59,6 +64,14 @@ export function MaterialEnhancementWorkspace() {
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
   const [selectedPreviewItemId, setSelectedPreviewItemId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<ActiveTool>("summary");
+  const [isQuizExpanded, setIsQuizExpanded] = useState(false);
+  const [quizStatus, setQuizStatus] = useState<QuizGenerationStatus>("idle");
+  const [quizData, setQuizData] = useState<GeneratedQuiz | null>(null);
+  const [quizErrorMessage, setQuizErrorMessage] = useState<string | null>(null);
+  const [quizSourceKey, setQuizSourceKey] = useState("");
+  const [activeQuizQuestionIndex, setActiveQuizQuestionIndex] = useState(0);
+  const [selectedQuizAnswers, setSelectedQuizAnswers] = useState<Record<string, string>>({});
+  const [isQuizSubmitted, setIsQuizSubmitted] = useState(false);
   const [recommendations, setRecommendations] = useState<Recommendation[]>(
     generateRecommendations(null),
   );
@@ -67,6 +80,7 @@ export function MaterialEnhancementWorkspace() {
   const isMountedRef = useRef(true);
   const selectedMaterialIdRef = useRef<string | null>(null);
   const selectedProjectIdRef = useRef<number | null>(null);
+  const quizRequestKeyRef = useRef("");
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const projectName = selectedProject?.name ?? "";
@@ -78,10 +92,31 @@ export function MaterialEnhancementWorkspace() {
   const checkedMaterials = materials.filter((material) =>
     checkedMaterialIds.includes(material.id),
   );
+  const currentQuizSourceKey = buildQuizSourceKey(checkedMaterials);
 
   useEffect(() => {
     setRecommendations(generateRecommendations(selectedMaterial));
   }, [selectedMaterial]);
+
+  useEffect(() => {
+    if (!quizSourceKey) {
+      return;
+    }
+
+    if (quizSourceKey === currentQuizSourceKey) {
+      return;
+    }
+
+    setIsQuizExpanded(false);
+    setQuizStatus("idle");
+    setQuizData(null);
+    setQuizErrorMessage(null);
+    setQuizSourceKey("");
+    quizRequestKeyRef.current = "";
+    setActiveQuizQuestionIndex(0);
+    setSelectedQuizAnswers({});
+    setIsQuizSubmitted(false);
+  }, [currentQuizSourceKey, quizSourceKey]);
 
   useEffect(() => {
     selectedMaterialIdRef.current = selectedMaterialId;
@@ -572,6 +607,136 @@ export function MaterialEnhancementWorkspace() {
     setToastMessage("Help actions will connect to guidance and support flows later.");
   };
 
+  const handleSelectTool = (tool: ActiveTool) => {
+    setActiveTool(tool);
+
+    if (tool === "quiz") {
+      void ensureQuizGenerated();
+    }
+  };
+
+  const ensureQuizGenerated = async (options?: { openWhenReady?: boolean }) => {
+    if (quizStatus === "loading") {
+      return;
+    }
+
+    if (!currentQuizSourceKey) {
+      setToastMessage("Check one or more sources before making a quiz.");
+      return;
+    }
+
+    if (quizData && quizSourceKey === currentQuizSourceKey) {
+      return;
+    }
+
+    const accessToken = getStoredAccessToken();
+    if (!accessToken) {
+      setToastMessage("Sign in before generating a quiz.");
+      return;
+    }
+
+    const materialIds = checkedMaterials
+      .map((material) => material.databaseId)
+      .filter((databaseId): databaseId is number => typeof databaseId === "number");
+
+    if (materialIds.length !== checkedMaterials.length) {
+      setToastMessage("Only saved sources can be used for quiz generation.");
+      return;
+    }
+
+    const requestedSourceKey = currentQuizSourceKey;
+    quizRequestKeyRef.current = requestedSourceKey;
+    setQuizStatus("loading");
+    setQuizData(null);
+    setQuizErrorMessage(null);
+    setQuizSourceKey(requestedSourceKey);
+    setActiveQuizQuestionIndex(0);
+    setSelectedQuizAnswers({});
+    setIsQuizSubmitted(false);
+
+    try {
+      const generatedQuiz = await generateQuiz({
+        accessToken,
+        materialIds,
+        questionCount: 12,
+      });
+
+      if (!isMountedRef.current || quizRequestKeyRef.current !== requestedSourceKey) {
+        return;
+      }
+
+      setQuizData(generatedQuiz);
+      setQuizStatus("ready");
+      if (options?.openWhenReady) {
+        setIsQuizExpanded(true);
+      }
+      setToastMessage("Quiz ready.");
+    } catch (cause) {
+      if (!isMountedRef.current || quizRequestKeyRef.current !== requestedSourceKey) {
+        return;
+      }
+
+      const message = cause instanceof Error ? cause.message : "Unable to generate quiz.";
+      setQuizStatus("error");
+      setQuizErrorMessage(message);
+      setToastMessage(message);
+    }
+  };
+
+  const handleOpenQuiz = () => {
+    if (quizData && quizSourceKey === currentQuizSourceKey) {
+      setIsQuizExpanded(true);
+      return;
+    }
+
+    void ensureQuizGenerated({ openWhenReady: true });
+  };
+
+  const handleNavigateQuiz = (direction: "previous" | "next") => {
+    if (!quizData) {
+      return;
+    }
+
+    setActiveQuizQuestionIndex((currentIndex) => {
+      const nextIndex = direction === "previous" ? currentIndex - 1 : currentIndex + 1;
+      return Math.min(Math.max(nextIndex, 0), quizData.questions.length - 1);
+    });
+  };
+
+  const handleSelectQuizAnswer = (questionId: string, optionId: string) => {
+    if (isQuizSubmitted) {
+      return;
+    }
+
+    setSelectedQuizAnswers((currentAnswers) => ({
+      ...currentAnswers,
+      [questionId]: optionId,
+    }));
+  };
+
+  const handleSubmitQuiz = () => {
+    if (!quizData) {
+      return;
+    }
+
+    const answeredCount = quizData.questions.filter((question) =>
+      Boolean(selectedQuizAnswers[question.id]),
+    ).length;
+
+    if (answeredCount !== quizData.questions.length) {
+      setToastMessage("Answer all 12 questions before submitting.");
+      return;
+    }
+
+    setIsQuizSubmitted(true);
+  };
+
+  const handleResetQuiz = () => {
+    setActiveQuizQuestionIndex(0);
+    setSelectedQuizAnswers({});
+    setIsQuizSubmitted(false);
+  };
+
   const handleProjectNameChange = (nextProjectName: string) => {
     const accessToken = getStoredAccessToken();
     const activeProject = selectedProject;
@@ -709,20 +874,46 @@ export function MaterialEnhancementWorkspace() {
             selectedPreviewItemId={selectedPreviewItemId}
           />
 
-          <PreviewWorkspace
-            onApplyRecommendation={handleApplyRecommendation}
-            onNavigate={navigatePreview}
-            previewItem={selectedPreviewItem}
-            recommendations={recommendations}
-            selectedMaterial={selectedMaterial}
-          />
+          {isQuizExpanded ? (
+            <div className="col-span-2">
+              <QuizPanel
+                activeQuestionIndex={activeQuizQuestionIndex}
+                checkedMaterials={checkedMaterials}
+                errorMessage={quizErrorMessage}
+                isSubmitted={isQuizSubmitted}
+                onClose={() => setIsQuizExpanded(false)}
+                onNavigate={handleNavigateQuiz}
+                onReset={handleResetQuiz}
+                onRetry={ensureQuizGenerated}
+                onSelectAnswer={handleSelectQuizAnswer}
+                onSubmit={handleSubmitQuiz}
+                quiz={quizData}
+                selectedAnswers={selectedQuizAnswers}
+                status={quizStatus}
+              />
+            </div>
+          ) : (
+            <>
+              <PreviewWorkspace
+                onApplyRecommendation={handleApplyRecommendation}
+                onNavigate={navigatePreview}
+                previewItem={selectedPreviewItem}
+                recommendations={recommendations}
+                selectedMaterial={selectedMaterial}
+              />
 
-          <AIToolsSidebar
-            activeTool={activeTool}
-            checkedMaterials={checkedMaterials}
-            onOpenHelp={handleOpenHelp}
-            onSelectTool={setActiveTool}
-          />
+              <AIToolsSidebar
+                activeTool={activeTool}
+                checkedMaterials={checkedMaterials}
+                onOpenHelp={handleOpenHelp}
+                onOpenQuiz={handleOpenQuiz}
+                onSelectTool={handleSelectTool}
+                quiz={quizData}
+                quizErrorMessage={quizErrorMessage}
+                quizStatus={quizStatus}
+              />
+            </>
+          )}
         </div>
       </div>
 
@@ -753,4 +944,12 @@ function wait(durationMs: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, durationMs);
   });
+}
+
+function buildQuizSourceKey(materials: Material[]): string {
+  return materials
+    .map((material) => material.databaseId)
+    .filter((databaseId): databaseId is number => typeof databaseId === "number")
+    .sort((firstId, secondId) => firstId - secondId)
+    .join("|");
 }
