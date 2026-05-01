@@ -18,6 +18,7 @@ import { ProjectHeader } from "@/components/material-enhancement/ProjectHeader";
 import {
   QuizPanel,
   type QuizGenerationStatus,
+  type QuizViewMode,
 } from "@/components/material-enhancement/QuizPanel";
 import { generateQuiz, type GeneratedQuiz } from "@/lib/api/quiz";
 import type {
@@ -71,7 +72,8 @@ export function MaterialEnhancementWorkspace() {
   const [quizSourceKey, setQuizSourceKey] = useState("");
   const [activeQuizQuestionIndex, setActiveQuizQuestionIndex] = useState(0);
   const [selectedQuizAnswers, setSelectedQuizAnswers] = useState<Record<string, string>>({});
-  const [isQuizSubmitted, setIsQuizSubmitted] = useState(false);
+  const [revealedQuizFeedback, setRevealedQuizFeedback] = useState<Record<string, boolean>>({});
+  const [quizViewMode, setQuizViewMode] = useState<QuizViewMode>("question");
   const [recommendations, setRecommendations] = useState<Recommendation[]>(
     generateRecommendations(null),
   );
@@ -115,7 +117,8 @@ export function MaterialEnhancementWorkspace() {
     quizRequestKeyRef.current = "";
     setActiveQuizQuestionIndex(0);
     setSelectedQuizAnswers({});
-    setIsQuizSubmitted(false);
+    setRevealedQuizFeedback({});
+    setQuizViewMode("question");
   }, [currentQuizSourceKey, quizSourceKey]);
 
   useEffect(() => {
@@ -652,7 +655,8 @@ export function MaterialEnhancementWorkspace() {
     setQuizSourceKey(requestedSourceKey);
     setActiveQuizQuestionIndex(0);
     setSelectedQuizAnswers({});
-    setIsQuizSubmitted(false);
+    setRevealedQuizFeedback({});
+    setQuizViewMode("question");
 
     try {
       const generatedQuiz = await generateQuiz({
@@ -704,37 +708,37 @@ export function MaterialEnhancementWorkspace() {
   };
 
   const handleSelectQuizAnswer = (questionId: string, optionId: string) => {
-    if (isQuizSubmitted) {
-      return;
-    }
-
     setSelectedQuizAnswers((currentAnswers) => ({
       ...currentAnswers,
       [questionId]: optionId,
     }));
+    setRevealedQuizFeedback((currentFeedback) => ({
+      ...currentFeedback,
+      [questionId]: true,
+    }));
   };
 
-  const handleSubmitQuiz = () => {
+  const handleShowQuizResults = () => {
     if (!quizData) {
       return;
     }
 
-    const answeredCount = quizData.questions.filter((question) =>
-      Boolean(selectedQuizAnswers[question.id]),
-    ).length;
+    setQuizViewMode("results");
+  };
 
-    if (answeredCount !== quizData.questions.length) {
-      setToastMessage("Answer all 12 questions before submitting.");
+  const handleReviewQuiz = () => {
+    if (!quizData) {
       return;
     }
 
-    setIsQuizSubmitted(true);
+    setQuizViewMode("question");
   };
 
   const handleResetQuiz = () => {
     setActiveQuizQuestionIndex(0);
     setSelectedQuizAnswers({});
-    setIsQuizSubmitted(false);
+    setRevealedQuizFeedback({});
+    setQuizViewMode("question");
   };
 
   const handleProjectNameChange = (nextProjectName: string) => {
@@ -880,16 +884,18 @@ export function MaterialEnhancementWorkspace() {
                 activeQuestionIndex={activeQuizQuestionIndex}
                 checkedMaterials={checkedMaterials}
                 errorMessage={quizErrorMessage}
-                isSubmitted={isQuizSubmitted}
                 onClose={() => setIsQuizExpanded(false)}
                 onNavigate={handleNavigateQuiz}
                 onReset={handleResetQuiz}
                 onRetry={ensureQuizGenerated}
+                onReview={handleReviewQuiz}
                 onSelectAnswer={handleSelectQuizAnswer}
-                onSubmit={handleSubmitQuiz}
+                onShowResults={handleShowQuizResults}
                 quiz={quizData}
+                revealedFeedback={revealedQuizFeedback}
                 selectedAnswers={selectedQuizAnswers}
                 status={quizStatus}
+                viewMode={quizViewMode}
               />
             </div>
           ) : (
