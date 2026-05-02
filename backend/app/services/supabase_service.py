@@ -17,6 +17,8 @@ from app.models.document_model import (
     SourceType,
 )
 from app.models.project_model import ProjectMaterialRecord, ProjectRecord
+from app.models.quiz_model import QuizSourceMaterial
+from app.services.parser_service import DocumentParseError, parse_document
 from app.services.preview_service import DocumentPreviewError, render_course_content_previews
 from app.utils.file_utils import sanitize_filename
 
@@ -628,6 +630,88 @@ def get_course_content_preview_for_user(
     )
 
     return get_course_content_preview(course_content_id=course_content_id)
+
+
+def get_course_content_texts_for_user(
+    *,
+    access_token: str,
+    material_ids: list[int],
+) -> list[QuizSourceMaterial]:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    unique_material_ids = list(dict.fromkeys(material_ids))
+
+    for material_id in unique_material_ids:
+        _assert_course_content_owned_by_username(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            course_content_id=material_id,
+            owner_auth_user_id=auth_user.user_id,
+        )
+
+    records_by_id = _fetch_course_content_records_by_id(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        material_ids=unique_material_ids,
+    )
+    source_materials: list[QuizSourceMaterial] = []
+    parse_errors: list[str] = []
+
+    for material_id in unique_material_ids:
+        record_payload = records_by_id.get(material_id)
+        if not record_payload:
+            raise ProjectNotFoundError("Course content was not found.")
+
+        record = CourseContentRecord.model_validate(record_payload)
+        source_type = record.source_type or _detect_source_type(record.material_name)
+        file_bytes = _send_request(
+            endpoint=record.access_url,
+            method="GET",
+            headers=_build_auth_headers(settings.service_role_key),
+            expected_statuses={200},
+        )
+
+        try:
+            text = parse_document(file_bytes=file_bytes, file_type=source_type)
+        except DocumentParseError as exc:
+            message = f"{record.material_name}: {exc}"
+            parse_errors.append(message)
+            logger.warning(
+                "Skipping unreadable quiz source material_id=%s filename=%s: %s",
+                record.id,
+                record.material_name,
+                exc,
+            )
+            continue
+
+        logger.info(
+            "Parsed quiz source material_id=%s filename=%s chars_extracted=%s",
+            record.id,
+            record.material_name,
+            len(text),
+        )
+
+        source_materials.append(
+            QuizSourceMaterial(
+                id=record.id,
+                name=record.material_name,
+                text=text,
+            )
+        )
+
+    if not source_materials:
+        detail = " | ".join(parse_errors) if parse_errors else "No source text could be extracted."
+        raise SupabaseServiceError(f"Unable to read selected sources for quiz generation: {detail}")
+
+    return source_materials
 
 
 def _build_storage_path(filename: str) -> str:

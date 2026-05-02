@@ -1,5 +1,7 @@
+import type { GeneratedQuiz } from "@/lib/api/quiz";
 import type { ActiveTool, Material } from "@/lib/material-enhancement/workspace";
 import { getMaterialBaseName } from "@/lib/material-enhancement/workspace";
+import type { QuizGenerationStatus } from "@/components/material-enhancement/QuizPanel";
 
 import {
   FlashcardsIcon,
@@ -13,7 +15,11 @@ type AIToolsSidebarProps = {
   activeTool: ActiveTool;
   checkedMaterials: Material[];
   onOpenHelp: () => void;
+  onOpenQuiz: () => void;
   onSelectTool: (tool: ActiveTool) => void;
+  quiz: GeneratedQuiz | null;
+  quizErrorMessage: string | null;
+  quizStatus: QuizGenerationStatus;
 };
 
 const TOOL_DEFINITIONS: Array<{
@@ -31,7 +37,11 @@ export function AIToolsSidebar({
   activeTool,
   checkedMaterials,
   onOpenHelp,
+  onOpenQuiz,
   onSelectTool,
+  quiz,
+  quizErrorMessage,
+  quizStatus,
 }: AIToolsSidebarProps) {
   const outputCopy = getToolOutputCopy(activeTool, checkedMaterials);
 
@@ -118,6 +128,16 @@ export function AIToolsSidebar({
           {outputCopy.description}
         </p>
 
+        {activeTool === "quiz" ? (
+          <QuizArtifactCard
+            checkedMaterials={checkedMaterials}
+            errorMessage={quizErrorMessage}
+            onOpen={onOpenQuiz}
+            quiz={quiz}
+            status={quizStatus}
+          />
+        ) : null}
+
         <div className="mt-auto rounded-[18px] border border-[rgba(255,255,255,0.08)] bg-[rgba(0,0,0,0.16)] p-4">
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[color:var(--text-subtle)]">
             AI Input
@@ -154,6 +174,71 @@ export function AIToolsSidebar({
       </div>
     </aside>
   );
+}
+
+function QuizArtifactCard({
+  checkedMaterials,
+  errorMessage,
+  onOpen,
+  quiz,
+  status,
+}: {
+  checkedMaterials: Material[];
+  errorMessage: string | null;
+  onOpen: () => void;
+  quiz: GeneratedQuiz | null;
+  status: QuizGenerationStatus;
+}) {
+  const sourceCount = quiz?.source_count ?? checkedMaterials.length;
+  const isLoading = status === "loading";
+  const isError = status === "error";
+  const isDisabled = checkedMaterials.length === 0 || isLoading;
+
+  return (
+    <button
+      type="button"
+      disabled={isDisabled}
+      onClick={onOpen}
+      className={[
+        "mt-6 w-full rounded-[18px] border px-4 py-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]",
+        isError
+          ? "border-[rgba(255,154,168,0.26)] bg-[rgba(255,154,168,0.08)]"
+          : "border-[rgba(184,219,128,0.18)] bg-[rgba(184,219,128,0.1)]",
+        isDisabled ? "opacity-65" : "hover:-translate-y-px hover:bg-[rgba(184,219,128,0.14)]",
+      ].join(" ")}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[color:var(--text-subtle)]">
+            Quiz
+          </p>
+          <h4 className="mt-2 truncate text-[15px] font-bold text-[color:var(--text-primary)]">
+            {quiz?.title ?? getQuizArtifactTitle(status)}
+          </h4>
+        </div>
+        <span className="shrink-0 rounded-full border border-[rgba(255,255,255,0.08)] bg-[rgba(0,0,0,0.18)] px-2.5 py-1 text-[10px] font-bold text-[color:var(--accent-green)]">
+          {quiz ? `${quiz.questions.length} Q` : "12 Q"}
+        </span>
+      </div>
+      <p className="mt-3 text-[12px] leading-[19px] text-[color:var(--text-secondary)]">
+        {isError
+          ? errorMessage ?? "Quiz generation failed."
+          : `Based on ${sourceCount} selected source${sourceCount === 1 ? "" : "s"}.`}
+      </p>
+    </button>
+  );
+}
+
+function getQuizArtifactTitle(status: QuizGenerationStatus): string {
+  if (status === "loading") {
+    return "Making quiz";
+  }
+
+  if (status === "error") {
+    return "Retry quiz";
+  }
+
+  return "Generated quiz";
 }
 
 function getToolOutputCopy(activeTool: ActiveTool, checkedMaterials: Material[]) {
