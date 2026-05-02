@@ -1,198 +1,286 @@
 "use client";
 
-import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 
-import { DashboardActivityFeed } from "@/components/dashboard/DashboardActivityFeed";
-import { DashboardRecentUploadsTable } from "@/components/dashboard/DashboardDataTables";
-import { DashboardMetricCard } from "@/components/dashboard/DashboardMetricCard";
 import {
-  ChevronDownIcon,
-  ClockIcon,
-  ExportArrowIcon,
-  ReviewBubbleIcon,
-  UploadCloudIcon,
-} from "@/components/course-content-upload/icons";
+  DashboardCreateProjectCard,
+  DashboardProjectCard,
+  DashboardProjectSkeletonCard,
+  type DashboardProjectCardData,
+} from "@/components/dashboard/DashboardProjectCard";
 import {
-  filterDashboardData,
-  getDashboardCourseOptions,
-  getDashboardMetricCards,
-  getDashboardWindowLabel,
-  getMaterialTableRows,
-  getRecentActivityFeedItems,
-} from "@/lib/dashboard/selectors";
-import type { DashboardData, DashboardRange } from "@/lib/dashboard/types";
+  CreateProjectModal,
+  type CreateProjectSubmitResult,
+} from "@/components/material-enhancement/CreateProjectModal";
+import {
+  AddIcon,
+  ClarityIcon,
+  FileIcon,
+  ProjectLogoIcon,
+  QuizIcon,
+  SummaryIcon,
+  VisualsIcon,
+} from "@/components/material-enhancement/icons";
+import { getStoredAccessToken } from "@/lib/api/auth";
+import { createProject, listProjects, type Project } from "@/lib/api/projects";
 
-type DashboardClientPageProps = {
-  initialData: DashboardData;
+const dashboardDesktopGrid =
+  "xl:w-[1376px] xl:grid-cols-[289px_repeat(3,329px)] xl:auto-rows-[280px]";
+const projectSkeletonCount = 4;
+
+const displayFontStyle: CSSProperties = {
+  fontFamily: '"Plus Jakarta Sans", Inter, "Segoe UI", sans-serif',
 };
 
-const rangeOptions: Array<{ label: string; value: DashboardRange }> = [
-  { label: "7D", value: "7d" },
-  { label: "30D", value: "30d" },
-  { label: "90D", value: "90d" },
-];
+const projectCardIcons = [
+  FileIcon,
+  SummaryIcon,
+  QuizIcon,
+  VisualsIcon,
+  ClarityIcon,
+] as const;
 
-const metricIcons = {
-  materials: UploadCloudIcon,
-  ready: ReviewBubbleIcon,
-  cycleTime: ClockIcon,
-  exports: ExportArrowIcon,
-} as const;
+export function DashboardClientPage() {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(true);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-export function DashboardClientPage({
-  initialData,
-}: DashboardClientPageProps) {
-  const [referenceNow] = useState(() => new Date());
-  const [range, setRange] = useState<DashboardRange>("30d");
-  const [courseFilter, setCourseFilter] = useState("all");
+  useEffect(() => {
+    const accessToken = getStoredAccessToken();
 
-  const courseOptions = getDashboardCourseOptions(initialData);
-  const filteredData = filterDashboardData(
-    initialData,
-    range,
-    courseFilter,
-    referenceNow,
-  );
-  const metricCards = getDashboardMetricCards(
-    initialData,
-    range,
-    courseFilter,
-    referenceNow,
-  );
-  const recentUploadRows = getMaterialTableRows(filteredData, "newest").slice(0, 6);
-  const feedItems = getRecentActivityFeedItems(filteredData, 6);
-  const windowLabel = getDashboardWindowLabel(range, referenceNow);
+    if (!accessToken) {
+      setIsLoadingProjects(false);
+      return;
+    }
+
+    const signedInAccessToken = accessToken;
+    let isCancelled = false;
+
+    async function loadProjects() {
+      setIsLoadingProjects(true);
+
+      try {
+        const nextProjects = await listProjects(signedInAccessToken);
+
+        if (isCancelled) {
+          return;
+        }
+
+        setProjects(sortProjectsByFreshness(nextProjects));
+      } catch (cause) {
+        if (!isCancelled) {
+          setToastMessage(
+            cause instanceof Error ? cause.message : "Unable to load your projects.",
+          );
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingProjects(false);
+        }
+      }
+    }
+
+    void loadProjects();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!toastMessage) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setToastMessage(null);
+    }, 3600);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [toastMessage]);
+
+  const projectCards = mapProjectsToCards(projects);
+
+  const handleCreateProjectSubmit = async ({
+    projectName,
+  }: {
+    projectName: string;
+  }): Promise<CreateProjectSubmitResult> => {
+    const accessToken = getStoredAccessToken();
+
+    if (!accessToken) {
+      return {
+        success: false,
+        errorMessage: "Sign in before creating a project.",
+      };
+    }
+
+    try {
+      const project = await createProject({ accessToken, name: projectName });
+      setProjects((currentProjects) =>
+        sortProjectsByFreshness([project, ...currentProjects]),
+      );
+      setToastMessage(`Project "${project.name}" created.`);
+      return { success: true };
+    } catch (cause) {
+      return {
+        success: false,
+        errorMessage: cause instanceof Error ? cause.message : "Unable to create project.",
+      };
+    }
+  };
 
   return (
-    <div className="mx-auto flex w-full max-w-[1152px] flex-col gap-8">
-      <section className="overflow-hidden rounded-[28px] border border-[color:var(--line)] bg-[linear-gradient(135deg,rgba(255,255,255,0.06),rgba(255,255,255,0.04)_48%,rgba(243,158,182,0.08)_100%)] p-6 shadow-[var(--shadow-card)] sm:p-7">
-        <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-3xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--accent-green)]">
-              Academic Operations
-            </p>
-            <h1 className="mt-3 font-[family:var(--font-display)] text-[2.5rem] font-semibold tracking-[-0.05em] text-[color:var(--foreground)] sm:text-[3rem] sm:leading-[1.08]">
-              Dashboard overview
-            </h1>
-            <p className="mt-3 max-w-2xl text-base leading-8 text-[color:var(--muted-strong)]">
-              Track uploads, processing throughput, and export readiness through
-              the same visual system as the rest of the product. Every metric on
-              this page is derived from structured helpers and starts in a clean
-              zero state until API data arrives.
-            </p>
-          </div>
+    <main className="dashboard-premium min-h-screen">
+      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-[1440px] flex-col gap-8 px-5 py-10 sm:px-8 sm:py-12 lg:gap-10">
+        <DashboardBrandLockup />
 
-          <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
-            <div className="inline-flex rounded-full bg-[rgba(255,255,255,0.06)] p-1">
-              {rangeOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => {
-                    setRange(option.value);
-                  }}
-                  className={[
-                    "rounded-full px-4 py-2 text-sm font-semibold transition",
-                    option.value === range
-                      ? "bg-[linear-gradient(135deg,var(--accent),#d2ec9f)] text-[#1c1917] shadow-[var(--shadow-button)]"
-                      : "text-[color:var(--muted-strong)] hover:text-[color:var(--foreground)]",
-                  ].join(" ")}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-
-            <Link
-              href="/project"
-              className="inline-flex items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--accent),#d2ec9f)] px-6 py-3 text-sm font-semibold text-[#1c1917] shadow-[var(--shadow-button)] transition hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-[color:var(--accent-soft)]"
+        <section className="dashboard-hero-panel rounded-[32px] px-6 py-7 sm:px-8 sm:py-8 lg:px-9">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-[925px]">
+            <h1
+              className="text-[2.5rem] font-semibold tracking-[-0.02em] text-[#d7ebbd] drop-shadow-[0_10px_24px_rgba(197,225,165,0.14)] sm:text-[40px] sm:leading-[48px]"
+              style={displayFontStyle}
             >
-              Open project page
-            </Link>
+              Dashboard
+            </h1>
+            <p className="mt-[8px] max-w-[48rem] text-[16px] leading-[25.6px] text-[#d2d5c8]">
+              Manage your academic projects, research findings, and course
+              materials in one focused environment.
+            </p>
           </div>
-        </div>
 
-        <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <DashboardSelect
-            id="course-filter"
-            label="Filter by course"
-            value={courseFilter}
-            onChange={setCourseFilter}
-            options={[
-              { label: "All courses", value: "all" },
-              ...courseOptions.map((course) => ({
-                label: course,
-                value: course,
-              })),
-            ]}
+          <button
+            type="button"
+            onClick={() => setIsCreateProjectModalOpen(true)}
+            className="dashboard-action-button group inline-flex h-[46px] shrink-0 items-center gap-2 self-start rounded-full px-6 text-[14px] font-semibold text-[#425731] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(197,225,165,0.24)]"
+            style={displayFontStyle}
+          >
+            <AddIcon className="relative h-[14px] w-[14px]" />
+            <span className="relative">Create new</span>
+          </button>
+          </div>
+        </section>
+
+        <section className={`grid gap-5 sm:grid-cols-2 ${dashboardDesktopGrid}`}>
+          <DashboardCreateProjectCard
+            onClick={() => setIsCreateProjectModalOpen(true)}
           />
 
-          <div className="rounded-2xl border border-[color:var(--line)] bg-[linear-gradient(135deg,rgba(255,255,255,0.06),rgba(243,158,182,0.08))] px-4 py-3 text-sm text-[color:var(--muted-strong)]">
-            <span className="block text-[11px] font-semibold uppercase tracking-[0.16em] text-[color:var(--muted)]">
-              Active window
-            </span>
-            <span className="mt-1 block font-medium text-[color:var(--foreground)]">
-              {windowLabel}
-            </span>
-          </div>
+          {isLoadingProjects
+            ? Array.from({ length: projectSkeletonCount }).map((_, index) => (
+                <DashboardProjectSkeletonCard key={index} />
+              ))
+            : projectCards.map((project) => (
+                <DashboardProjectCard key={project.id} project={project} />
+              ))}
+        </section>
+      </div>
+
+      {toastMessage ? (
+        <div className="pointer-events-none fixed right-6 top-6 z-50 max-w-[360px] rounded-[18px] border border-[rgba(255,255,255,0.08)] bg-[linear-gradient(180deg,rgba(255,255,255,0.12)_0%,rgba(255,255,255,0.04)_100%),linear-gradient(145deg,rgba(31,32,28,0.88)_0%,rgba(18,20,16,0.76)_100%)] px-4 py-3 text-[13px] text-[#e9e9e2] shadow-[0_24px_52px_rgba(0,0,0,0.34)] backdrop-blur-[22px]">
+          {toastMessage}
         </div>
-      </section>
+      ) : null}
 
-      <section className="grid gap-5 xl:grid-cols-4">
-        {metricCards.map((card) => {
-          const Icon = metricIcons[card.id as keyof typeof metricIcons];
+      <CreateProjectModal
+        initialProjectName=""
+        isOpen={isCreateProjectModalOpen}
+        onClose={() => setIsCreateProjectModalOpen(false)}
+        onCreateProject={handleCreateProjectSubmit}
+      />
+    </main>
+  );
+}
 
-          return <DashboardMetricCard key={card.id} {...card} icon={Icon} />;
-        })}
-      </section>
+function DashboardBrandLockup() {
+  return (
+    <div className="flex min-h-[77px] items-center gap-[18px]">
+      <div className="flex h-[43px] w-[43px] shrink-0 items-center justify-center">
+        <ProjectLogoIcon className="h-[43px] w-[43px]" />
+      </div>
 
-      <section className="grid gap-8 xl:grid-cols-[minmax(0,1.45fr)_360px]">
-        <DashboardRecentUploadsTable
-          rows={recentUploadRows}
-        />
-
-        <DashboardActivityFeed items={feedItems} />
-      </section>
+      <div
+        className="max-w-[760px] text-[24px] font-semibold uppercase tracking-[0.14em] text-[#346739] [text-shadow:0_4px_4px_rgba(255,216,223,0.20)] sm:text-[22px] lg:text-[24px] xl:text-[26px]"
+        style={displayFontStyle}
+      >
+        Curriculum Updater
+      </div>
     </div>
   );
 }
 
-type DashboardSelectProps = {
-  id: string;
-  label: string;
-  onChange: (value: string) => void;
-  options: Array<{ label: string; value: string }>;
-  value: string;
-};
+function mapProjectsToCards(projects: Project[]): DashboardProjectCardData[] {
+  return sortProjectsByFreshness(projects).map((project) => {
+    const Icon = getProjectCardIcon(project);
+    const sourceCount = Math.max(project.material_count, 0);
 
-function DashboardSelect({
-  id,
-  label,
-  onChange,
-  options,
-  value,
-}: DashboardSelectProps) {
-  return (
-    <label className="block">
-      <span className="sr-only">{label}</span>
-      <div className="relative min-w-[190px]">
-        <select
-          id={id}
-          value={value}
-          onChange={(event) => {
-            onChange(event.target.value);
-          }}
-          className="h-12 w-full appearance-none rounded-2xl border border-[color:var(--line)] bg-[rgba(255,255,255,0.06)] px-4 pr-10 text-sm font-medium text-[color:var(--foreground)] outline-none transition focus:border-[color:var(--accent)] focus:bg-[rgba(255,255,255,0.08)] focus:ring-2 focus:ring-[color:var(--accent-soft)]"
-        >
-          {options.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <ChevronDownIcon className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--muted)]" />
-      </div>
-    </label>
+    return {
+      href: "/project",
+      icon: Icon,
+      id: String(project.id),
+      sourceCountLabel: `${sourceCount} ${sourceCount === 1 ? "Source" : "Sources"}`,
+      title: project.name.trim() || "Untitled project",
+      updatedLabel: formatProjectUpdatedLabel(project.last_updated ?? project.created_on),
+    };
+  });
+}
+
+function getProjectCardIcon(project: Project) {
+  const seed = `${project.id}-${project.name}`.split("").reduce((total, character) => {
+    return total + character.charCodeAt(0);
+  }, 0);
+
+  return projectCardIcons[seed % projectCardIcons.length];
+}
+
+function sortProjectsByFreshness(projects: Project[]) {
+  return [...projects].sort((firstProject, secondProject) => {
+    return getProjectFreshness(secondProject) - getProjectFreshness(firstProject);
+  });
+}
+
+function getProjectFreshness(project: Project) {
+  const value = project.last_updated ?? project.created_on ?? "";
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function formatProjectUpdatedLabel(value?: string | null) {
+  if (!value) {
+    return "Updated recently";
+  }
+
+  const parsedDate = new Date(value);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "Updated recently";
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const comparedDate = new Date(parsedDate);
+  comparedDate.setHours(0, 0, 0, 0);
+
+  const differenceInDays = Math.round(
+    (today.getTime() - comparedDate.getTime()) / 86_400_000,
   );
+
+  if (differenceInDays <= 0) {
+    return "Updated today";
+  }
+
+  if (differenceInDays === 1) {
+    return "Updated yesterday";
+  }
+
+  return `Updated ${new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit",
+  }).format(parsedDate)}`;
 }
