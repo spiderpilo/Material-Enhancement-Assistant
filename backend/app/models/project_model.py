@@ -6,7 +6,7 @@ from app.models.document_model import CourseContentRecord
 
 
 class CreateProjectRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
+    name: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class UpdateProjectRequest(BaseModel):
@@ -19,14 +19,22 @@ class ProjectMaterialRecord(CourseContentRecord):
     uploaded_at: datetime | None = None
 
 
-class ProjectRecord(BaseModel):
+class ProjectSummary(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    id: int
+    id: int | None = None
+    project_uuid: str
     name: str
-    created_by: str
-    owner_auth_user_id: str | None = None
-    created_on: datetime | None = None
-    materials: list[ProjectMaterialRecord] = Field(default_factory=list)
+    owner_user_id: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
     material_count: int = 0
     last_updated: datetime | None = None
+
+
+class ProjectRecord(ProjectSummary):
+    materials: list[ProjectMaterialRecord] = Field(default_factory=list)
+
+
+class ListProjectsResponse(BaseModel):
+    projects: list[ProjectSummary] = Field(default_factory=list)

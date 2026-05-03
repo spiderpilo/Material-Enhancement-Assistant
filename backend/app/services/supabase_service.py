@@ -16,7 +16,7 @@ from app.models.document_model import (
     PreviewStatus,
     SourceType,
 )
-from app.models.project_model import ProjectMaterialRecord, ProjectRecord
+from app.models.project_model import ProjectMaterialRecord, ProjectRecord, ProjectSummary
 from app.models.quiz_model import QuizSourceMaterial
 from app.services.parser_service import DocumentParseError, parse_document
 from app.services.preview_service import DocumentPreviewError, render_course_content_previews

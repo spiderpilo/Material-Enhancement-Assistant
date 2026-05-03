@@ -34,9 +34,30 @@ From the repository root:
 ```bash
 python3 -m venv backend/.venv
 source backend/.venv/bin/activate
-pip install -r backend/requirements.txt
+python -m pip install -r backend/requirements.txt
 cp .env.example .env
 uvicorn app.main:app --reload --app-dir backend
+```
+
+To avoid interpreter drift (for example, system Python without `fitz`), you can always use:
+
+```bash
+backend/scripts/run_dev.sh
+```
+
+The script starts Uvicorn with `--reload-dir backend/app` so the reloader only watches backend source files.
+
+Quick interpreter sanity checks before starting:
+
+```bash
+python -c "import sys; print(sys.executable)"
+python -c "import fitz; print('ok')"
+```
+
+If you choose not to use `backend/.venv`, install dependencies into the exact interpreter that starts Uvicorn:
+
+```bash
+python3 -m pip install PyMuPDF
 ```
 
 If you already have a repo-root `.env`, keep it and make sure it contains:
@@ -49,6 +70,19 @@ SUPABASE_ANON_KEY=your-anon-key
 ```
 
 `access_url` stores the stable Supabase object URL written to `course_contents`. It is not a signed URL.
+
+## Project Schema Migration (UUID Contract)
+
+If your Supabase `projects` table still uses legacy columns (`owner_auth_user_id`, `created_on`, `created_by`),
+apply the migration below to add and backfill UUID-contract columns used by the current app
+(`project_uuid`, `owner_user_id`, `created_at`, `updated_at`):
+
+```bash
+backend/.venv/bin/python backend/database/apply_migration.py \
+  backend/database/migrations/20260502_projects_uuid_contract.sql
+```
+
+The migration is idempotent and keeps legacy columns for rollback compatibility.
 
 ## Docker Run
 

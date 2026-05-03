@@ -1,6 +1,12 @@
 from fastapi import APIRouter, Header, HTTPException, Query, status
 
-from app.models.project_model import CreateProjectRequest, ProjectRecord, UpdateProjectRequest
+from app.models.project_model import (
+    CreateProjectRequest,
+    ListProjectsResponse,
+    ProjectRecord,
+    ProjectSummary,
+    UpdateProjectRequest,
+)
 from app.services.supabase_service import (
     AuthenticationError,
     MissingSupabaseConfigError,
@@ -27,15 +33,17 @@ def _extract_bearer_token(authorization: str | None) -> str:
     return token
 
 
-@router.get("/projects", response_model=list[ProjectRecord])
+@router.get("/projects", response_model=ListProjectsResponse)
 def list_projects(
     authorization: str | None = Header(default=None),
     limit: int | None = Query(default=None, ge=1, le=100),
-) -> list[ProjectRecord]:
+) -> ListProjectsResponse:
     try:
-        return list_projects_for_user(
-            access_token=_extract_bearer_token(authorization),
-            limit=limit,
+        return ListProjectsResponse(
+            projects=list_projects_for_user(
+                access_token=_extract_bearer_token(authorization),
+                limit=limit,
+            )
         )
     except MissingSupabaseConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -45,15 +53,16 @@ def list_projects(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@router.post("/projects", response_model=ProjectRecord, status_code=status.HTTP_201_CREATED)
+@router.post("/projects", response_model=ProjectSummary, status_code=status.HTTP_201_CREATED)
 def create_project(
-    payload: CreateProjectRequest,
+    payload: CreateProjectRequest | None = None,
     authorization: str | None = Header(default=None),
-) -> ProjectRecord:
+) -> ProjectSummary:
     try:
+        project_name = (payload.name if payload else None) or "Untitled Project"
         return create_project_for_user(
             access_token=_extract_bearer_token(authorization),
-            name=payload.name.strip(),
+            name=project_name.strip(),
         )
     except MissingSupabaseConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -63,15 +72,15 @@ def create_project(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@router.get("/projects/{project_id}", response_model=ProjectRecord)
+@router.get("/projects/{project_uuid}", response_model=ProjectRecord)
 def get_project(
-    project_id: int,
+    project_uuid: str,
     authorization: str | None = Header(default=None),
 ) -> ProjectRecord:
     try:
         return get_project_for_user(
             access_token=_extract_bearer_token(authorization),
-            project_id=project_id,
+            project_uuid=project_uuid,
         )
     except MissingSupabaseConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
