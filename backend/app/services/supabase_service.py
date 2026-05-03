@@ -26,6 +26,7 @@ from app.utils.file_utils import sanitize_filename
 REQUEST_TIMEOUT_SECONDS = 30
 PREVIEW_STORAGE_PREFIX = "course-content-previews"
 logger = logging.getLogger(__name__)
+LEGACY_PROJECTS_NOT_NULL_COLUMNS = ("created_by", "owner_auth_user_id")
 
 
 class MissingSupabaseConfigError(Exception):
@@ -217,12 +218,37 @@ def create_project_for_user(*, access_token: str, name: str) -> ProjectSummary:
         auth_user=auth_user,
     )
 
-    project_row = _insert_project_record(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
-        name=name,
-        owner_user_id=auth_user.user_id,
-    )
+    try:
+        project_row = _insert_project_record(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            name=name,
+            owner_user_id=auth_user.user_id,
+        )
+    except SupabaseServiceError as exc:
+        if not _is_legacy_projects_not_null_error(exc):
+            raise
+
+        legacy_created_by: str | int = profile.id if profile else auth_user.user_id
+        logger.warning(
+            "Retrying project insert with legacy columns because projects schema is mixed-contract: %s",
+            exc,
+        )
+        try:
+            project_row = _insert_project_record(
+                url=settings.url,
+                service_role_key=settings.service_role_key,
+                name=name,
+                owner_user_id=auth_user.user_id,
+                owner_auth_user_id=auth_user.user_id,
+                created_by=legacy_created_by,
+            )
+        except SupabaseServiceError as retry_exc:
+            if _is_legacy_projects_not_null_error(retry_exc):
+                raise SupabaseServiceError(
+                    _build_legacy_projects_migration_hint_message(str(retry_exc))
+                ) from retry_exc
+            raise
 
     if profile:
         try:
@@ -1120,13 +1146,19 @@ def _insert_project_record(
     service_role_key: str,
     name: str,
     owner_user_id: str,
+    owner_auth_user_id: str | None = None,
+    created_by: str | int | None = None,
 ) -> dict[str, Any]:
-    payload = json.dumps(
-        {
-            "name": name,
-            "owner_user_id": owner_user_id,
-        }
-    ).encode("utf-8")
+    payload_map: dict[str, Any] = {
+        "name": name,
+        "owner_user_id": owner_user_id,
+    }
+    if owner_auth_user_id:
+        payload_map["owner_auth_user_id"] = owner_auth_user_id
+    if created_by is not None:
+        payload_map["created_by"] = created_by
+
+    payload = json.dumps(payload_map).encode("utf-8")
 
     response_body = _send_request(
         endpoint=f"{url.rstrip('/')}/rest/v1/projects",
@@ -1146,6 +1178,25 @@ def _insert_project_record(
         raise SupabaseServiceError("Supabase did not return the inserted projects row.")
 
     return rows[0]
+
+
+def _is_legacy_projects_not_null_error(error: Exception) -> bool:
+    message = str(error).lower()
+    if "null value in column" not in message:
+        return False
+    if 'relation "projects"' not in message:
+        return False
+
+    return any(f'"{column}"' in message for column in LEGACY_PROJECTS_NOT_NULL_COLUMNS)
+
+
+def _build_legacy_projects_migration_hint_message(error_message: str) -> str:
+    return (
+        f"{error_message} "
+        "Legacy projects schema constraints detected. "
+        "Apply backend/database/migrations/20260502_projects_uuid_contract.sql, then "
+        "backend/database/migrations/20260503_projects_legacy_not_null_relax.sql."
+    )
 
 
 def _update_project_record(

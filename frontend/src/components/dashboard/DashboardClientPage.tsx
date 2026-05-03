@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import {
   DashboardCreateProjectCard,
@@ -10,10 +10,6 @@ import {
   DashboardProjectSkeletonCard,
   type DashboardProjectCardData,
 } from "@/components/dashboard/DashboardProjectCard";
-import {
-  CreateProjectModal,
-  type CreateProjectSubmitResult,
-} from "@/components/material-enhancement/CreateProjectModal";
 import {
   AddIcon,
   ClarityIcon,
@@ -26,7 +22,6 @@ import {
 } from "@/components/material-enhancement/icons";
 import { getStoredAccessToken } from "@/lib/api/auth";
 import {
-  createProject,
   deleteProject,
   listProjects,
   type ProjectSummary,
@@ -50,8 +45,8 @@ const projectCardIcons = [
 ] as const;
 
 export function DashboardClientPage() {
+  const router = useRouter();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [editingProjectUuid, setEditingProjectUuid] = useState<string | null>(null);
@@ -119,40 +114,10 @@ export function DashboardClientPage() {
   }, [toastMessage]);
 
   const projectCards = mapProjectsToCards(projects);
-  const recentProjects = sortProjectsByFreshness(projects).slice(0, 6);
   const editingProject =
     projects.find((project) => project.project_uuid === editingProjectUuid) ?? null;
   const deletingProject =
     projects.find((project) => project.project_uuid === deletingProjectUuid) ?? null;
-
-  const handleCreateProjectSubmit = async ({
-    projectName,
-  }: {
-    projectName: string;
-  }): Promise<CreateProjectSubmitResult> => {
-    const accessToken = getStoredAccessToken();
-
-    if (!accessToken) {
-      return {
-        success: false,
-        errorMessage: "Sign in before creating a project.",
-      };
-    }
-
-    try {
-      const project = await createProject({ accessToken, name: projectName });
-      setProjects((currentProjects) =>
-        sortProjectsByFreshness([project, ...currentProjects]),
-      );
-      setToastMessage(`Project "${project.name}" created.`);
-      return { success: true };
-    } catch (cause) {
-      return {
-        success: false,
-        errorMessage: cause instanceof Error ? cause.message : "Unable to create project.",
-      };
-    }
-  };
 
   const handleOpenEditProject = (projectUuid: string) => {
     const project = projects.find((item) => item.project_uuid === projectUuid);
@@ -301,7 +266,7 @@ export function DashboardClientPage() {
 
           <button
             type="button"
-            onClick={() => setIsCreateProjectModalOpen(true)}
+            onClick={() => router.push("/project")}
             className="dashboard-action-button group inline-flex h-[46px] shrink-0 items-center gap-2 self-start rounded-full px-6 text-[14px] font-semibold text-[#425731] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(197,225,165,0.24)]"
             style={displayFontStyle}
           >
@@ -315,7 +280,7 @@ export function DashboardClientPage() {
 
         <section className={`grid gap-5 sm:grid-cols-2 ${dashboardDesktopGrid}`}>
           <DashboardCreateProjectCard
-            onClick={() => setIsCreateProjectModalOpen(true)}
+            onClick={() => router.push("/project")}
           />
 
           {isLoadingProjects
@@ -338,13 +303,6 @@ export function DashboardClientPage() {
           {toastMessage}
         </div>
       ) : null}
-
-      <CreateProjectModal
-        initialProjectName=""
-        isOpen={isCreateProjectModalOpen}
-        onClose={() => setIsCreateProjectModalOpen(false)}
-        onCreateProject={handleCreateProjectSubmit}
-      />
 
       <ProjectRenameModal
         errorMessage={editProjectErrorMessage}

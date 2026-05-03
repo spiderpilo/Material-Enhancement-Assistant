@@ -36,7 +36,6 @@ import {
 import { getStoredAccessToken } from "@/lib/api/auth";
 import { getCourseContentPreview, uploadCourseContent } from "@/lib/api/course-content";
 import {
-  createProject,
   getProject,
   type Project,
 } from "@/lib/api/projects";
@@ -57,7 +56,6 @@ export function MaterialEnhancementWorkspace({
   const [isLoadingProject, setIsLoadingProject] = useState(false);
   const [isAddMaterialsModalOpen, setIsAddMaterialsModalOpen] = useState(false);
   const [materials, setMaterials] = useState<Material[]>([]);
-  const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [isLeftPanelCollapsed, setIsLeftPanelCollapsed] = useState(false);
   const [checkedMaterialIds, setCheckedMaterialIds] = useState<string[]>([]);
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
@@ -485,27 +483,8 @@ export function MaterialEnhancementWorkspace({
     return { success: true };
   };
 
-  const handleCreateProject = async () => {
-    const accessToken = getStoredAccessToken();
-
-    if (!accessToken) {
-      setToastMessage("Sign in before creating a project.");
-      return;
-    }
-
-    if (isCreatingProject) {
-      return;
-    }
-
-    try {
-      setIsCreatingProject(true);
-      const createdProject = await createProject({ accessToken });
-      router.push(`/project/${createdProject.project_uuid}`);
-    } catch (cause) {
-      setToastMessage(cause instanceof Error ? cause.message : "Unable to create project.");
-    } finally {
-      setIsCreatingProject(false);
-    }
+  const handleCreateProject = () => {
+    router.push("/project");
   };
 
   const handleAddMaterials = async () => {

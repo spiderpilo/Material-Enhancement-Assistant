@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { getStoredAccessToken } from "@/lib/api/auth";
-import { createProject, listProjects } from "@/lib/api/projects";
+import { createProject } from "@/lib/api/projects";
 
 export default function ProjectCompatibilityPage() {
   const router = useRouter();
-  const [statusMessage, setStatusMessage] = useState("Loading your project...");
+  const [statusMessage, setStatusMessage] = useState("Creating your project...");
 
   useEffect(() => {
     const accessToken = getStoredAccessToken();
@@ -21,15 +21,6 @@ export default function ProjectCompatibilityPage() {
 
     async function redirectToProject() {
       try {
-        const projects = await listProjects(accessToken, 1);
-        const newestProject = projects[0];
-
-        if (newestProject?.project_uuid) {
-          router.replace(`/project/${newestProject.project_uuid}`);
-          return;
-        }
-
-        setStatusMessage("Creating your first project...");
         const createdProject = await createProject({ accessToken });
         router.replace(`/project/${createdProject.project_uuid}`);
       } catch (cause) {

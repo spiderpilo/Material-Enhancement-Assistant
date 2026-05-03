@@ -86,18 +86,25 @@ SUPABASE_ANON_KEY=your-anon-key
 
 `access_url` stores the stable Supabase object URL written to `course_contents`. It is not a signed URL.
 
-## Project Schema Migration (UUID Contract)
+## Project Schema Migration (UUID Contract + Legacy Constraint Relax)
 
 If your Supabase `projects` table still uses legacy columns (`owner_auth_user_id`, `created_on`, `created_by`),
-apply the migration below to add and backfill UUID-contract columns used by the current app
+apply the migrations below to add and backfill UUID-contract columns used by the current app
 (`project_uuid`, `owner_user_id`, `created_at`, `updated_at`):
 
 ```bash
 backend/.venv/bin/python backend/database/apply_migration.py \
   backend/database/migrations/20260502_projects_uuid_contract.sql
+
+backend/.venv/bin/python backend/database/apply_migration.py \
+  backend/database/migrations/20260503_projects_legacy_not_null_relax.sql
 ```
 
-The migration is idempotent and keeps legacy columns for rollback compatibility.
+Both migrations are idempotent and keep legacy columns for rollback compatibility.
+
+If project creation fails with:
+`null value in column "created_by" of relation "projects" violates not-null constraint`
+run the second migration (`20260503_projects_legacy_not_null_relax.sql`) immediately.
 
 ## Docker Run
 
