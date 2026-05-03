@@ -88,6 +88,11 @@ export function MaterialEnhancementWorkspace({
     projects[0] ??
     null;
   const projectName = selectedProject?.name ?? "";
+  const isProjectNameEditable =
+    !isLoadingProject &&
+    normalizedRouteProjectUuid.length > 0 &&
+    normalizedRouteProjectUuid !== "undefined" &&
+    projects.some((project) => project.project_uuid === normalizedRouteProjectUuid);
   const selectedMaterial = getSelectedMaterial(materials, selectedMaterialId);
   const selectedPreviewItem = getSelectedPreviewItem(
     selectedMaterial,
@@ -138,6 +143,8 @@ export function MaterialEnhancementWorkspace({
   }, [materials]);
 
   useEffect(() => {
+    isMountedRef.current = true;
+
     return () => {
       isMountedRef.current = false;
     };
@@ -160,6 +167,7 @@ export function MaterialEnhancementWorkspace({
   useEffect(() => {
     const normalizedProjectUuid = projectUuid.trim();
     if (!normalizedProjectUuid || normalizedProjectUuid === "undefined") {
+      setIsLoadingProject(false);
       setToastMessage("Invalid project link. Open the project again from your dashboard.");
       return;
     }
@@ -167,6 +175,7 @@ export function MaterialEnhancementWorkspace({
     const accessToken = getStoredAccessToken();
 
     if (!accessToken) {
+      setIsLoadingProject(false);
       setToastMessage("Sign in to load your projects.");
       return;
     }
@@ -668,15 +677,21 @@ export function MaterialEnhancementWorkspace({
   };
 
   const handleProjectNameChange = (nextProjectName: string) => {
-    const activeProject = selectedProject;
-    if (!activeProject) {
-      setToastMessage("Select a project before renaming it.");
+    const normalizedProjectUuid = normalizedRouteProjectUuid;
+    if (!normalizedProjectUuid || normalizedProjectUuid === "undefined") {
+      setToastMessage("Unable to rename this project because its link is invalid.");
       return;
     }
 
-    const normalizedProjectUuid = activeProject.project_uuid.trim();
-    if (!normalizedProjectUuid || normalizedProjectUuid === "undefined") {
-      setToastMessage("Unable to rename this project because its link is invalid.");
+    if (isLoadingProject) {
+      setToastMessage("Project is still loading. Try again.");
+      return;
+    }
+
+    const activeProject =
+      projects.find((project) => project.project_uuid === normalizedProjectUuid) ?? null;
+    if (!activeProject) {
+      setToastMessage("Project is still loading. Try again.");
       return;
     }
 
@@ -693,7 +708,7 @@ export function MaterialEnhancementWorkspace({
     }
 
     const previousProjectName = activeProject.name;
-    if (normalizedProjectName === previousProjectName) {
+    if (normalizedProjectName === previousProjectName.trim()) {
       return;
     }
 
@@ -808,6 +823,7 @@ export function MaterialEnhancementWorkspace({
     <main className="min-h-screen overflow-x-auto px-8 pb-7 pt-5">
       <div className="mx-auto w-full min-w-[1480px] max-w-[1852px]">
         <ProjectHeader
+          isProjectNameEditable={isProjectNameEditable}
           projectName={projectName}
           onCreateProject={handleCreateProject}
           onOpenProfile={handleOpenProfile}

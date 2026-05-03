@@ -14,6 +14,7 @@ import {
 import Link from "next/link";
 
 type ProjectHeaderProps = {
+  isProjectNameEditable?: boolean;
   projectName: string;
   onCreateProject: () => void;
   onOpenProfile: () => void;
@@ -23,6 +24,7 @@ type ProjectHeaderProps = {
 };
 
 export function ProjectHeader({
+  isProjectNameEditable = true,
   projectName,
   onCreateProject,
   onOpenProfile,
@@ -44,6 +46,7 @@ export function ProjectHeader({
         </div>
 
         <EditableProjectTitle
+          isEditable={isProjectNameEditable}
           projectName={projectName}
           onProjectNameChange={onProjectNameChange}
         />
@@ -74,9 +77,11 @@ export function ProjectHeader({
 }
 
 function EditableProjectTitle({
+  isEditable,
   projectName,
   onProjectNameChange,
 }: {
+  isEditable: boolean;
   projectName: string;
   onProjectNameChange: (nextProjectName: string) => void;
 }) {
@@ -153,11 +158,12 @@ function EditableProjectTitle({
   return (
     <button
       type="button"
+      disabled={!isEditable}
       onClick={() => {
         setDraftProjectName(trimmedProjectName);
         setIsEditing(true);
       }}
-      className="group flex min-w-0 items-center gap-2 rounded-[12px] px-2 py-2 text-left transition hover:bg-[rgba(255,255,255,0.03)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.2)]"
+      className="group flex min-w-0 items-center gap-2 rounded-[12px] px-2 py-2 text-left transition hover:bg-[rgba(255,255,255,0.03)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.2)] disabled:cursor-not-allowed disabled:opacity-80"
       aria-label="Edit project title"
     >
       <span

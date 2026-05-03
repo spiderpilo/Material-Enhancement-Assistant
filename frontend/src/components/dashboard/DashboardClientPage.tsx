@@ -58,21 +58,23 @@ export function DashboardClientPage() {
   const [isDeletingProject, setIsDeletingProject] = useState(false);
 
   useEffect(() => {
-    const accessToken = getStoredAccessToken();
-
-    if (!accessToken) {
-      setIsLoadingProjects(false);
-      return;
-    }
-
-    const signedInAccessToken = accessToken;
     let isCancelled = false;
 
-    async function loadProjects() {
-      setIsLoadingProjects(true);
+    async function loadProjects({ showLoadingIndicator }: { showLoadingIndicator: boolean }) {
+      const accessToken = getStoredAccessToken();
+      if (!accessToken) {
+        if (!isCancelled) {
+          setIsLoadingProjects(false);
+        }
+        return;
+      }
+
+      if (showLoadingIndicator) {
+        setIsLoadingProjects(true);
+      }
 
       try {
-        const nextProjects = await listProjects(signedInAccessToken);
+        const nextProjects = await listProjects(accessToken);
 
         if (isCancelled) {
           return;
@@ -86,16 +88,30 @@ export function DashboardClientPage() {
           );
         }
       } finally {
-        if (!isCancelled) {
+        if (!isCancelled && showLoadingIndicator) {
           setIsLoadingProjects(false);
         }
       }
     }
 
-    void loadProjects();
+    void loadProjects({ showLoadingIndicator: true });
+
+    const handleWindowFocus = () => {
+      void loadProjects({ showLoadingIndicator: false });
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void loadProjects({ showLoadingIndicator: false });
+      }
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       isCancelled = true;
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 

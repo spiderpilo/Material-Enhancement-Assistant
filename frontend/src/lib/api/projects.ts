@@ -46,8 +46,10 @@ export async function getProject({
 }): Promise<Project> {
   const response = await fetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}`, {
     method: "GET",
+    cache: "no-store",
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      "Cache-Control": "no-cache",
     },
   });
 
