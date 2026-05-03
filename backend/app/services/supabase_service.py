@@ -166,7 +166,7 @@ def create_account(*, email: str, password: str, username: str, profession: str)
     return CreateAccountResponse(auth_user_id=auth_user["id"], profile=profile)
 
 
-def list_projects_for_user(*, access_token: str, limit: int | None = None) -> list[ProjectRecord]:
+def list_projects_for_user(*, access_token: str, limit: int | None = None) -> list[ProjectSummary]:
     try:
         settings = get_supabase_settings()
     except ValueError as exc:
@@ -181,22 +181,20 @@ def list_projects_for_user(*, access_token: str, limit: int | None = None) -> li
     projects = _fetch_project_rows_for_owner(
         url=settings.url,
         service_role_key=settings.service_role_key,
-        owner_auth_user_id=auth_user.user_id,
+        owner_user_id=auth_user.user_id,
         limit=limit,
     )
 
-    return [
-        _build_project_record(
+    return [_build_project_summary(
             url=settings.url,
             service_role_key=settings.service_role_key,
             project_row=project,
-            include_materials=False,
         )
         for project in projects
     ]
 
 
-def create_project_for_user(*, access_token: str, name: str) -> ProjectRecord:
+def create_project_for_user(*, access_token: str, name: str) -> ProjectSummary:
     try:
         settings = get_supabase_settings()
     except ValueError as exc:
@@ -217,8 +215,7 @@ def create_project_for_user(*, access_token: str, name: str) -> ProjectRecord:
         url=settings.url,
         service_role_key=settings.service_role_key,
         name=name,
-        created_by=_build_project_creator_label(auth_user),
-        owner_auth_user_id=auth_user.user_id,
+        owner_user_id=auth_user.user_id,
     )
 
     if profile:
@@ -232,15 +229,14 @@ def create_project_for_user(*, access_token: str, name: str) -> ProjectRecord:
         except SupabaseServiceError as exc:
             logger.warning("Skipping user_projects link for project_id=%s: %s", project_row.get("id"), exc)
 
-    return _build_project_record(
+    return _build_project_summary(
         url=settings.url,
         service_role_key=settings.service_role_key,
         project_row=project_row,
-        include_materials=True,
     )
 
 
-def get_project_for_user(*, access_token: str, project_id: int) -> ProjectRecord:
+def get_project_for_user(*, access_token: str, project_uuid: str) -> ProjectRecord:
     try:
         settings = get_supabase_settings()
     except ValueError as exc:
@@ -251,11 +247,11 @@ def get_project_for_user(*, access_token: str, project_id: int) -> ProjectRecord
         service_role_key=settings.service_role_key,
         access_token=access_token,
     )
-    project_row = _fetch_owned_project_row(
+    project_row = _fetch_owned_project_row_by_uuid(
         url=settings.url,
         service_role_key=settings.service_role_key,
-        project_id=project_id,
-        owner_auth_user_id=auth_user.user_id,
+        project_uuid=project_uuid,
+        owner_user_id=auth_user.user_id,
     )
 
     return _build_project_record(
@@ -281,7 +277,7 @@ def update_project_for_user(*, access_token: str, project_id: int, name: str) ->
         url=settings.url,
         service_role_key=settings.service_role_key,
         project_id=project_id,
-        owner_auth_user_id=auth_user.user_id,
+        owner_user_id=auth_user.user_id,
     )
     updated_row = _update_project_record(
         url=settings.url,
@@ -319,7 +315,7 @@ def upload_course_content(
         url=settings.url,
         service_role_key=settings.service_role_key,
         project_id=project_id,
-        owner_auth_user_id=auth_user.user_id,
+        owner_user_id=auth_user.user_id,
     )
 
     storage_path = _build_storage_path(filename)
@@ -624,7 +620,7 @@ def get_course_content_preview_for_user(
         url=settings.url,
         service_role_key=settings.service_role_key,
         course_content_id=course_content_id,
-        owner_auth_user_id=auth_user.user_id,
+        owner_user_id=auth_user.user_id,
     )
 
     return get_course_content_preview(course_content_id=course_content_id)
@@ -828,10 +824,6 @@ def _get_user_profile_optional(
     )
 
 
-def _build_project_creator_label(auth_user: AuthenticatedUser) -> str:
-    return auth_user.username or auth_user.email or auth_user.user_id
-
-
 def _fetch_user_profile_by_username(
     *,
     url: str,
@@ -863,14 +855,14 @@ def _fetch_project_rows_for_owner(
     *,
     url: str,
     service_role_key: str,
-    owner_auth_user_id: str,
+    owner_user_id: str,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     limit_clause = f"&limit={limit}" if isinstance(limit, int) and limit > 0 else ""
     endpoint = (
         f"{url.rstrip('/')}/rest/v1/projects"
-        f"?owner_auth_user_id=eq.{parse.quote(owner_auth_user_id, safe='')}"
-        "&select=*&order=created_on.desc.nullslast,id.desc"
+        f"?owner_user_id=eq.{parse.quote(owner_user_id, safe='')}"
+        "&select=*&order=created_at.desc.nullslast,id.desc"
         f"{limit_clause}"
     )
     response_body = _send_request(
@@ -891,11 +883,40 @@ def _fetch_owned_project_row(
     url: str,
     service_role_key: str,
     project_id: int,
-    owner_auth_user_id: str,
+    owner_user_id: str,
 ) -> dict[str, Any]:
     endpoint = (
         f"{url.rstrip('/')}/rest/v1/projects"
-        f"?id=eq.{project_id}&owner_auth_user_id=eq.{parse.quote(owner_auth_user_id, safe='')}&select=*"
+        f"?id=eq.{project_id}&owner_user_id=eq.{parse.quote(owner_user_id, safe='')}&select=*"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+    rows = _decode_json_rows(response_body, "projects")
+
+    if not rows:
+        raise ProjectNotFoundError("Project was not found.")
+
+    return rows[0]
+
+
+def _fetch_owned_project_row_by_uuid(
+    *,
+    url: str,
+    service_role_key: str,
+    project_uuid: str,
+    owner_user_id: str,
+) -> dict[str, Any]:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/projects"
+        f"?project_uuid=eq.{parse.quote(project_uuid, safe='')}"
+        f"&owner_user_id=eq.{parse.quote(owner_user_id, safe='')}&select=*"
     )
     response_body = _send_request(
         endpoint=endpoint,
@@ -919,14 +940,12 @@ def _insert_project_record(
     url: str,
     service_role_key: str,
     name: str,
-    created_by: str,
-    owner_auth_user_id: str,
+    owner_user_id: str,
 ) -> dict[str, Any]:
     payload = json.dumps(
         {
             "name": name,
-            "created_by": created_by,
-            "owner_auth_user_id": owner_auth_user_id,
+            "owner_user_id": owner_user_id,
         }
     ).encode("utf-8")
 
@@ -1085,6 +1104,30 @@ def _delete_project_material_link(
     return None
 
 
+def _build_project_summary(
+    *,
+    url: str,
+    service_role_key: str,
+    project_row: dict[str, Any],
+) -> ProjectSummary:
+    project_id = _read_int(project_row, "id")
+    material_links = _fetch_project_material_links(
+        url=url,
+        service_role_key=service_role_key,
+        project_id=project_id,
+    )
+    normalized_row = _normalize_project_row(project_row)
+    last_updated = _read_latest_project_material_timestamp(material_links)
+
+    return ProjectSummary.model_validate(
+        {
+            **normalized_row,
+            "material_count": len(material_links),
+            "last_updated": last_updated,
+        }
+    )
+
+
 def _build_project_record(
     *,
     url: str,
@@ -1092,12 +1135,21 @@ def _build_project_record(
     project_row: dict[str, Any],
     include_materials: bool,
 ) -> ProjectRecord:
-    project_id = _read_int(project_row, "id")
+    summary = _build_project_summary(
+        url=url,
+        service_role_key=service_role_key,
+        project_row=project_row,
+    )
+    project_id = summary.id
+    if project_id is None:
+        raise SupabaseServiceError("Project record is missing a numeric id.")
+
     material_links = _fetch_project_material_links(
         url=url,
         service_role_key=service_role_key,
         project_id=project_id,
     )
+
     materials = (
         _fetch_project_material_records(
             url=url,
@@ -1107,16 +1159,34 @@ def _build_project_record(
         if include_materials
         else []
     )
-    last_updated = _read_latest_project_material_timestamp(material_links)
 
     return ProjectRecord.model_validate(
         {
-            **project_row,
+            **summary.model_dump(),
             "materials": materials,
-            "material_count": len(material_links),
-            "last_updated": last_updated,
         }
     )
+
+
+def _normalize_project_row(project_row: dict[str, Any]) -> dict[str, Any]:
+    project_uuid = project_row.get("project_uuid")
+    owner_user_id = project_row.get("owner_user_id")
+    created_at = project_row.get("created_at")
+    updated_at = project_row.get("updated_at")
+
+    if not isinstance(project_uuid, str) or not project_uuid.strip():
+        raise SupabaseServiceError("Project row is missing a project_uuid.")
+    if not isinstance(owner_user_id, str) or not owner_user_id.strip():
+        raise SupabaseServiceError("Project row is missing an owner_user_id.")
+
+    return {
+        "id": _read_optional_int(project_row, "id"),
+        "project_uuid": project_uuid,
+        "name": project_row.get("name") or "Untitled Project",
+        "owner_user_id": owner_user_id,
+        "created_at": created_at,
+        "updated_at": updated_at,
+    }
 
 
 def _fetch_project_material_links(
@@ -1208,7 +1278,7 @@ def _assert_course_content_owned_by_username(
     url: str,
     service_role_key: str,
     course_content_id: int,
-    owner_auth_user_id: str,
+    owner_user_id: str,
 ) -> None:
     endpoint = (
         f"{url.rstrip('/')}/rest/v1/project_materials"
@@ -1234,7 +1304,7 @@ def _assert_course_content_owned_by_username(
                 url=url,
                 service_role_key=service_role_key,
                 project_id=project_id,
-                owner_auth_user_id=owner_auth_user_id,
+                owner_user_id=owner_user_id,
             )
             return
         except ProjectNotFoundError:
