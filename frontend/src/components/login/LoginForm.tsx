@@ -65,18 +65,22 @@ export function LoginForm() {
   };
 
   return (
-    <section className="h-full bg-[#fdfcf9] px-6 py-8 sm:px-10 sm:py-10 lg:px-12 lg:py-12">
-      <div className="mx-auto w-full max-w-[430px]">
-        <h1 className="text-center font-[family:var(--font-display)] text-[2.35rem] font-semibold tracking-[-0.05em] text-[#2d312d] sm:text-[2.7rem]">
-          Welcome Back
-        </h1>
-        <p className="text-center mt-2 text-sm leading-6 text-[#7c776f]">
-          Sign in to access your account.
+    <section className="flex h-full items-center px-6 py-8 sm:px-10 sm:py-10 lg:px-12 lg:py-12 xl:px-14">
+      <div className="mx-auto w-full max-w-[460px]">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#cde0b2]">
+          Secure sign in
+        </p>
+        <h2 className="mt-3 font-[family:var(--font-display)] text-[2.35rem] font-semibold tracking-[-0.05em] text-[#f3f5ee] sm:text-[2.7rem]">
+          Welcome back
+        </h2>
+        <p className="mt-3 text-sm leading-6 text-[#b5bcae]">
+          Sign in to access your projects, AI workflows, and academic material
+          enhancement tools.
         </p>
 
-        <form className="mt-8 space-y-4" onSubmit={handleSubmit}>
+        <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
           <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.08em] text-[#625d56]">
+            <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9ca595]">
               Email
             </span>
             <input
@@ -84,16 +88,17 @@ export function LoginForm() {
               placeholder="Enter your email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              className="h-12 w-full rounded-[12px] border border-[#eee7db] bg-[#f4efe8] px-4 text-sm text-[#2f322d] outline-none transition placeholder:text-[#b0a79b] focus:border-[#5d8960] focus:bg-white focus:ring-4 focus:ring-[rgba(93,137,96,0.12)]"
+              autoComplete="email"
+              className="auth-input"
             />
           </label>
 
           <label className="block">
-            <span className="mb-2 flex items-center justify-between gap-3 text-xs font-semibold uppercase tracking-[0.08em] text-[#625d56]">
+            <span className="mb-2 flex items-center justify-between gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9ca595]">
               Password
               <Link
                 href="#"
-                className="text-[10px] tracking-[0.04em] text-[#7f9c80] transition hover:text-[#4f7a57]"
+                className="auth-link-subtle text-[10px] tracking-[0.08em]"
               >
                 Forgot password?
               </Link>
@@ -104,27 +109,29 @@ export function LoginForm() {
                 placeholder="Enter your password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                className="h-12 w-full rounded-[12px] border border-[#eee7db] bg-[#f4efe8] px-4 pr-11 text-sm text-[#2f322d] outline-none transition placeholder:text-[#b0a79b] focus:border-[#5d8960] focus:bg-white focus:ring-4 focus:ring-[rgba(93,137,96,0.12)]"
+                autoComplete="current-password"
+                className="auth-input pr-11"
               />
-              <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-[#c0b7aa]">
+              <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-[#7f8979]">
                 <EyeIcon className="h-4 w-4" />
               </span>
             </span>
           </label>
 
-          {error ? <p className="text-sm text-[#b54d4d]">{error}</p> : null}
+          {error ? <p className="auth-status-error text-sm">{error}</p> : null}
 
           <button
             type="submit"
             disabled={loading}
-            className="inline-flex h-12 w-full items-center justify-center rounded-[10px] bg-[#5a8a5e] text-sm font-semibold text-white shadow-[0_14px_28px_-18px_rgba(90,138,94,0.8)] transition hover:bg-[#4f7b53] focus:outline-none focus:ring-4 focus:ring-[rgba(90,138,94,0.18)]"
+            className="auth-primary-button inline-flex h-[52px] w-full items-center justify-center rounded-[16px] text-sm font-semibold text-[#314126] focus:outline-none"
           >
             {loading ? "Signing In..." : "Sign In"}
           </button>
         </form>
 
-        <div className="mt-7">
-          <p className="text-center text-[11px] text-[#8d877d]">
+        <div className="mt-8">
+          <div className="auth-divider" />
+          <p className="mt-5 text-center text-[11px] uppercase tracking-[0.16em] text-[#879080]">
             Or continue with
           </p>
 
@@ -132,36 +139,36 @@ export function LoginForm() {
             <button
               type="button"
               aria-label="Continue with Google"
-              className="flex h-11 items-center justify-center rounded-[10px] border border-[#ece2d4] bg-white text-[#2f322d] transition hover:border-[#d9cdbd] hover:bg-[#fbf8f3] focus:outline-none focus:ring-4 focus:ring-[rgba(90,138,94,0.12)]"
+              className="auth-social-button group flex h-[52px] items-center justify-center rounded-[16px] focus:outline-none"
             >
-              <span className="flex h-5 w-5 items-center justify-center">
+              <span className="flex h-5 w-5 items-center justify-center transition-transform duration-250 ease-out group-hover:scale-110">
                 <GoogleLogoIcon className="h-[18px] w-[18px]" />
               </span>
             </button>
             <button
               type="button"
               aria-label="Continue with GitHub"
-              className="flex h-11 items-center justify-center rounded-[10px] border border-[#ece2d4] bg-white text-[#2f322d] transition hover:border-[#d9cdbd] hover:bg-[#fbf8f3] focus:outline-none focus:ring-4 focus:ring-[rgba(90,138,94,0.12)]"
+              className="auth-social-button group flex h-[52px] items-center justify-center rounded-[16px] focus:outline-none"
             >
-              <span className="flex h-5 w-5 items-center justify-center">
+              <span className="flex h-5 w-5 items-center justify-center transition-transform duration-250 ease-out group-hover:scale-110">
                 <GitHubLogoIcon className="h-[18px] w-[18px]" />
               </span>
             </button>
             <button
               type="button"
               aria-label="Continue with Microsoft"
-              className="flex h-11 items-center justify-center rounded-[10px] border border-[#ece2d4] bg-white text-[#2f322d] transition hover:border-[#d9cdbd] hover:bg-[#fbf8f3] focus:outline-none focus:ring-4 focus:ring-[rgba(90,138,94,0.12)]"
+              className="auth-social-button group flex h-[52px] items-center justify-center rounded-[16px] focus:outline-none"
             >
-              <span className="flex h-5 w-5 items-center justify-center">
+              <span className="flex h-5 w-5 items-center justify-center transition-transform duration-250 ease-out group-hover:scale-110">
                 <MicrosoftLogoIcon className="h-[18px] w-[18px]" />
               </span>
             </button>
           </div>
         </div>
 
-        <p className="mt-5 text-center text-[11px] text-[#90897f]">
+        <p className="mt-6 text-center text-[12px] text-[#91998b]">
           Don&apos;t have an account?{" "}
-          <Link href="/createAccount" className="text-[#5a8a5e] transition hover:text-[#4f7b53]">
+          <Link href="/createAccount" className="auth-link font-medium">
             Create account
           </Link>
         </p>
