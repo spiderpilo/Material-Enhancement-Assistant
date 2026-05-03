@@ -2,16 +2,13 @@
 
 import { startTransition, useEffect, useEffectEvent, useRef, useState } from "react";
 import type { DragEvent } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   AddMaterialsModal,
   type AddMaterialsSubmitResult,
 } from "@/components/material-enhancement/AddMaterialsModal";
 import { AIToolsSidebar } from "@/components/material-enhancement/AIToolsSidebar";
-import {
-  CreateProjectModal,
-  type CreateProjectSubmitResult,
-} from "@/components/material-enhancement/CreateProjectModal";
 import { MaterialsSidebar } from "@/components/material-enhancement/MaterialsSidebar";
 import { PreviewWorkspace } from "@/components/material-enhancement/PreviewWorkspace";
 import { ProjectHeader } from "@/components/material-enhancement/ProjectHeader";
@@ -41,8 +38,6 @@ import { getCourseContentPreview, uploadCourseContent } from "@/lib/api/course-c
 import {
   createProject,
   getProject,
-  listProjects,
-  updateProjectName,
   type Project,
 } from "@/lib/api/projects";
 
@@ -50,16 +45,19 @@ const EXPANDED_GRID_COLUMNS = "320px minmax(0,1fr) 320px";
 const COLLAPSED_GRID_COLUMNS = "84px minmax(0,1fr) 320px";
 const PREVIEW_POLL_INTERVAL_MS = 1400;
 const PREVIEW_POLL_ATTEMPTS = 40;
-const DEFAULT_PROJECT_NAME = "Untitled project";
 
-export function MaterialEnhancementWorkspace() {
+export function MaterialEnhancementWorkspace({
+  projectUuid,
+}: {
+  projectUuid: string;
+}) {
+  const router = useRouter();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
-  const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isLoadingProject, setIsLoadingProject] = useState(false);
   const [isAddMaterialsModalOpen, setIsAddMaterialsModalOpen] = useState(false);
   const [materials, setMaterials] = useState<Material[]>([]);
-  const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [isLeftPanelCollapsed, setIsLeftPanelCollapsed] = useState(false);
   const [checkedMaterialIds, setCheckedMaterialIds] = useState<string[]>([]);
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
@@ -84,7 +82,8 @@ export function MaterialEnhancementWorkspace() {
   const selectedProjectIdRef = useRef<number | null>(null);
   const quizRequestKeyRef = useRef("");
 
-  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  const selectedProject =
+    projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? null;
   const projectName = selectedProject?.name ?? "";
   const selectedMaterial = getSelectedMaterial(materials, selectedMaterialId);
   const selectedPreviewItem = getSelectedPreviewItem(
@@ -126,8 +125,8 @@ export function MaterialEnhancementWorkspace() {
   }, [selectedMaterialId]);
 
   useEffect(() => {
-    selectedProjectIdRef.current = selectedProjectId;
-  }, [selectedProjectId]);
+    selectedProjectIdRef.current = selectedProject?.id ?? selectedProjectId;
+  }, [selectedProject, selectedProjectId]);
 
   useEffect(() => {
     return () => {
@@ -159,7 +158,6 @@ export function MaterialEnhancementWorkspace() {
     const accessToken = getStoredAccessToken();
 
     if (!accessToken) {
-      setIsLoadingProjects(false);
       setToastMessage("Sign in to load your projects.");
       return;
     }
@@ -167,46 +165,38 @@ export function MaterialEnhancementWorkspace() {
     const signedInAccessToken = accessToken;
     let isCancelled = false;
 
-    async function loadInitialProjects() {
-      setIsLoadingProjects(true);
+    async function loadProjectByUuid() {
+      setIsLoadingProject(true);
 
       try {
-        const nextProjects = await listProjects(signedInAccessToken, 1);
+        const project = await getProject({
+          accessToken: signedInAccessToken,
+          projectUuid,
+        });
 
         if (isCancelled || !isMountedRef.current) {
           return;
         }
-
-        setProjects(nextProjects);
-
-        if (nextProjects[0]) {
-          await loadProjectById(nextProjects[0].id, signedInAccessToken);
-        } else {
-          const project = await createProject({
-            accessToken: signedInAccessToken,
-            name: DEFAULT_PROJECT_NAME,
-          });
-          applyProjectDetail(project, signedInAccessToken);
-        }
+        applyProjectDetail(project, signedInAccessToken);
       } catch (cause) {
         if (!isCancelled && isMountedRef.current) {
           setToastMessage(cause instanceof Error ? cause.message : "Unable to load projects.");
         }
       } finally {
         if (!isCancelled && isMountedRef.current) {
-          setIsLoadingProjects(false);
+          setIsLoadingProject(false);
         }
       }
     }
 
-    void loadInitialProjects();
+    void loadProjectByUuid();
 
     return () => {
       isCancelled = true;
     };
-    // Initial project hydration runs once; later loads are user-driven.
+    // Re-loads when URL UUID changes; other references are stable within each run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [projectUuid]);
 
   const applyProjectDetail = (project: Project, accessToken: string) => {
     const nextMaterials = project.materials
@@ -217,12 +207,12 @@ export function MaterialEnhancementWorkspace() {
     setProjects((currentProjects) => {
       const withoutProject = currentProjects.filter((item) => item.id !== project.id);
       return [project, ...withoutProject].sort((firstProject, secondProject) => {
-        const firstTime = Date.parse(firstProject.created_on ?? "");
-        const secondTime = Date.parse(secondProject.created_on ?? "");
+        const firstTime = Date.parse(firstProject.updated_at ?? firstProject.created_at ?? "");
+        const secondTime = Date.parse(secondProject.updated_at ?? secondProject.created_at ?? "");
         return (Number.isFinite(secondTime) ? secondTime : 0) - (Number.isFinite(firstTime) ? firstTime : 0);
       });
     });
-    setSelectedProjectId(project.id);
+    setSelectedProjectId(project.id ?? null);
     setMaterials(nextMaterials);
     setCheckedMaterialIds([]);
     setSelectedMaterialId(firstMaterial?.id ?? null);
@@ -233,39 +223,6 @@ export function MaterialEnhancementWorkspace() {
         void syncPreviewManifest(material.id, material.databaseId, accessToken);
       }
     }
-  };
-
-  const loadProjectById = async (projectId: number, accessToken: string) => {
-    setIsLoadingProject(true);
-
-    try {
-      const project = await getProject({ accessToken, projectId });
-
-      if (!isMountedRef.current) {
-        return;
-      }
-
-      applyProjectDetail(project, accessToken);
-    } catch (cause) {
-      if (isMountedRef.current) {
-        setToastMessage(cause instanceof Error ? cause.message : "Unable to load project.");
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsLoadingProject(false);
-      }
-    }
-  };
-
-  const ensureActiveProject = async (accessToken: string): Promise<Project> => {
-    const activeProject = projects.find((project) => project.id === selectedProjectIdRef.current);
-    if (activeProject) {
-      return activeProject;
-    }
-
-    const project = await createProject({ accessToken, name: DEFAULT_PROJECT_NAME });
-    applyProjectDetail(project, accessToken);
-    return project;
   };
 
   const syncPreviewManifest = async (
@@ -406,23 +363,11 @@ export function MaterialEnhancementWorkspace() {
       };
     }
 
-    let activeProjectId = selectedProjectIdRef.current;
-    if (!activeProjectId) {
-      try {
-        const project = await ensureActiveProject(accessToken);
-        activeProjectId = project.id;
-      } catch (cause) {
-        return {
-          success: false,
-          errorMessage: cause instanceof Error ? cause.message : "Unable to create a project.",
-        };
-      }
-    }
-
+    const activeProjectId = selectedProjectIdRef.current;
     if (!activeProjectId) {
       return {
         success: false,
-        errorMessage: "Unable to select a project for this upload.",
+        errorMessage: "Project is still loading. Try again in a moment.",
       };
     }
 
@@ -540,31 +485,26 @@ export function MaterialEnhancementWorkspace() {
     return { success: true };
   };
 
-  const handleCreateProject = () => {
-    setIsCreateProjectModalOpen(true);
-  };
-
-  const handleCreateProjectSubmit = async ({
-    projectName: nextProjectName,
-  }: {
-    projectName: string;
-  }): Promise<CreateProjectSubmitResult> => {
+  const handleCreateProject = async () => {
     const accessToken = getStoredAccessToken();
 
     if (!accessToken) {
-      return { success: false, errorMessage: "Sign in before creating a project." };
+      setToastMessage("Sign in before creating a project.");
+      return;
+    }
+
+    if (isCreatingProject) {
+      return;
     }
 
     try {
-      const project = await createProject({ accessToken, name: nextProjectName });
-      applyProjectDetail(project, accessToken);
-      setToastMessage(`Project "${project.name}" created.`);
-      return { success: true };
+      setIsCreatingProject(true);
+      const createdProject = await createProject({ accessToken });
+      router.push(`/project/${createdProject.project_uuid}`);
     } catch (cause) {
-      return {
-        success: false,
-        errorMessage: cause instanceof Error ? cause.message : "Unable to create project.",
-      };
+      setToastMessage(cause instanceof Error ? cause.message : "Unable to create project.");
+    } finally {
+      setIsCreatingProject(false);
     }
   };
 
@@ -577,12 +517,8 @@ export function MaterialEnhancementWorkspace() {
     }
 
     if (!selectedProjectIdRef.current) {
-      try {
-        await ensureActiveProject(accessToken);
-      } catch (cause) {
-        setToastMessage(cause instanceof Error ? cause.message : "Unable to create a project.");
-        return;
-      }
+      setToastMessage("Project is still loading. Try again in a moment.");
+      return;
     }
 
     setIsAddMaterialsModalOpen(true);
@@ -742,44 +678,17 @@ export function MaterialEnhancementWorkspace() {
   };
 
   const handleProjectNameChange = (nextProjectName: string) => {
-    const accessToken = getStoredAccessToken();
     const activeProject = selectedProject;
-
-    if (!accessToken || !activeProject) {
+    if (!activeProject) {
       setToastMessage("Select a project before renaming it.");
       return;
     }
 
-    const previousProjectName = activeProject.name;
     setProjects((currentProjects) =>
       currentProjects.map((project) =>
         project.id === activeProject.id ? { ...project, name: nextProjectName } : project,
       ),
     );
-
-    void updateProjectName({
-      accessToken,
-      name: nextProjectName,
-      projectId: activeProject.id,
-    })
-      .then((project) => {
-        setProjects((currentProjects) =>
-          currentProjects.map((currentProject) =>
-            currentProject.id === project.id
-              ? { ...currentProject, ...project, materials: currentProject.materials }
-              : currentProject,
-          ),
-        );
-        setToastMessage(`Project name updated to "${project.name}".`);
-      })
-      .catch((cause) => {
-        setProjects((currentProjects) =>
-          currentProjects.map((project) =>
-            project.id === activeProject.id ? { ...project, name: previousProjectName } : project,
-          ),
-        );
-        setToastMessage(cause instanceof Error ? cause.message : "Unable to rename project.");
-      });
   };
 
   const handleDragEnter = (event: DragEvent<HTMLDivElement>) => {
@@ -863,7 +772,7 @@ export function MaterialEnhancementWorkspace() {
             checkedMaterialIds={checkedMaterialIds}
             isCollapsed={isLeftPanelCollapsed}
             isDragging={isDragging}
-            isLoadingSources={isLoadingProjects || isLoadingProject}
+            isLoadingSources={isLoadingProject}
             materials={materials}
             onDragEnter={handleDragEnter}
             onDragLeave={handleDragLeave}
@@ -933,14 +842,6 @@ export function MaterialEnhancementWorkspace() {
         isOpen={isAddMaterialsModalOpen}
         onAddMaterials={handleAddMaterialsSubmit}
         onClose={() => setIsAddMaterialsModalOpen(false)}
-      />
-
-      <CreateProjectModal
-        key={projectName}
-        initialProjectName={projectName}
-        isOpen={isCreateProjectModalOpen}
-        onClose={() => setIsCreateProjectModalOpen(false)}
-        onCreateProject={handleCreateProjectSubmit}
       />
     </main>
   );
