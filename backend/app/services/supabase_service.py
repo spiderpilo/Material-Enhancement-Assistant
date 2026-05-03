@@ -744,7 +744,7 @@ def get_course_content_texts_for_user(
             url=settings.url,
             service_role_key=settings.service_role_key,
             course_content_id=material_id,
-            owner_auth_user_id=auth_user.user_id,
+            owner_user_id=auth_user.user_id,
         )
 
     records_by_id = _fetch_course_content_records_by_id(
