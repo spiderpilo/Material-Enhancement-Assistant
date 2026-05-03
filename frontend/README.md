@@ -16,21 +16,7 @@ Set this in the repo-root `.env` when the backend runs on a non-default URL:
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
-Project routing now uses UUID URLs:
-
-- Canonical workspace route: `/project/{project_uuid}`
-- Legacy `/project` is a compatibility redirector:
-  - no token -> `/login`
-  - existing projects -> newest UUID route
-  - no projects -> auto-create then redirect
-
-Workspace header **Create Project** is one-click. It calls `POST /projects` and routes to `/project/{project_uuid}` on success.
-
-Dashboard shows a **Recent Projects** list, and every item links directly to `/project/{project_uuid}`.
-
-Auth for project APIs uses the browser-stored `mea_access_token` as `Authorization: Bearer <token>`.
-
-The upload UI posts PDF, DOCX, and PPTX files to `POST /upload-doc` with `project_id`. After upload, the workspace polls `GET /course-contents/{id}/preview` and swaps placeholder cards with rendered page or slide previews as soon as the backend finishes processing.
+The upload UI posts PDF, DOCX, and PPTX files to `POST /upload-doc`. After upload, the project workspace polls `GET /course-contents/{id}/preview` and swaps placeholder cards with rendered page or slide previews as soon as the backend finishes processing.
 
 ## Run With Docker
 

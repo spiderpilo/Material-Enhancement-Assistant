@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
-import Link from "next/link";
 
 import {
   DashboardCreateProjectCard,
@@ -24,7 +23,7 @@ import {
   VisualsIcon,
 } from "@/components/material-enhancement/icons";
 import { getStoredAccessToken } from "@/lib/api/auth";
-import { createProject, listProjects, type ProjectSummary } from "@/lib/api/projects";
+import { createProject, listProjects, type Project } from "@/lib/api/projects";
 
 const dashboardDesktopGrid =
   "xl:w-[1376px] xl:grid-cols-[289px_repeat(3,329px)] xl:auto-rows-[280px]";
@@ -43,7 +42,7 @@ const projectCardIcons = [
 ] as const;
 
 export function DashboardClientPage() {
-  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -105,7 +104,6 @@ export function DashboardClientPage() {
   }, [toastMessage]);
 
   const projectCards = mapProjectsToCards(projects);
-  const recentProjects = sortProjectsByFreshness(projects).slice(0, 6);
 
   const handleCreateProjectSubmit = async ({
     projectName,
@@ -168,40 +166,6 @@ export function DashboardClientPage() {
           </div>
         </section>
 
-        <section className="dashboard-hero-panel rounded-[28px] px-6 py-6 sm:px-8">
-          <div className="flex items-center justify-between gap-3">
-            <h2
-              className="text-[22px] font-semibold tracking-[-0.02em] text-[#d7ebbd]"
-              style={displayFontStyle}
-            >
-              Recent Projects
-            </h2>
-            <p className="text-[12px] uppercase tracking-[0.1em] text-[#cfd3c3]">
-              Newest first
-            </p>
-          </div>
-          <div className="mt-4 grid gap-3">
-            {recentProjects.length === 0 && !isLoadingProjects ? (
-              <p className="text-[14px] text-[#cfd3c3]">No projects yet. Create one to get started.</p>
-            ) : (
-              recentProjects.map((project) => (
-                <Link
-                  key={project.project_uuid}
-                  href={`/project/${project.project_uuid}`}
-                  className="flex items-center justify-between rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] px-4 py-3 text-left transition hover:border-[rgba(197,225,165,0.24)] hover:bg-[rgba(255,255,255,0.06)]"
-                >
-                  <span className="truncate text-[15px] font-medium text-[#eef0e7]">
-                    {project.name.trim() || "Untitled project"}
-                  </span>
-                  <span className="ml-3 shrink-0 text-[12px] text-[#cfd3c3]">
-                    {formatProjectUpdatedLabel(project.last_updated ?? project.updated_at ?? project.created_at)}
-                  </span>
-                </Link>
-              ))
-            )}
-          </div>
-        </section>
-
         <section className={`grid gap-5 sm:grid-cols-2 ${dashboardDesktopGrid}`}>
           <DashboardCreateProjectCard
             onClick={() => setIsCreateProjectModalOpen(true)}
@@ -250,38 +214,38 @@ function DashboardBrandLockup() {
   );
 }
 
-function mapProjectsToCards(projects: ProjectSummary[]): DashboardProjectCardData[] {
+function mapProjectsToCards(projects: Project[]): DashboardProjectCardData[] {
   return sortProjectsByFreshness(projects).map((project) => {
     const Icon = getProjectCardIcon(project);
     const sourceCount = Math.max(project.material_count, 0);
 
     return {
-      href: `/project/${project.project_uuid}`,
+      href: "/project",
       icon: Icon,
-      id: project.project_uuid,
+      id: String(project.id),
       sourceCountLabel: `${sourceCount} ${sourceCount === 1 ? "Source" : "Sources"}`,
       title: project.name.trim() || "Untitled project",
-      updatedLabel: formatProjectUpdatedLabel(project.last_updated ?? project.updated_at ?? project.created_at),
+      updatedLabel: formatProjectUpdatedLabel(project.last_updated ?? project.created_on),
     };
   });
 }
 
-function getProjectCardIcon(project: ProjectSummary) {
-  const seed = `${project.project_uuid}-${project.name}`.split("").reduce((total, character) => {
+function getProjectCardIcon(project: Project) {
+  const seed = `${project.id}-${project.name}`.split("").reduce((total, character) => {
     return total + character.charCodeAt(0);
   }, 0);
 
   return projectCardIcons[seed % projectCardIcons.length];
 }
 
-function sortProjectsByFreshness(projects: ProjectSummary[]) {
+function sortProjectsByFreshness(projects: Project[]) {
   return [...projects].sort((firstProject, secondProject) => {
     return getProjectFreshness(secondProject) - getProjectFreshness(firstProject);
   });
 }
 
-function getProjectFreshness(project: ProjectSummary) {
-  const value = project.last_updated ?? project.updated_at ?? project.created_at ?? "";
+function getProjectFreshness(project: Project) {
+  const value = project.last_updated ?? project.created_on ?? "";
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : 0;
 }

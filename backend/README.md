@@ -5,21 +5,10 @@ Minimal FastAPI backend for local testing.
 ## Endpoints
 
 - `GET /health`
-- `GET /projects` (auth required)
-- `POST /projects` (auth required)
-- `GET /projects/{project_uuid}` (auth required)
 - `POST /upload-doc`
 - `GET /course-contents/{id}/preview`
 - `POST /create-account`
 - `POST /login-account`
-
-Project routes use `Authorization: Bearer <mea_access_token>`. The backend resolves the caller from Supabase `GET /auth/v1/user` and always enforces ownership server-side.
-
-`POST /projects` accepts optional JSON body `{ "name"?: string }`. If omitted, the backend creates `Untitled Project`. `owner_user_id` always comes from the bearer token, never from client payload.
-
-`GET /projects` returns `{ "projects": ProjectSummary[] }` ordered newest-first (by `created_at`).
-
-`GET /projects/{project_uuid}` returns one owned project record. It returns `404` when the UUID does not exist or belongs to another user.
 
 `POST /upload-doc` accepts a PDF, DOCX, or PPTX file up to 50MB, uploads it to Supabase Storage, inserts a `course_contents` row, queues preview rendering, and returns the inserted record with preview metadata.
 
@@ -81,8 +70,6 @@ Upload a document:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/upload-doc \
-  -H "Authorization: Bearer <mea_access_token>" \
-  -F "project_id=123" \
   -F "file=@/absolute/path/to/lecture1.pdf"
 ```
 
@@ -104,20 +91,4 @@ Fetch the preview manifest:
 
 ```bash
 curl http://127.0.0.1:8000/course-contents/1/preview
-```
-
-Create a project:
-
-```bash
-curl -X POST http://127.0.0.1:8000/projects \
-  -H "Authorization: Bearer <mea_access_token>" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Lecture Revision"}'
-```
-
-List recent projects:
-
-```bash
-curl http://127.0.0.1:8000/projects?limit=10 \
-  -H "Authorization: Bearer <mea_access_token>"
 ```
