@@ -7,10 +7,11 @@ export const metadata: Metadata = {
   description: "Project workspace for materials, previews, recommendations, and AI tools.",
 };
 
-export default function ProjectWorkspacePage({
+export default async function ProjectWorkspacePage({
   params,
 }: {
-  params: { projectUuid: string };
+  params: Promise<{ projectUuid: string }>;
 }) {
-  return <MaterialEnhancementWorkspace projectUuid={params.projectUuid} />;
+  const { projectUuid } = await params;
+  return <MaterialEnhancementWorkspace projectUuid={projectUuid} />;
 }

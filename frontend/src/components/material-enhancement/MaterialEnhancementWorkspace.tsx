@@ -38,6 +38,7 @@ import { getCourseContentPreview, uploadCourseContent } from "@/lib/api/course-c
 import {
   getProject,
   type Project,
+  updateProjectTitle,
 } from "@/lib/api/projects";
 
 const EXPANDED_GRID_COLUMNS = "320px minmax(0,1fr) 320px";
@@ -80,8 +81,12 @@ export function MaterialEnhancementWorkspace({
   const selectedProjectIdRef = useRef<number | null>(null);
   const quizRequestKeyRef = useRef("");
 
+  const normalizedRouteProjectUuid = projectUuid.trim();
   const selectedProject =
-    projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? null;
+    projects.find((project) => project.project_uuid === normalizedRouteProjectUuid) ??
+    projects.find((project) => project.id === selectedProjectId) ??
+    projects[0] ??
+    null;
   const projectName = selectedProject?.name ?? "";
   const selectedMaterial = getSelectedMaterial(materials, selectedMaterialId);
   const selectedPreviewItem = getSelectedPreviewItem(
@@ -153,6 +158,12 @@ export function MaterialEnhancementWorkspace({
   }, [toastMessage]);
 
   useEffect(() => {
+    const normalizedProjectUuid = projectUuid.trim();
+    if (!normalizedProjectUuid || normalizedProjectUuid === "undefined") {
+      setToastMessage("Invalid project link. Open the project again from your dashboard.");
+      return;
+    }
+
     const accessToken = getStoredAccessToken();
 
     if (!accessToken) {
@@ -169,7 +180,7 @@ export function MaterialEnhancementWorkspace({
       try {
         const project = await getProject({
           accessToken: signedInAccessToken,
-          projectUuid,
+          projectUuid: normalizedProjectUuid,
         });
 
         if (isCancelled || !isMountedRef.current) {
@@ -663,11 +674,77 @@ export function MaterialEnhancementWorkspace({
       return;
     }
 
+    const normalizedProjectUuid = activeProject.project_uuid.trim();
+    if (!normalizedProjectUuid || normalizedProjectUuid === "undefined") {
+      setToastMessage("Unable to rename this project because its link is invalid.");
+      return;
+    }
+
+    const accessToken = getStoredAccessToken();
+    if (!accessToken) {
+      setToastMessage("Sign in before renaming this project.");
+      return;
+    }
+
+    const normalizedProjectName = nextProjectName.trim();
+    if (!normalizedProjectName) {
+      setToastMessage("Project title cannot be empty.");
+      return;
+    }
+
+    const previousProjectName = activeProject.name;
+    if (normalizedProjectName === previousProjectName) {
+      return;
+    }
+
     setProjects((currentProjects) =>
       currentProjects.map((project) =>
-        project.id === activeProject.id ? { ...project, name: nextProjectName } : project,
+        project.project_uuid === normalizedProjectUuid
+          ? { ...project, name: normalizedProjectName }
+          : project,
       ),
     );
+
+    void (async () => {
+      try {
+        const updatedProject = await updateProjectTitle({
+          accessToken,
+          projectUuid: normalizedProjectUuid,
+          name: normalizedProjectName,
+        });
+
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        setProjects((currentProjects) =>
+          currentProjects.map((project) =>
+            project.project_uuid === normalizedProjectUuid
+              ? {
+                  ...project,
+                  name: updatedProject.name,
+                  updated_at: updatedProject.updated_at ?? project.updated_at,
+                  last_updated: updatedProject.last_updated ?? project.last_updated,
+                  material_count: updatedProject.material_count,
+                }
+              : project,
+          ),
+        );
+      } catch (cause) {
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        setProjects((currentProjects) =>
+          currentProjects.map((project) =>
+            project.project_uuid === normalizedProjectUuid
+              ? { ...project, name: previousProjectName }
+              : project,
+          ),
+        );
+        setToastMessage(cause instanceof Error ? cause.message : "Unable to update project title.");
+      }
+    })();
   };
 
   const handleDragEnter = (event: DragEvent<HTMLDivElement>) => {
