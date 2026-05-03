@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Header, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 
 from app.models.project_model import (
     CreateProjectRequest,
@@ -10,9 +10,11 @@ from app.models.project_model import (
 from app.services.supabase_service import (
     AuthenticationError,
     MissingSupabaseConfigError,
+    ProjectAccessDeniedError,
     ProjectNotFoundError,
     SupabaseServiceError,
     create_project_for_user,
+    delete_project_for_user,
     get_project_for_user,
     list_projects_for_user,
     update_project_for_user,
@@ -92,22 +94,51 @@ def get_project(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@router.patch("/projects/{project_id}", response_model=ProjectRecord)
+@router.patch("/projects/{project_uuid}", response_model=ProjectRecord)
 def update_project(
-    project_id: int,
+    project_uuid: str,
     payload: UpdateProjectRequest,
     authorization: str | None = Header(default=None),
 ) -> ProjectRecord:
+    normalized_name = payload.name.strip()
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Project title cannot be empty.")
+
     try:
         return update_project_for_user(
             access_token=_extract_bearer_token(authorization),
-            project_id=project_id,
-            name=payload.name.strip(),
+            project_uuid=project_uuid,
+            name=normalized_name,
         )
     except MissingSupabaseConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ProjectAccessDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SupabaseServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.delete("/projects/{project_uuid}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project(
+    project_uuid: str,
+    authorization: str | None = Header(default=None),
+) -> Response:
+    try:
+        delete_project_for_user(
+            access_token=_extract_bearer_token(authorization),
+            project_uuid=project_uuid,
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except MissingSupabaseConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ProjectAccessDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SupabaseServiceError as exc:

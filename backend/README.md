@@ -8,6 +8,8 @@ Minimal FastAPI backend for local testing.
 - `GET /projects` (auth required)
 - `POST /projects` (auth required)
 - `GET /projects/{project_uuid}` (auth required)
+- `PATCH /projects/{project_uuid}` (auth required)
+- `DELETE /projects/{project_uuid}` (auth required)
 - `POST /upload-doc`
 - `GET /course-contents/{id}/preview`
 - `POST /create-account`
@@ -20,6 +22,19 @@ Project routes use `Authorization: Bearer <mea_access_token>`. The backend resol
 `GET /projects` returns `{ "projects": ProjectSummary[] }` ordered newest-first (by `created_at`).
 
 `GET /projects/{project_uuid}` returns one owned project record. It returns `404` when the UUID does not exist or belongs to another user.
+
+`PATCH /projects/{project_uuid}` updates the project name. It returns:
+- `200` on success
+- `400` for blank names after trim
+- `401` for missing/invalid bearer token
+- `403` when the project exists but belongs to another user
+- `404` when the UUID does not exist
+
+`DELETE /projects/{project_uuid}` permanently deletes the owned project and returns:
+- `204` on success
+- `401` for missing/invalid bearer token
+- `403` when the project exists but belongs to another user
+- `404` when the UUID does not exist
 
 `POST /upload-doc` accepts a PDF, DOCX, or PPTX file up to 50MB, uploads it to Supabase Storage, inserts a `course_contents` row, queues preview rendering, and returns the inserted record with preview metadata.
 

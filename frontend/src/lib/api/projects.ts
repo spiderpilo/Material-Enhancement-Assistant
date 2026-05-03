@@ -76,6 +76,48 @@ export async function createProject({
   return readProjectPayload<ProjectSummary>(response, "Unable to create project.");
 }
 
+export async function updateProjectTitle({
+  accessToken,
+  projectUuid,
+  name,
+}: {
+  accessToken: string;
+  projectUuid: string;
+  name: string;
+}): Promise<Project> {
+  const response = await fetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name: name.trim() }),
+  });
+
+  return readProjectPayload<Project>(response, "Unable to update project title.");
+}
+
+export async function deleteProject({
+  accessToken,
+  projectUuid,
+}: {
+  accessToken: string;
+  projectUuid: string;
+}): Promise<void> {
+  const response = await fetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (response.ok) {
+    return;
+  }
+
+  throw new Error(await readProjectErrorMessage(response, "Unable to delete project."));
+}
+
 async function readProjectPayload<T>(response: Response, fallbackMessage: string): Promise<T> {
   const payload = (await response.json().catch(() => ({}))) as unknown;
 
@@ -92,4 +134,19 @@ async function readProjectPayload<T>(response: Response, fallbackMessage: string
   }
 
   return payload as T;
+}
+
+async function readProjectErrorMessage(response: Response, fallbackMessage: string): Promise<string> {
+  const payload = (await response.json().catch(() => ({}))) as unknown;
+
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "detail" in payload &&
+    typeof payload.detail === "string"
+  ) {
+    return payload.detail;
+  }
+
+  return fallbackMessage;
 }

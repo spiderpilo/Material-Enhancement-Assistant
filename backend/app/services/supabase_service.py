@@ -52,6 +52,10 @@ class ProjectNotFoundError(SupabaseServiceError):
     """Raised when a project does not exist or is not owned by the current user."""
 
 
+class ProjectAccessDeniedError(SupabaseServiceError):
+    """Raised when a project exists but is not owned by the current user."""
+
+
 @dataclass(frozen=True)
 class AuthenticatedUser:
     user_id: str
@@ -264,7 +268,7 @@ def get_project_for_user(*, access_token: str, project_uuid: str) -> ProjectReco
     )
 
 
-def update_project_for_user(*, access_token: str, project_id: int, name: str) -> ProjectRecord:
+def update_project_for_user(*, access_token: str, project_uuid: str, name: str) -> ProjectRecord:
     try:
         settings = get_supabase_settings()
     except ValueError as exc:
@@ -275,12 +279,18 @@ def update_project_for_user(*, access_token: str, project_id: int, name: str) ->
         service_role_key=settings.service_role_key,
         access_token=access_token,
     )
-    _fetch_owned_project_row(
+    project_row = _fetch_project_row_by_uuid(
         url=settings.url,
         service_role_key=settings.service_role_key,
-        project_id=project_id,
-        owner_user_id=auth_user.user_id,
+        project_uuid=project_uuid,
     )
+    project_owner_user_id = project_row.get("owner_user_id")
+    if not isinstance(project_owner_user_id, str) or not project_owner_user_id.strip():
+        raise SupabaseServiceError("Project row is missing an owner_user_id.")
+    if project_owner_user_id != auth_user.user_id:
+        raise ProjectAccessDeniedError("You do not have permission to update this project.")
+
+    project_id = _read_int(project_row, "id")
     updated_row = _update_project_record(
         url=settings.url,
         service_role_key=settings.service_role_key,
@@ -294,6 +304,64 @@ def update_project_for_user(*, access_token: str, project_id: int, name: str) ->
         project_row=updated_row,
         include_materials=True,
     )
+
+
+def delete_project_for_user(*, access_token: str, project_uuid: str) -> None:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    project_row = _fetch_project_row_by_uuid(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=project_uuid,
+    )
+    project_owner_user_id = project_row.get("owner_user_id")
+    if not isinstance(project_owner_user_id, str) or not project_owner_user_id.strip():
+        raise SupabaseServiceError("Project row is missing an owner_user_id.")
+    if project_owner_user_id != auth_user.user_id:
+        raise ProjectAccessDeniedError("You do not have permission to delete this project.")
+
+    project_id = _read_int(project_row, "id")
+    material_links = _fetch_project_material_links(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project_id,
+    )
+    for link in material_links:
+        material_id = _read_optional_int(link, "material_id")
+        if material_id is None:
+            continue
+        cleanup_error = _delete_project_material_link(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            project_id=project_id,
+            material_id=material_id,
+        )
+        if cleanup_error:
+            raise SupabaseServiceError(cleanup_error)
+
+    user_project_cleanup_error = _delete_user_project_links_for_project(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project_id,
+    )
+    if user_project_cleanup_error:
+        raise SupabaseServiceError(user_project_cleanup_error)
+
+    delete_error = _delete_project_record(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project_id,
+    )
+    if delete_error:
+        raise SupabaseServiceError(delete_error)
 
 
 def upload_course_content(
@@ -1019,6 +1087,33 @@ def _fetch_owned_project_row_by_uuid(
     return rows[0]
 
 
+def _fetch_project_row_by_uuid(
+    *,
+    url: str,
+    service_role_key: str,
+    project_uuid: str,
+) -> dict[str, Any]:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/projects"
+        f"?project_uuid=eq.{parse.quote(project_uuid, safe='')}&select=*"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+    rows = _decode_json_rows(response_body, "projects")
+
+    if not rows:
+        raise ProjectNotFoundError("Project was not found.")
+
+    return rows[0]
+
+
 def _insert_project_record(
     *,
     url: str,
@@ -1089,6 +1184,30 @@ def _delete_project_record(
     project_id: int,
 ) -> Optional[str]:
     endpoint = f"{url.rstrip('/')}/rest/v1/projects?id=eq.{project_id}"
+
+    try:
+        _send_request(
+            endpoint=endpoint,
+            method="DELETE",
+            headers={
+                **_build_auth_headers(service_role_key),
+                "Accept": "application/json",
+            },
+            expected_statuses={200, 204},
+        )
+    except SupabaseServiceError as exc:
+        return str(exc)
+
+    return None
+
+
+def _delete_user_project_links_for_project(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+) -> Optional[str]:
+    endpoint = f"{url.rstrip('/')}/rest/v1/user_projects?project_id=eq.{project_id}"
 
     try:
         _send_request(
