@@ -2,16 +2,13 @@
 
 import { startTransition, useEffect, useEffectEvent, useRef, useState } from "react";
 import type { DragEvent } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   AddMaterialsModal,
   type AddMaterialsSubmitResult,
 } from "@/components/material-enhancement/AddMaterialsModal";
 import { AIToolsSidebar } from "@/components/material-enhancement/AIToolsSidebar";
-import {
-  CreateProjectModal,
-  type CreateProjectSubmitResult,
-} from "@/components/material-enhancement/CreateProjectModal";
 import { MaterialsSidebar } from "@/components/material-enhancement/MaterialsSidebar";
 import { PreviewWorkspace } from "@/components/material-enhancement/PreviewWorkspace";
 import { ProjectHeader } from "@/components/material-enhancement/ProjectHeader";
@@ -39,27 +36,27 @@ import {
 import { getStoredAccessToken } from "@/lib/api/auth";
 import { getCourseContentPreview, uploadCourseContent } from "@/lib/api/course-content";
 import {
-  createProject,
   getProject,
-  listProjects,
-  updateProjectName,
   type Project,
+  updateProjectTitle,
 } from "@/lib/api/projects";
 
 const EXPANDED_GRID_COLUMNS = "320px minmax(0,1fr) 320px";
 const COLLAPSED_GRID_COLUMNS = "84px minmax(0,1fr) 320px";
 const PREVIEW_POLL_INTERVAL_MS = 1400;
 const PREVIEW_POLL_ATTEMPTS = 40;
-const DEFAULT_PROJECT_NAME = "Untitled project";
 
-export function MaterialEnhancementWorkspace() {
+export function MaterialEnhancementWorkspace({
+  projectUuid,
+}: {
+  projectUuid: string;
+}) {
+  const router = useRouter();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
-  const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isLoadingProject, setIsLoadingProject] = useState(false);
   const [isAddMaterialsModalOpen, setIsAddMaterialsModalOpen] = useState(false);
   const [materials, setMaterials] = useState<Material[]>([]);
-  const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
   const [isLeftPanelCollapsed, setIsLeftPanelCollapsed] = useState(false);
   const [checkedMaterialIds, setCheckedMaterialIds] = useState<string[]>([]);
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
@@ -84,8 +81,18 @@ export function MaterialEnhancementWorkspace() {
   const selectedProjectIdRef = useRef<number | null>(null);
   const quizRequestKeyRef = useRef("");
 
-  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  const normalizedRouteProjectUuid = projectUuid.trim();
+  const selectedProject =
+    projects.find((project) => project.project_uuid === normalizedRouteProjectUuid) ??
+    projects.find((project) => project.id === selectedProjectId) ??
+    projects[0] ??
+    null;
   const projectName = selectedProject?.name ?? "";
+  const isProjectNameEditable =
+    !isLoadingProject &&
+    normalizedRouteProjectUuid.length > 0 &&
+    normalizedRouteProjectUuid !== "undefined" &&
+    projects.some((project) => project.project_uuid === normalizedRouteProjectUuid);
   const selectedMaterial = getSelectedMaterial(materials, selectedMaterialId);
   const selectedPreviewItem = getSelectedPreviewItem(
     selectedMaterial,
@@ -126,8 +133,8 @@ export function MaterialEnhancementWorkspace() {
   }, [selectedMaterialId]);
 
   useEffect(() => {
-    selectedProjectIdRef.current = selectedProjectId;
-  }, [selectedProjectId]);
+    selectedProjectIdRef.current = selectedProject?.id ?? selectedProjectId;
+  }, [selectedProject, selectedProjectId]);
 
   useEffect(() => {
     return () => {
@@ -136,6 +143,8 @@ export function MaterialEnhancementWorkspace() {
   }, [materials]);
 
   useEffect(() => {
+    isMountedRef.current = true;
+
     return () => {
       isMountedRef.current = false;
     };
@@ -156,10 +165,17 @@ export function MaterialEnhancementWorkspace() {
   }, [toastMessage]);
 
   useEffect(() => {
+    const normalizedProjectUuid = projectUuid.trim();
+    if (!normalizedProjectUuid || normalizedProjectUuid === "undefined") {
+      setIsLoadingProject(false);
+      setToastMessage("Invalid project link. Open the project again from your dashboard.");
+      return;
+    }
+
     const accessToken = getStoredAccessToken();
 
     if (!accessToken) {
-      setIsLoadingProjects(false);
+      setIsLoadingProject(false);
       setToastMessage("Sign in to load your projects.");
       return;
     }
@@ -167,46 +183,38 @@ export function MaterialEnhancementWorkspace() {
     const signedInAccessToken = accessToken;
     let isCancelled = false;
 
-    async function loadInitialProjects() {
-      setIsLoadingProjects(true);
+    async function loadProjectByUuid() {
+      setIsLoadingProject(true);
 
       try {
-        const nextProjects = await listProjects(signedInAccessToken, 1);
+        const project = await getProject({
+          accessToken: signedInAccessToken,
+          projectUuid: normalizedProjectUuid,
+        });
 
         if (isCancelled || !isMountedRef.current) {
           return;
         }
-
-        setProjects(nextProjects);
-
-        if (nextProjects[0]) {
-          await loadProjectById(nextProjects[0].id, signedInAccessToken);
-        } else {
-          const project = await createProject({
-            accessToken: signedInAccessToken,
-            name: DEFAULT_PROJECT_NAME,
-          });
-          applyProjectDetail(project, signedInAccessToken);
-        }
+        applyProjectDetail(project, signedInAccessToken);
       } catch (cause) {
         if (!isCancelled && isMountedRef.current) {
           setToastMessage(cause instanceof Error ? cause.message : "Unable to load projects.");
         }
       } finally {
         if (!isCancelled && isMountedRef.current) {
-          setIsLoadingProjects(false);
+          setIsLoadingProject(false);
         }
       }
     }
 
-    void loadInitialProjects();
+    void loadProjectByUuid();
 
     return () => {
       isCancelled = true;
     };
-    // Initial project hydration runs once; later loads are user-driven.
+    // Re-loads when URL UUID changes; other references are stable within each run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [projectUuid]);
 
   const applyProjectDetail = (project: Project, accessToken: string) => {
     const nextMaterials = project.materials
@@ -217,12 +225,12 @@ export function MaterialEnhancementWorkspace() {
     setProjects((currentProjects) => {
       const withoutProject = currentProjects.filter((item) => item.id !== project.id);
       return [project, ...withoutProject].sort((firstProject, secondProject) => {
-        const firstTime = Date.parse(firstProject.created_on ?? "");
-        const secondTime = Date.parse(secondProject.created_on ?? "");
+        const firstTime = Date.parse(firstProject.updated_at ?? firstProject.created_at ?? "");
+        const secondTime = Date.parse(secondProject.updated_at ?? secondProject.created_at ?? "");
         return (Number.isFinite(secondTime) ? secondTime : 0) - (Number.isFinite(firstTime) ? firstTime : 0);
       });
     });
-    setSelectedProjectId(project.id);
+    setSelectedProjectId(project.id ?? null);
     setMaterials(nextMaterials);
     setCheckedMaterialIds([]);
     setSelectedMaterialId(firstMaterial?.id ?? null);
@@ -233,39 +241,6 @@ export function MaterialEnhancementWorkspace() {
         void syncPreviewManifest(material.id, material.databaseId, accessToken);
       }
     }
-  };
-
-  const loadProjectById = async (projectId: number, accessToken: string) => {
-    setIsLoadingProject(true);
-
-    try {
-      const project = await getProject({ accessToken, projectId });
-
-      if (!isMountedRef.current) {
-        return;
-      }
-
-      applyProjectDetail(project, accessToken);
-    } catch (cause) {
-      if (isMountedRef.current) {
-        setToastMessage(cause instanceof Error ? cause.message : "Unable to load project.");
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsLoadingProject(false);
-      }
-    }
-  };
-
-  const ensureActiveProject = async (accessToken: string): Promise<Project> => {
-    const activeProject = projects.find((project) => project.id === selectedProjectIdRef.current);
-    if (activeProject) {
-      return activeProject;
-    }
-
-    const project = await createProject({ accessToken, name: DEFAULT_PROJECT_NAME });
-    applyProjectDetail(project, accessToken);
-    return project;
   };
 
   const syncPreviewManifest = async (
@@ -406,23 +381,11 @@ export function MaterialEnhancementWorkspace() {
       };
     }
 
-    let activeProjectId = selectedProjectIdRef.current;
-    if (!activeProjectId) {
-      try {
-        const project = await ensureActiveProject(accessToken);
-        activeProjectId = project.id;
-      } catch (cause) {
-        return {
-          success: false,
-          errorMessage: cause instanceof Error ? cause.message : "Unable to create a project.",
-        };
-      }
-    }
-
+    const activeProjectId = selectedProjectIdRef.current;
     if (!activeProjectId) {
       return {
         success: false,
-        errorMessage: "Unable to select a project for this upload.",
+        errorMessage: "Project is still loading. Try again in a moment.",
       };
     }
 
@@ -541,31 +504,7 @@ export function MaterialEnhancementWorkspace() {
   };
 
   const handleCreateProject = () => {
-    setIsCreateProjectModalOpen(true);
-  };
-
-  const handleCreateProjectSubmit = async ({
-    projectName: nextProjectName,
-  }: {
-    projectName: string;
-  }): Promise<CreateProjectSubmitResult> => {
-    const accessToken = getStoredAccessToken();
-
-    if (!accessToken) {
-      return { success: false, errorMessage: "Sign in before creating a project." };
-    }
-
-    try {
-      const project = await createProject({ accessToken, name: nextProjectName });
-      applyProjectDetail(project, accessToken);
-      setToastMessage(`Project "${project.name}" created.`);
-      return { success: true };
-    } catch (cause) {
-      return {
-        success: false,
-        errorMessage: cause instanceof Error ? cause.message : "Unable to create project.",
-      };
-    }
+    router.push("/project");
   };
 
   const handleAddMaterials = async () => {
@@ -577,12 +516,8 @@ export function MaterialEnhancementWorkspace() {
     }
 
     if (!selectedProjectIdRef.current) {
-      try {
-        await ensureActiveProject(accessToken);
-      } catch (cause) {
-        setToastMessage(cause instanceof Error ? cause.message : "Unable to create a project.");
-        return;
-      }
+      setToastMessage("Project is still loading. Try again in a moment.");
+      return;
     }
 
     setIsAddMaterialsModalOpen(true);
@@ -742,44 +677,89 @@ export function MaterialEnhancementWorkspace() {
   };
 
   const handleProjectNameChange = (nextProjectName: string) => {
-    const accessToken = getStoredAccessToken();
-    const activeProject = selectedProject;
+    const normalizedProjectUuid = normalizedRouteProjectUuid;
+    if (!normalizedProjectUuid || normalizedProjectUuid === "undefined") {
+      setToastMessage("Unable to rename this project because its link is invalid.");
+      return;
+    }
 
-    if (!accessToken || !activeProject) {
-      setToastMessage("Select a project before renaming it.");
+    if (isLoadingProject) {
+      setToastMessage("Project is still loading. Try again.");
+      return;
+    }
+
+    const activeProject =
+      projects.find((project) => project.project_uuid === normalizedProjectUuid) ?? null;
+    if (!activeProject) {
+      setToastMessage("Project is still loading. Try again.");
+      return;
+    }
+
+    const accessToken = getStoredAccessToken();
+    if (!accessToken) {
+      setToastMessage("Sign in before renaming this project.");
+      return;
+    }
+
+    const normalizedProjectName = nextProjectName.trim();
+    if (!normalizedProjectName) {
+      setToastMessage("Project title cannot be empty.");
       return;
     }
 
     const previousProjectName = activeProject.name;
+    if (normalizedProjectName === previousProjectName.trim()) {
+      return;
+    }
+
     setProjects((currentProjects) =>
       currentProjects.map((project) =>
-        project.id === activeProject.id ? { ...project, name: nextProjectName } : project,
+        project.project_uuid === normalizedProjectUuid
+          ? { ...project, name: normalizedProjectName }
+          : project,
       ),
     );
 
-    void updateProjectName({
-      accessToken,
-      name: nextProjectName,
-      projectId: activeProject.id,
-    })
-      .then((project) => {
-        setProjects((currentProjects) =>
-          currentProjects.map((currentProject) =>
-            currentProject.id === project.id
-              ? { ...currentProject, ...project, materials: currentProject.materials }
-              : currentProject,
-          ),
-        );
-        setToastMessage(`Project name updated to "${project.name}".`);
-      })
-      .catch((cause) => {
+    void (async () => {
+      try {
+        const updatedProject = await updateProjectTitle({
+          accessToken,
+          projectUuid: normalizedProjectUuid,
+          name: normalizedProjectName,
+        });
+
+        if (!isMountedRef.current) {
+          return;
+        }
+
         setProjects((currentProjects) =>
           currentProjects.map((project) =>
-            project.id === activeProject.id ? { ...project, name: previousProjectName } : project,
+            project.project_uuid === normalizedProjectUuid
+              ? {
+                  ...project,
+                  name: updatedProject.name,
+                  updated_at: updatedProject.updated_at ?? project.updated_at,
+                  last_updated: updatedProject.last_updated ?? project.last_updated,
+                  material_count: updatedProject.material_count,
+                }
+              : project,
           ),
         );
-        setToastMessage(cause instanceof Error ? cause.message : "Unable to rename project.");
-      });
+      } catch (cause) {
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        setProjects((currentProjects) =>
+          currentProjects.map((project) =>
+            project.project_uuid === normalizedProjectUuid
+              ? { ...project, name: previousProjectName }
+              : project,
+          ),
+        );
+        setToastMessage(cause instanceof Error ? cause.message : "Unable to update project title.");
+      }
+    })();
   };
 
   const handleDragEnter = (event: DragEvent<HTMLDivElement>) => {
@@ -843,6 +823,7 @@ export function MaterialEnhancementWorkspace() {
     <main className="min-h-screen overflow-x-auto px-8 pb-7 pt-5">
       <div className="mx-auto w-full min-w-[1480px] max-w-[1852px]">
         <ProjectHeader
+          isProjectNameEditable={isProjectNameEditable}
           projectName={projectName}
           onCreateProject={handleCreateProject}
           onOpenProfile={handleOpenProfile}
@@ -863,7 +844,7 @@ export function MaterialEnhancementWorkspace() {
             checkedMaterialIds={checkedMaterialIds}
             isCollapsed={isLeftPanelCollapsed}
             isDragging={isDragging}
-            isLoadingSources={isLoadingProjects || isLoadingProject}
+            isLoadingSources={isLoadingProject}
             materials={materials}
             onDragEnter={handleDragEnter}
             onDragLeave={handleDragLeave}
@@ -933,14 +914,6 @@ export function MaterialEnhancementWorkspace() {
         isOpen={isAddMaterialsModalOpen}
         onAddMaterials={handleAddMaterialsSubmit}
         onClose={() => setIsAddMaterialsModalOpen(false)}
-      />
-
-      <CreateProjectModal
-        key={projectName}
-        initialProjectName={projectName}
-        isOpen={isCreateProjectModalOpen}
-        onClose={() => setIsCreateProjectModalOpen(false)}
-        onCreateProject={handleCreateProjectSubmit}
       />
     </main>
   );

@@ -289,6 +289,39 @@ export function EditIcon(props: SvgIconProps) {
   );
 }
 
+export function OverflowVerticalIcon(props: SvgIconProps) {
+  return (
+    <SvgIcon {...props}>
+      <circle cx="12" cy="5.75" r="1.6" fill="currentColor" />
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" />
+      <circle cx="12" cy="18.25" r="1.6" fill="currentColor" />
+    </SvgIcon>
+  );
+}
+
+export function TrashIcon(props: SvgIconProps) {
+  return (
+    <SvgIcon {...props}>
+      <path
+        d="M7.5 8.5v9a1.5 1.5 0 0 0 1.5 1.5h6a1.5 1.5 0 0 0 1.5-1.5v-9"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
+      />
+      <path d="M5.5 6.5h13" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
+      <path
+        d="M9.25 6.5V5.75a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1v.75"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
+      />
+      <path d="M10 11v5M14 11v5" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
+    </SvgIcon>
+  );
+}
+
 export function ClarityIcon(props: SvgIconProps) {
   return (
     <SvgIcon {...props}>

@@ -11,8 +11,10 @@ import {
   ShareIcon,
   UserIcon,
 } from "./icons";
+import Link from "next/link";
 
 type ProjectHeaderProps = {
+  isProjectNameEditable?: boolean;
   projectName: string;
   onCreateProject: () => void;
   onOpenProfile: () => void;
@@ -22,6 +24,7 @@ type ProjectHeaderProps = {
 };
 
 export function ProjectHeader({
+  isProjectNameEditable = true,
   projectName,
   onCreateProject,
   onOpenProfile,
@@ -33,10 +36,17 @@ export function ProjectHeader({
     <header className="flex items-center justify-between gap-6">
       <div className="flex min-w-0 items-center gap-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[rgba(255,255,255,0.03)]">
-          <ProjectLogoIcon className="h-10 w-10" />
+          <Link
+            aria-label="Open dashboard"
+            href="/dashboard"
+            className="p-0"
+          >
+            <ProjectLogoIcon className="h-10 w-10" />
+          </Link>
         </div>
 
         <EditableProjectTitle
+          isEditable={isProjectNameEditable}
           projectName={projectName}
           onProjectNameChange={onProjectNameChange}
         />
@@ -67,9 +77,11 @@ export function ProjectHeader({
 }
 
 function EditableProjectTitle({
+  isEditable,
   projectName,
   onProjectNameChange,
 }: {
+  isEditable: boolean;
   projectName: string;
   onProjectNameChange: (nextProjectName: string) => void;
 }) {
@@ -77,7 +89,8 @@ function EditableProjectTitle({
   const [isEditing, setIsEditing] = useState(false);
   const cancelBlurRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const hasProjectName = projectName.trim().length > 0;
+  const trimmedProjectName = projectName.trim();
+  const displayProjectName = trimmedProjectName || "Untitled project";
 
   useEffect(() => {
     if (isEditing) {
@@ -91,16 +104,11 @@ function EditableProjectTitle({
     setIsEditing(false);
 
     if (!nextProjectName) {
-      if (!hasProjectName) {
-        setDraftProjectName("");
-        return;
-      }
-
       setDraftProjectName(projectName);
       return;
     }
 
-    if (nextProjectName !== projectName) {
+    if (nextProjectName !== trimmedProjectName) {
       onProjectNameChange(nextProjectName);
     }
   };
@@ -150,22 +158,18 @@ function EditableProjectTitle({
   return (
     <button
       type="button"
+      disabled={!isEditable}
       onClick={() => {
-        setDraftProjectName(projectName);
+        setDraftProjectName(trimmedProjectName);
         setIsEditing(true);
       }}
-      className="group flex min-w-0 items-center gap-2 rounded-[12px] px-2 py-2 text-left transition hover:bg-[rgba(255,255,255,0.03)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.2)]"
+      className="group flex min-w-0 items-center gap-2 rounded-[12px] px-2 py-2 text-left transition hover:bg-[rgba(255,255,255,0.03)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.2)] disabled:cursor-not-allowed disabled:opacity-80"
       aria-label="Edit project title"
     >
       <span
-        className={[
-          "truncate text-[25px] font-semibold tracking-[-0.03em]",
-          hasProjectName
-            ? "text-[rgba(127,183,126,0.92)]"
-            : "text-[rgba(127,183,126,0.54)]",
-        ].join(" ")}
+        className="truncate text-[25px] font-semibold tracking-[-0.03em] text-[rgba(127,183,126,0.92)]"
       >
-        {hasProjectName ? projectName : "Project Name"}
+        {displayProjectName}
       </span>
       <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-transparent text-[rgba(214,211,209,0.54)] transition group-hover:border-[rgba(255,255,255,0.08)] group-hover:bg-[rgba(255,255,255,0.03)] group-hover:text-[color:var(--text-secondary)]">
         <EditIcon className="h-[18px] w-[18px]" />
