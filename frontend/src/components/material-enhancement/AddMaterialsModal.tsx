@@ -6,7 +6,6 @@ import type { ChangeEvent, DragEvent, KeyboardEvent } from "react";
 import { SUPPORTED_FILE_TYPE_LABEL } from "@/lib/material-enhancement/workspace";
 
 import {
-  AddIcon,
   CloseIcon,
   ShieldCheckIcon,
   UploadCloudIcon,
@@ -19,7 +18,9 @@ export type AddMaterialsSubmitResult = {
 
 type AddMaterialsModalProps = {
   isOpen: boolean;
-  onAddMaterials: (args: { files: File[] }) => AddMaterialsSubmitResult;
+  onAddMaterials: (args: { files: File[] }) =>
+    | AddMaterialsSubmitResult
+    | Promise<AddMaterialsSubmitResult>;
   onClose: () => void;
 };
 
@@ -30,6 +31,7 @@ export function AddMaterialsModal({
 }: AddMaterialsModalProps) {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [isDragActive, setIsDragActive] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -43,9 +45,13 @@ export function AddMaterialsModal({
   }, []);
 
   const handleClose = useCallback(() => {
+    if (isSubmitting) {
+      return;
+    }
+
     resetModalState();
     onClose();
-  }, [onClose, resetModalState]);
+  }, [isSubmitting, onClose, resetModalState]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -113,17 +119,43 @@ export function AddMaterialsModal({
     return null;
   }
 
-  const stageFiles = (files: File[]) => {
-    if (files.length === 0) {
+  const uploadFiles = async (files: File[]) => {
+    if (isSubmitting) {
       return;
     }
 
-    setPendingFiles((currentFiles) => mergePendingFiles(currentFiles, files));
+    const nextFiles = mergePendingFiles([], files);
+
+    if (nextFiles.length === 0) {
+      return;
+    }
+
+    setPendingFiles(nextFiles);
     setSubmitError(null);
+
+    setIsSubmitting(true);
+
+    const result = await Promise.resolve(onAddMaterials({ files: nextFiles }))
+      .catch((cause) => ({
+        success: false,
+        errorMessage:
+          cause instanceof Error ? cause.message : "Unable to add those materials.",
+      }))
+      .finally(() => {
+        setIsSubmitting(false);
+      });
+
+    if (!result.success) {
+      setSubmitError(result.errorMessage ?? "Unable to add those materials.");
+      return;
+    }
+
+    resetModalState();
+    onClose();
   };
 
   const handleFileSelection = (event: ChangeEvent<HTMLInputElement>) => {
-    stageFiles(Array.from(event.target.files ?? []));
+    void uploadFiles(Array.from(event.target.files ?? []));
     event.target.value = "";
   };
 
@@ -148,26 +180,22 @@ export function AddMaterialsModal({
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragActive(false);
-    stageFiles(Array.from(event.dataTransfer.files));
+    void uploadFiles(Array.from(event.dataTransfer.files));
   };
 
   const handlePrimaryAction = () => {
-    if (!hasStagedFiles) {
-      fileInputRef.current?.click();
+    if (isSubmitting) {
       return;
     }
 
-    const result = onAddMaterials({ files: pendingFiles });
-
-    if (!result.success) {
-      setSubmitError(result.errorMessage ?? "Unable to add those materials.");
-      return;
-    }
-
-    handleClose();
+    fileInputRef.current?.click();
   };
 
   const handleDropzoneKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (isSubmitting) {
+      return;
+    }
+
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       fileInputRef.current?.click();
@@ -207,13 +235,14 @@ export function AddMaterialsModal({
                 id="add-materials-modal-subtitle"
                 className="mt-3 text-[13px] leading-[22px] text-[color:var(--text-muted)]"
               >
-                Upload course content to append new files into this project.
+                Choose or drop files to upload. Upload starts immediately.
               </p>
             </div>
 
             <button
               type="button"
               onClick={handleClose}
+              disabled={isSubmitting}
               className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.03)] text-[rgba(214,211,209,0.72)] transition duration-200 hover:-translate-y-0.5 hover:border-[rgba(255,255,255,0.12)] hover:bg-[rgba(255,255,255,0.07)] hover:text-[color:var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(247,246,211,0.22)]"
               aria-label="Close add materials dialog"
             >
@@ -224,7 +253,11 @@ export function AddMaterialsModal({
           <div
             role="button"
             tabIndex={0}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              if (!isSubmitting) {
+                fileInputRef.current?.click();
+              }
+            }}
             onKeyDown={handleDropzoneKeyDown}
             onDragEnter={handleDragEnter}
             onDragLeave={handleDragLeave}
@@ -236,6 +269,7 @@ export function AddMaterialsModal({
                 ? "border-[rgba(184,219,128,0.4)] bg-[rgba(184,219,128,0.08)] shadow-[0_0_0_1px_rgba(184,219,128,0.18),0_24px_60px_rgba(0,0,0,0.3)]"
                 : "border-[rgba(255,255,255,0.14)] bg-[rgba(255,255,255,0.02)] hover:border-[rgba(184,219,128,0.26)] hover:bg-[rgba(255,255,255,0.1)] hover:shadow-[0_0_0_1px_rgba(184,219,128,0.1),0_18px_40px_rgba(0,0,0,0.24)]",
             ].join(" ")}
+            aria-disabled={isSubmitting}
             aria-label="Drag and drop files here or browse from device"
           >
             <div className="pointer-events-none absolute inset-6 rounded-[22px] border border-dashed border-[rgba(255,255,255,0.04)]" />
@@ -245,10 +279,10 @@ export function AddMaterialsModal({
             </div>
 
             <p className="mt-10 text-[18px] font-medium tracking-[-0.03em] text-[color:var(--text-primary)]">
-              Drag and drop your files here
+              Drag and drop files to upload
             </p>
             <p className="mt-4 text-[13px] text-[color:var(--text-subtle)]">
-              DOCX, PDF, PPT, PPTX, images
+              PDF, DOCX, PPTX up to 50MB
             </p>
 
             {hasStagedFiles ? (
@@ -275,6 +309,7 @@ export function AddMaterialsModal({
               multiple
               accept={SUPPORTED_FILE_TYPE_LABEL}
               className="sr-only"
+              disabled={isSubmitting}
               onChange={handleFileSelection}
             />
           </div>
@@ -285,7 +320,9 @@ export function AddMaterialsModal({
             </p>
           ) : hasStagedFiles ? (
             <p className="relative mt-4 text-[12px] text-[color:var(--accent-green)]">
-              {pendingFiles.length} file{pendingFiles.length === 1 ? "" : "s"} staged to add.
+              {isSubmitting
+                ? `Uploading ${pendingFiles.length} file${pendingFiles.length === 1 ? "" : "s"} to the database...`
+                : `${pendingFiles.length} file${pendingFiles.length === 1 ? "" : "s"} ready to retry.`}
             </p>
           ) : null}
 
@@ -293,18 +330,19 @@ export function AddMaterialsModal({
             <button
               type="button"
               onClick={handlePrimaryAction}
-              className="inline-flex h-[64px] min-w-[238px] items-center justify-center gap-3 rounded-full bg-[linear-gradient(180deg,#DDF598_0%,#D0F07E_100%)] px-8 text-[18px] font-semibold tracking-[-0.03em] text-[#10120E] shadow-[0_22px_42px_rgba(143,173,73,0.18)] transition duration-200 hover:-translate-y-0.5 hover:brightness-[1.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.28)]"
+              disabled={isSubmitting}
+              className="inline-flex h-[64px] min-w-[238px] items-center justify-center gap-3 rounded-full bg-[linear-gradient(180deg,#DDF598_0%,#D0F07E_100%)] px-8 text-[18px] font-semibold tracking-[-0.03em] text-[#10120E] shadow-[0_22px_42px_rgba(143,173,73,0.18)] transition duration-200 hover:-translate-y-0.5 hover:brightness-[1.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.28)] disabled:cursor-wait disabled:opacity-70 disabled:hover:translate-y-0"
             >
-              <AddIcon className="h-[22px] w-[22px]" />
-              Upload Files
+              {isSubmitting ? "Uploading..." : submitError ? "Choose New Files" : "Browse from Device"}
             </button>
 
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="inline-flex h-[64px] min-w-[270px] items-center justify-center rounded-full border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] px-8 text-[17px] font-medium tracking-[-0.02em] text-[color:var(--text-secondary)] transition duration-200 hover:-translate-y-0.5 hover:border-[rgba(255,255,255,0.14)] hover:bg-[rgba(255,255,255,0.06)] hover:text-[color:var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(247,246,211,0.18)]"
+              onClick={handleClose}
+              disabled={isSubmitting}
+              className="inline-flex h-[64px] min-w-[270px] items-center justify-center rounded-full border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] px-8 text-[17px] font-medium tracking-[-0.02em] text-[color:var(--text-secondary)] transition duration-200 hover:-translate-y-0.5 hover:border-[rgba(255,255,255,0.14)] hover:bg-[rgba(255,255,255,0.06)] hover:text-[color:var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(247,246,211,0.18)] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0"
             >
-              Browse from device
+              Cancel
             </button>
           </div>
         </section>

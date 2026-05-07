@@ -1,13 +1,11 @@
 import { EmptyDocumentsIcon } from "@/components/course-content-upload/icons";
-
-export type UploadedDocumentItem = {
-  id: string;
-  name: string;
-  meta?: string;
-};
+import {
+  type CourseContentRecord,
+  formatCourseContentSize,
+} from "@/lib/api/course-content";
 
 type UploadedDocumentsCardProps = {
-  items?: UploadedDocumentItem[];
+  items?: CourseContentRecord[];
   countLabel?: string;
 };
 
@@ -40,13 +38,11 @@ export function UploadedDocumentsCard({
               className="rounded-[18px] border border-[color:var(--line)] bg-[color:var(--surface-subtle)] px-4 py-3"
             >
               <p className="text-sm font-semibold text-[color:var(--foreground)]">
-                {item.name}
+                {item.material_name}
               </p>
-              {item.meta ? (
-                <p className="mt-1 text-sm text-[color:var(--muted)]">
-                  {item.meta}
-                </p>
-              ) : null}
+              <p className="mt-1 text-sm text-[color:var(--muted)]">
+                {formatCourseContentSize(item.data_size)}
+              </p>
             </li>
           ))}
         </ul>

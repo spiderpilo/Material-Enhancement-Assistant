@@ -3,8 +3,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Material Enhancement Assistant",
-  description: "AI feedback for lecture slides and documents.",
+  title: "Curriculum Updater",
+  description: "AI feedback for lecture slides and academic materials.",
 };
 
 export default function RootLayout({

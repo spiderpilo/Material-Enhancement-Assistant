@@ -48,7 +48,7 @@ export function SidebarNav({ activeItem = "uploads" }: SidebarNavProps) {
             <BrandMarkIcon className="h-5 w-5" />
           </div>
           <p className="text-sm font-semibold text-[color:var(--foreground)] lg:hidden">
-            Material Enhancement Assistant
+            Curriculum Updater
           </p>
         </div>
 

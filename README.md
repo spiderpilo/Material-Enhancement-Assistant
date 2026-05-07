@@ -42,7 +42,7 @@ The current backend exposes:
 - `GET /health`
 - `POST /upload-doc`
 - `POST /create-account`
-`POST /login-account`
+- `POST /login-account`
 ### Frontend
 
 From the `frontend/` directory:
@@ -54,13 +54,13 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-Set `NEXT_PUBLIC_BACKEND_URL= ` in the repo-root `.env` so the account creation page can submit to the FastAPI backend.
+Set `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000` in the repo-root `.env` so the frontend upload and account screens can submit to the FastAPI backend.
 
 ## Docker Development
 
 This repository now includes a Docker Compose setup for local development.
 
-Create a repo-root `.env` file if you want the upload endpoint to call Gemini:
+Create a repo-root `.env` file with Supabase settings before testing uploads:
 
 ```bash
 cp .env.example .env
@@ -97,7 +97,8 @@ Notes:
 - The Compose setup is geared toward development, not production deployment.
 - `docker compose watch` syncs source changes into the running containers.
 - Changing `backend/requirements.txt`, `frontend/package.json`, or `frontend/package-lock.json` triggers a rebuild.
-- Gemini API keys are passed through from your shell or repo-root `.env` via Compose variable expansion.
+- Gemini and Supabase settings are passed through from your shell or repo-root `.env` via Compose variable expansion.
+- Uploads accept PDF, DOCX, and PPTX files up to 50MB and create a `course_contents` row after Supabase Storage upload succeeds.
 
 ## Example Workflow
 

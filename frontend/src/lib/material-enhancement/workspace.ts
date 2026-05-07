@@ -1,13 +1,17 @@
+import {
+  type CourseContentRecord,
+  type CourseContentPreviewManifest,
+  type CourseContentPreviewStatus,
+  SUPPORTED_COURSE_CONTENT_ACCEPT,
+  formatCourseContentSize,
+  getCourseContentExtension,
+  getCourseContentFileValidationError,
+} from "@/lib/api/course-content";
+
 export const ACCEPTED_FILE_EXTENSIONS = [
   "pdf",
-  "doc",
   "docx",
-  "ppt",
   "pptx",
-  "png",
-  "jpg",
-  "jpeg",
-  "webp",
 ] as const;
 
 export type AcceptedExtension = (typeof ACCEPTED_FILE_EXTENSIONS)[number];
@@ -37,6 +41,10 @@ export type Material = {
   size: number;
   mimeType: string;
   uploadedAt: number;
+  accessUrl?: string;
+  databaseId?: number;
+  previewError?: string;
+  previewStatus: CourseContentPreviewStatus;
   previewItems: PreviewItem[];
 };
 
@@ -64,88 +72,32 @@ const ACCEPTED_EXTENSION_SET = new Set<string>(ACCEPTED_FILE_EXTENSIONS);
 
 const FILE_TYPE_BY_EXTENSION: Record<AcceptedExtension, MaterialKind> = {
   pdf: "pdf",
-  doc: "doc",
   docx: "doc",
-  ppt: "ppt",
   pptx: "ppt",
-  png: "image",
-  jpg: "image",
-  jpeg: "image",
-  webp: "image",
 };
 
-const PREVIEW_COPY: Record<
+const PENDING_PREVIEW_COPY: Record<
   Exclude<MaterialKind, "image">,
-  Array<{ label: string; title: string; subtitle: string; placeholderLayout: PlaceholderLayout }>
+  { label: string; title: string; subtitle: string; placeholderLayout: PlaceholderLayout }
 > = {
-  pdf: [
-    {
-      label: "Page 1",
-      title: "Overview page",
-      subtitle: "Structured page placeholder while PDF parsing is being connected.",
-      placeholderLayout: "document",
-    },
-    {
-      label: "Page 2",
-      title: "Annotated page",
-      subtitle:
-        "Paragraph and callout placement will update when real page extraction is available.",
-      placeholderLayout: "document",
-    },
-    {
-      label: "Page 3",
-      title: "Reference page",
-      subtitle:
-        "Page sequencing is ready for future parsed thumbnails and annotations.",
-      placeholderLayout: "document",
-    },
-  ],
-  ppt: [
-    {
-      label: "Slide 1",
-      title: "Title slide",
-      subtitle:
-        "Structured slide placeholder while presentation parsing is being connected.",
-      placeholderLayout: "diagram",
-    },
-    {
-      label: "Slide 2",
-      title: "Content slide",
-      subtitle:
-        "Hierarchy and diagram placeholders will swap to real slide previews later.",
-      placeholderLayout: "diagram",
-    },
-    {
-      label: "Slide 3",
-      title: "Discussion slide",
-      subtitle:
-        "Slide navigation is wired for future thumbnail extraction and AI markup.",
-      placeholderLayout: "diagram",
-    },
-  ],
-  doc: [
-    {
-      label: "Section 1",
-      title: "Introduction",
-      subtitle:
-        "Structured document placeholder while section parsing is being connected.",
-      placeholderLayout: "outline",
-    },
-    {
-      label: "Section 2",
-      title: "Key points",
-      subtitle:
-        "Outline cards will update with real headings and excerpts after parsing.",
-      placeholderLayout: "outline",
-    },
-    {
-      label: "Section 3",
-      title: "Supporting notes",
-      subtitle:
-        "Selection logic is ready for downstream document segmentation.",
-      placeholderLayout: "outline",
-    },
-  ],
+  pdf: {
+    label: "Page 1",
+    title: "Rendering preview",
+    subtitle: "Preparing page render for the preview workspace.",
+    placeholderLayout: "document",
+  },
+  ppt: {
+    label: "Slide 1",
+    title: "Rendering preview",
+    subtitle: "Preparing slide render for the preview workspace.",
+    placeholderLayout: "diagram",
+  },
+  doc: {
+    label: "Page 1",
+    title: "Rendering preview",
+    subtitle: "Preparing document pages for the preview workspace.",
+    placeholderLayout: "document",
+  },
 };
 
 const RECOMMENDATION_TEXT: Record<
@@ -154,7 +106,7 @@ const RECOMMENDATION_TEXT: Record<
 > = {
   empty: {
     clarity:
-      "Upload a slide deck, document, or image to unlock clarity suggestions.",
+      "Upload a slide deck or document to unlock clarity suggestions.",
     visuals:
       "Visual refinement prompts will appear here once we have material to inspect.",
     interaction:
@@ -195,7 +147,7 @@ const RECOMMENDATION_TEXT: Record<
 };
 
 export function detectFileType(file: File): DetectedFileType | null {
-  const extension = getExtension(file.name);
+  const extension = getCourseContentExtension(file.name);
 
   if (!extension || !ACCEPTED_EXTENSION_SET.has(extension)) {
     return null;
@@ -210,10 +162,10 @@ export function detectFileType(file: File): DetectedFileType | null {
 }
 
 export function validateUpload(file: File): string | null {
-  const detectedType = detectFileType(file);
+  const uploadError = getCourseContentFileValidationError(file);
 
-  if (!detectedType) {
-    return "Unsupported file type. Upload a PDF, DOC, DOCX, PPT, PPTX, PNG, JPG, JPEG, or WEBP file.";
+  if (uploadError) {
+    return uploadError;
   }
 
   return null;
@@ -249,11 +201,92 @@ export function processUploadFiles(files: File[]): UploadResult {
       size: file.size,
       mimeType: file.type,
       uploadedAt: Date.now(),
+      previewError: undefined,
+      previewStatus: "pending",
       previewItems: generatePreviewItems(file, detectedType),
     });
   }
 
   return { materials, rejected };
+}
+
+export function createMaterialFromCourseContentRecord(
+  file: File,
+  record: CourseContentRecord,
+): Material | null {
+  const validationError = validateUpload(file);
+
+  if (validationError) {
+    return null;
+  }
+
+  const detectedType = detectFileType(file);
+
+  if (!detectedType) {
+    return null;
+  }
+
+  return createMaterialFromRecord({
+    detectedType,
+    mimeType: file.type,
+    record,
+    uploadedAt: Date.now(),
+  });
+}
+
+export function createMaterialFromProjectMaterialRecord(
+  record: CourseContentRecord,
+): Material | null {
+  const extension = getCourseContentExtension(record.material_name);
+
+  if (!extension) {
+    return null;
+  }
+
+  const detectedType = {
+    extension,
+    kind: FILE_TYPE_BY_EXTENSION[extension],
+  };
+  const uploadedAt = record.uploaded_at ? Date.parse(record.uploaded_at) : Date.now();
+
+  return createMaterialFromRecord({
+    detectedType,
+    mimeType: getMimeTypeForExtension(extension),
+    record,
+    uploadedAt: Number.isFinite(uploadedAt) ? uploadedAt : Date.now(),
+  });
+}
+
+function createMaterialFromRecord({
+  detectedType,
+  mimeType,
+  record,
+  uploadedAt,
+}: {
+  detectedType: DetectedFileType;
+  mimeType: string;
+  record: CourseContentRecord;
+  uploadedAt: number;
+}): Material {
+  return {
+    id: `course-content-${record.id}`,
+    name: record.material_name,
+    extension: detectedType.extension,
+    kind: detectedType.kind,
+    size: record.data_size,
+    mimeType,
+    uploadedAt,
+    accessUrl: record.access_url,
+    databaseId: record.id,
+    previewError: undefined,
+    previewStatus: record.preview_status ?? "pending",
+    previewItems: createStatusPlaceholderItems(
+      detectedType.kind as Exclude<MaterialKind, "image">,
+      record.preview_status ?? "pending",
+      undefined,
+      `course-content-${record.id}-preview`,
+    ),
+  };
 }
 
 export function generatePreviewItems(
@@ -280,17 +313,59 @@ export function generatePreviewItems(
       ? "page"
       : detectedType.kind === "ppt"
         ? "slide"
-        : "section";
+        : "page";
+  const item = PENDING_PREVIEW_COPY[detectedType.kind];
 
-  return PREVIEW_COPY[detectedType.kind].map((item, index) => ({
+  return [{
     id: createId("preview"),
-    index,
+    index: 0,
     kind: itemKind,
     label: item.label,
     title: item.title,
     subtitle: item.subtitle,
     placeholderLayout: item.placeholderLayout,
-  }));
+  }];
+}
+
+export function applyPreviewManifestToMaterial(
+  material: Material,
+  manifest: CourseContentPreviewManifest,
+): Material {
+  if (material.kind === "image") {
+    return material;
+  }
+
+  const previewItems =
+    manifest.items.length > 0
+      ? manifest.items.map((item) => {
+          const placeholderLayout: PlaceholderLayout =
+            item.kind === "slide" ? "diagram" : "document";
+
+          return {
+            id: item.id,
+            index: item.index,
+            kind: item.kind,
+            label: item.label,
+            title: item.title,
+            subtitle: item.subtitle,
+            placeholderLayout,
+            imageUrl: item.image_url,
+          };
+        })
+      : createStatusPlaceholderItems(
+          material.kind,
+          manifest.preview_status,
+          manifest.preview_error,
+          material.previewItems[0]?.id,
+        );
+
+  return {
+    ...material,
+    accessUrl: manifest.access_url,
+    previewError: manifest.preview_error ?? undefined,
+    previewStatus: manifest.preview_status,
+    previewItems,
+  };
 }
 
 export function generateRecommendations(material: Material | null): Recommendation[] {
@@ -353,18 +428,17 @@ export function getSelectedPreviewItem(
 export function getPreviewLabel(material: Material, previewItem: PreviewItem | null): string {
   const currentIndex = previewItem ? previewItem.index + 1 : 0;
   const total = material.previewItems.length;
+  const previewKind = previewItem?.kind ?? material.previewItems[0]?.kind;
 
-  switch (material.kind) {
-    case "pdf":
+  switch (previewKind) {
+    case "page":
       return `Page ${currentIndex} of ${total}`;
-    case "ppt":
+    case "slide":
       return `Slide ${currentIndex} of ${total}`;
-    case "doc":
-      return `Section ${currentIndex} of ${total}`;
     case "image":
       return `Image ${currentIndex || 1} of ${total}`;
     default:
-      return `${currentIndex} of ${total}`;
+      return `Page ${currentIndex} of ${total}`;
   }
 }
 
@@ -372,7 +446,7 @@ export function getMaterialMeta(material: Material, expanded: boolean): string {
   const countLabel = getPreviewCountLabel(material);
 
   if (expanded) {
-    return `${countLabel} • ${formatUploadMoment(material.uploadedAt)}`;
+    return `${formatFileSize(material.size)} • ${formatUploadMoment(material.uploadedAt)}`;
   }
 
   return `${material.extension.toUpperCase()} • ${countLabel}`;
@@ -380,14 +454,13 @@ export function getMaterialMeta(material: Material, expanded: boolean): string {
 
 export function getPreviewCountLabel(material: Material): string {
   const count = material.previewItems.length;
+  const previewKind = material.previewItems[0]?.kind;
   const noun =
-    material.kind === "pdf"
-      ? "page"
-      : material.kind === "ppt"
-        ? "slide"
-        : material.kind === "doc"
-          ? "section"
-          : "image";
+    previewKind === "slide"
+      ? "slide"
+      : previewKind === "image"
+        ? "image"
+        : "page";
 
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
@@ -403,17 +476,13 @@ export function getMaterialBaseName(name: string): string {
 }
 
 export function formatFileSize(size: number): string {
-  if (size < 1024 * 1024) {
-    return `${Math.max(1, Math.round(size / 1024))} KB`;
-  }
-
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  return formatCourseContentSize(size);
 }
 
 export function revokeMaterialObjectUrls(materials: Material[]): void {
   for (const material of materials) {
     for (const previewItem of material.previewItems) {
-      if (previewItem.imageUrl) {
+      if (previewItem.imageUrl?.startsWith("blob:")) {
         URL.revokeObjectURL(previewItem.imageUrl);
       }
     }
@@ -421,12 +490,7 @@ export function revokeMaterialObjectUrls(materials: Material[]): void {
 }
 
 export const SUPPORTED_FILE_TYPE_LABEL =
-  ".pdf, .doc, .docx, .ppt, .pptx, .png, .jpg, .jpeg, .webp";
-
-function getExtension(fileName: string): string | null {
-  const match = fileName.toLowerCase().match(/\.([a-z0-9]+)$/);
-  return match?.[1] ?? null;
-}
+  SUPPORTED_COURSE_CONTENT_ACCEPT;
 
 function createId(prefix: string): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -453,4 +517,42 @@ function formatUploadMoment(uploadedAt: number): string {
     month: "short",
     day: "numeric",
   });
+}
+
+function createStatusPlaceholderItems(
+  kind: Exclude<MaterialKind, "image">,
+  previewStatus: CourseContentPreviewStatus,
+  previewError?: string | null,
+  existingId?: string,
+): PreviewItem[] {
+  const baseItem = PENDING_PREVIEW_COPY[kind];
+  const subtitle =
+    previewStatus === "failed"
+      ? previewError ?? "Preview rendering failed for this source."
+      : baseItem.subtitle;
+
+  return [
+    {
+      id: existingId ?? createId("preview"),
+      index: 0,
+      kind: kind === "ppt" ? "slide" : "page",
+      label: baseItem.label,
+      title: previewStatus === "failed" ? "Preview unavailable" : baseItem.title,
+      subtitle,
+      placeholderLayout: baseItem.placeholderLayout,
+    },
+  ];
+}
+
+function getMimeTypeForExtension(extension: AcceptedExtension): string {
+  switch (extension) {
+    case "pdf":
+      return "application/pdf";
+    case "docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "pptx":
+      return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    default:
+      return "application/octet-stream";
+  }
 }
