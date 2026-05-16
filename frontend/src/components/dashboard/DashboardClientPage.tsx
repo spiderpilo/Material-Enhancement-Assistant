@@ -294,7 +294,7 @@ export function DashboardClientPage() {
 
         <h2 className="text-[20px] font-semibold text-[#d7ebbd]">Recent Projects</h2>
 
-        <section className={`grid gap-5 sm:grid-cols-2 ${dashboardDesktopGrid}`}>
+        <section className={`isolate grid gap-5 sm:grid-cols-2 ${dashboardDesktopGrid}`}>
           <DashboardCreateProjectCard
             onClick={() => router.push("/project")}
           />
