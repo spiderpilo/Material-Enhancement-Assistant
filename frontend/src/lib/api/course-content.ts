@@ -113,6 +113,60 @@ export async function getCourseContentPreview(
   return payload as CourseContentPreviewManifest;
 }
 
+export async function renameCourseContent({
+  accessToken,
+  courseContentId,
+  materialName,
+}: {
+  accessToken: string;
+  courseContentId: number;
+  materialName: string;
+}): Promise<CourseContentRecord> {
+  const response = await fetch(`${getApiBaseUrl()}/course-contents/${courseContentId}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ material_name: materialName.trim() }),
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as
+    | CourseContentRecord
+    | { detail?: string };
+
+  if (!response.ok) {
+    throw new Error(
+      "detail" in payload && payload.detail
+        ? payload.detail
+        : "Unable to rename source.",
+    );
+  }
+
+  return payload as CourseContentRecord;
+}
+
+export async function deleteCourseContent({
+  accessToken,
+  courseContentId,
+}: {
+  accessToken: string;
+  courseContentId: number;
+}): Promise<void> {
+  const response = await fetch(`${getApiBaseUrl()}/course-contents/${courseContentId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (response.ok) {
+    return;
+  }
+
+  throw new Error(await readCourseContentErrorMessage(response, "Unable to delete source."));
+}
+
 export function getCourseContentFileValidationError(file: File): string | null {
   const extension = getCourseContentExtension(file.name);
 
@@ -159,4 +213,22 @@ export function getApiBaseUrl(): string {
     DEFAULT_API_BASE_URL;
 
   return configuredUrl.replace(/\/+$/, "");
+}
+
+async function readCourseContentErrorMessage(
+  response: Response,
+  fallbackMessage: string,
+): Promise<string> {
+  const payload = (await response.json().catch(() => ({}))) as unknown;
+
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "detail" in payload &&
+    typeof payload.detail === "string"
+  ) {
+    return payload.detail;
+  }
+
+  return fallbackMessage;
 }

@@ -1,16 +1,23 @@
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, Response, UploadFile, status
 
-from app.models.document_model import CourseContentPreviewManifest, CourseContentRecord
+from app.models.document_model import (
+    CourseContentPreviewManifest,
+    CourseContentRecord,
+    UpdateCourseContentRequest,
+)
 from app.services.supabase_service import (
     AuthenticationError,
     MissingSupabaseConfigError,
     PreviewNotFoundError,
+    ProjectAccessDeniedError,
     ProjectNotFoundError,
     SupabaseServiceError,
+    delete_course_content_for_user,
     generate_course_content_preview_assets,
     get_course_content_preview_for_user,
+    update_course_content_name_for_user,
     upload_course_content,
 )
 
@@ -105,6 +112,53 @@ async def get_course_content_preview_manifest(
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except PreviewNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SupabaseServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.patch("/course-contents/{course_content_id}", response_model=CourseContentRecord)
+def rename_course_content(
+    course_content_id: int,
+    payload: UpdateCourseContentRequest,
+    authorization: str | None = Header(default=None),
+) -> CourseContentRecord:
+    try:
+        return update_course_content_name_for_user(
+            access_token=_extract_bearer_token(authorization),
+            course_content_id=course_content_id,
+            material_name=payload.material_name,
+        )
+    except MissingSupabaseConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ProjectAccessDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SupabaseServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.delete("/course-contents/{course_content_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_course_content(
+    course_content_id: int,
+    authorization: str | None = Header(default=None),
+) -> Response:
+    try:
+        delete_course_content_for_user(
+            access_token=_extract_bearer_token(authorization),
+            course_content_id=course_content_id,
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except MissingSupabaseConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ProjectAccessDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SupabaseServiceError as exc:

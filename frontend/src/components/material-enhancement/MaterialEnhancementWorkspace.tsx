@@ -34,7 +34,12 @@ import {
   validateUpload,
 } from "@/lib/material-enhancement/workspace";
 import { getStoredAccessToken } from "@/lib/api/auth";
-import { getCourseContentPreview, uploadCourseContent } from "@/lib/api/course-content";
+import {
+  deleteCourseContent,
+  getCourseContentPreview,
+  renameCourseContent,
+  uploadCourseContent,
+} from "@/lib/api/course-content";
 import {
   getProject,
   type Project,
@@ -76,6 +81,13 @@ export function MaterialEnhancementWorkspace({
   );
   const [isDragging, setIsDragging] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [renamingMaterialId, setRenamingMaterialId] = useState<string | null>(null);
+  const [renamingMaterialDraftName, setRenamingMaterialDraftName] = useState("");
+  const [renameMaterialErrorMessage, setRenameMaterialErrorMessage] = useState<string | null>(null);
+  const [isRenamingMaterial, setIsRenamingMaterial] = useState(false);
+  const [deletingMaterialId, setDeletingMaterialId] = useState<string | null>(null);
+  const [deleteMaterialErrorMessage, setDeleteMaterialErrorMessage] = useState<string | null>(null);
+  const [isDeletingMaterial, setIsDeletingMaterial] = useState(false);
   const isMountedRef = useRef(true);
   const selectedMaterialIdRef = useRef<string | null>(null);
   const selectedProjectIdRef = useRef<number | null>(null);
@@ -94,6 +106,10 @@ export function MaterialEnhancementWorkspace({
     normalizedRouteProjectUuid !== "undefined" &&
     projects.some((project) => project.project_uuid === normalizedRouteProjectUuid);
   const selectedMaterial = getSelectedMaterial(materials, selectedMaterialId);
+  const renamingMaterial =
+    materials.find((material) => material.id === renamingMaterialId) ?? null;
+  const deletingMaterial =
+    materials.find((material) => material.id === deletingMaterialId) ?? null;
   const selectedPreviewItem = getSelectedPreviewItem(
     selectedMaterial,
     selectedPreviewItemId,
@@ -762,6 +778,197 @@ export function MaterialEnhancementWorkspace({
     })();
   };
 
+  const handleOpenRenameMaterial = (materialId: string) => {
+    const material = materials.find((item) => item.id === materialId);
+    if (!material) {
+      setToastMessage("Source not found.");
+      return;
+    }
+
+    const { baseName } = splitMaterialName(material.name, material.extension);
+    setRenamingMaterialId(material.id);
+    setRenamingMaterialDraftName(baseName);
+    setRenameMaterialErrorMessage(null);
+  };
+
+  const handleCloseRenameMaterial = (forceClose = false) => {
+    if (isRenamingMaterial && !forceClose) {
+      return;
+    }
+
+    setRenamingMaterialId(null);
+    setRenamingMaterialDraftName("");
+    setRenameMaterialErrorMessage(null);
+  };
+
+  const handleSaveMaterialRename = async () => {
+    const material = renamingMaterial;
+    if (!material) {
+      return;
+    }
+
+    if (typeof material.databaseId !== "number") {
+      setRenameMaterialErrorMessage("Only saved sources can be renamed.");
+      return;
+    }
+
+    const trimmedBaseName = renamingMaterialDraftName.trim();
+    if (!trimmedBaseName) {
+      setRenameMaterialErrorMessage("Source name is required.");
+      return;
+    }
+
+    const nextMaterialName = buildLockedMaterialName(trimmedBaseName, material.extension);
+    if (nextMaterialName === material.name) {
+      handleCloseRenameMaterial(true);
+      return;
+    }
+
+    const accessToken = getStoredAccessToken();
+    if (!accessToken) {
+      setRenameMaterialErrorMessage("Sign in before renaming a source.");
+      return;
+    }
+
+    setIsRenamingMaterial(true);
+    setRenameMaterialErrorMessage(null);
+
+    try {
+      const updatedRecord = await renameCourseContent({
+        accessToken,
+        courseContentId: material.databaseId,
+        materialName: trimmedBaseName,
+      });
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setMaterials((currentMaterials) =>
+        currentMaterials.map((currentMaterial) =>
+          currentMaterial.id === material.id
+            ? { ...currentMaterial, name: updatedRecord.material_name }
+            : currentMaterial,
+        ),
+      );
+      setProjects((currentProjects) =>
+        currentProjects.map((project) =>
+          project.id === selectedProjectIdRef.current
+            ? { ...project, last_updated: new Date().toISOString() }
+            : project,
+        ),
+      );
+      setToastMessage(`Source renamed to "${updatedRecord.material_name}".`);
+      handleCloseRenameMaterial(true);
+    } catch (cause) {
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setRenameMaterialErrorMessage(
+        cause instanceof Error ? cause.message : "Unable to rename source.",
+      );
+    } finally {
+      if (isMountedRef.current) {
+        setIsRenamingMaterial(false);
+      }
+    }
+  };
+
+  const handleOpenDeleteMaterial = (materialId: string) => {
+    const material = materials.find((item) => item.id === materialId);
+    if (!material) {
+      setToastMessage("Source not found.");
+      return;
+    }
+
+    setDeletingMaterialId(material.id);
+    setDeleteMaterialErrorMessage(null);
+  };
+
+  const handleCloseDeleteMaterial = (forceClose = false) => {
+    if (isDeletingMaterial && !forceClose) {
+      return;
+    }
+
+    setDeletingMaterialId(null);
+    setDeleteMaterialErrorMessage(null);
+  };
+
+  const handleConfirmDeleteMaterial = async () => {
+    const material = deletingMaterial;
+    if (!material) {
+      return;
+    }
+
+    if (typeof material.databaseId !== "number") {
+      setDeleteMaterialErrorMessage("Only saved sources can be deleted.");
+      return;
+    }
+
+    const accessToken = getStoredAccessToken();
+    if (!accessToken) {
+      setDeleteMaterialErrorMessage("Sign in before deleting a source.");
+      return;
+    }
+
+    setIsDeletingMaterial(true);
+    setDeleteMaterialErrorMessage(null);
+
+    try {
+      await deleteCourseContent({
+        accessToken,
+        courseContentId: material.databaseId,
+      });
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setMaterials((currentMaterials) => {
+        const remainingMaterials = currentMaterials.filter(
+          (currentMaterial) => currentMaterial.id !== material.id,
+        );
+
+        if (selectedMaterialIdRef.current === material.id) {
+          const fallbackMaterial = remainingMaterials[0] ?? null;
+          setSelectedMaterialId(fallbackMaterial?.id ?? null);
+          setSelectedPreviewItemId(fallbackMaterial?.previewItems[0]?.id ?? null);
+        }
+
+        return remainingMaterials;
+      });
+      setCheckedMaterialIds((currentCheckedIds) =>
+        currentCheckedIds.filter((checkedId) => checkedId !== material.id),
+      );
+      setProjects((currentProjects) =>
+        currentProjects.map((project) =>
+          project.id === selectedProjectIdRef.current
+            ? {
+                ...project,
+                material_count: Math.max(project.material_count - 1, 0),
+                last_updated: new Date().toISOString(),
+              }
+            : project,
+        ),
+      );
+      setToastMessage(`Deleted "${material.name}".`);
+      handleCloseDeleteMaterial(true);
+    } catch (cause) {
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setDeleteMaterialErrorMessage(
+        cause instanceof Error ? cause.message : "Unable to delete source.",
+      );
+    } finally {
+      if (isMountedRef.current) {
+        setIsDeletingMaterial(false);
+      }
+    }
+  };
+
   const handleDragEnter = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragging(true);
@@ -851,6 +1058,8 @@ export function MaterialEnhancementWorkspace({
             onDragOver={handleDragOver}
             onDrop={handleDrop}
             onOpenAddMaterials={handleAddMaterials}
+            onRequestMaterialDelete={handleOpenDeleteMaterial}
+            onRequestMaterialRename={handleOpenRenameMaterial}
             onSelectMaterial={handleSelectMaterial}
             onSelectPreviewItem={handleSelectPreviewItem}
             onToggleCollapsed={() => setIsLeftPanelCollapsed((current) => !current)}
@@ -915,6 +1124,29 @@ export function MaterialEnhancementWorkspace({
         onAddMaterials={handleAddMaterialsSubmit}
         onClose={() => setIsAddMaterialsModalOpen(false)}
       />
+
+      <MaterialRenameModal
+        errorMessage={renameMaterialErrorMessage}
+        extension={renamingMaterial?.extension ?? null}
+        isOpen={renamingMaterial !== null}
+        isSaving={isRenamingMaterial}
+        name={renamingMaterialDraftName}
+        onClose={handleCloseRenameMaterial}
+        onNameChange={(nextName) => {
+          setRenamingMaterialDraftName(nextName);
+          setRenameMaterialErrorMessage(null);
+        }}
+        onSave={handleSaveMaterialRename}
+      />
+
+      <MaterialDeleteModal
+        errorMessage={deleteMaterialErrorMessage}
+        isDeleting={isDeletingMaterial}
+        isOpen={deletingMaterial !== null}
+        materialName={deletingMaterial?.name ?? ""}
+        onClose={handleCloseDeleteMaterial}
+        onConfirmDelete={handleConfirmDeleteMaterial}
+      />
     </main>
   );
 }
@@ -931,4 +1163,228 @@ function buildQuizSourceKey(materials: Material[]): string {
     .filter((databaseId): databaseId is number => typeof databaseId === "number")
     .sort((firstId, secondId) => firstId - secondId)
     .join("|");
+}
+
+function splitMaterialName(
+  fileName: string,
+  fallbackExtension: Material["extension"],
+): { baseName: string; extensionLabel: string } {
+  const extensionLabel = `.${fallbackExtension}`;
+  const normalizedName = fileName.trim();
+  const normalizedLowerName = normalizedName.toLowerCase();
+
+  if (normalizedLowerName.endsWith(extensionLabel)) {
+    const baseFromLockedExtension = normalizedName.slice(0, -extensionLabel.length).trim();
+    return {
+      baseName: baseFromLockedExtension || "material",
+      extensionLabel,
+    };
+  }
+
+  const lastDotIndex = normalizedName.lastIndexOf(".");
+  if (lastDotIndex > 0) {
+    const baseFromDot = normalizedName.slice(0, lastDotIndex).trim();
+    return {
+      baseName: baseFromDot || "material",
+      extensionLabel,
+    };
+  }
+
+  return {
+    baseName: normalizedName || "material",
+    extensionLabel,
+  };
+}
+
+function buildLockedMaterialName(
+  baseName: string,
+  extension: Material["extension"],
+): string {
+  const normalizedBase = baseName.trim().replace(/\.+$/g, "");
+  return `${normalizedBase || "material"}.${extension}`;
+}
+
+function MaterialRenameModal({
+  errorMessage,
+  extension,
+  isOpen,
+  isSaving,
+  name,
+  onClose,
+  onNameChange,
+  onSave,
+}: {
+  errorMessage: string | null;
+  extension: Material["extension"] | null;
+  isOpen: boolean;
+  isSaving: boolean;
+  name: string;
+  onClose: () => void;
+  onNameChange: (nextName: string) => void;
+  onSave: () => void;
+}) {
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-[rgba(6,6,5,0.72)] px-6"
+      onClick={onClose}
+    >
+      <div
+        onClick={(event) => event.stopPropagation()}
+        className="w-full max-w-[420px] rounded-[20px] border border-[rgba(255,255,255,0.1)] bg-[linear-gradient(160deg,rgba(32,34,30,0.98)_0%,rgba(17,18,15,0.94)_100%)] p-6 shadow-[0_30px_65px_rgba(0,0,0,0.45)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rename-source-modal-title"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3
+              id="rename-source-modal-title"
+              className="text-[19px] font-semibold tracking-[-0.03em] text-[color:var(--text-primary)]"
+            >
+              Rename source
+            </h3>
+            <p className="mt-1 text-[12.5px] text-[color:var(--text-muted)]">
+              File extension is locked.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSaving}
+            className="h-8 rounded-[10px] border border-[rgba(255,255,255,0.12)] px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[color:var(--text-muted)] transition hover:bg-[rgba(255,255,255,0.06)] disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label="Close rename source dialog"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="mt-5 flex items-center gap-2">
+          <input
+            type="text"
+            value={name}
+            onChange={(event) => onNameChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                onSave();
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                onClose();
+              }
+            }}
+            className="h-11 flex-1 rounded-[12px] border border-[rgba(184,219,128,0.22)] bg-[rgba(255,255,255,0.05)] px-3 text-[14px] font-semibold text-[color:var(--text-primary)] outline-none transition focus:border-[rgba(184,219,128,0.46)] focus:ring-2 focus:ring-[rgba(184,219,128,0.2)]"
+            placeholder="Source name"
+            disabled={isSaving}
+            aria-label="Source name"
+            autoFocus
+          />
+          <div className="flex h-11 min-w-[74px] items-center justify-center rounded-[12px] border border-[rgba(255,255,255,0.14)] bg-[rgba(255,255,255,0.04)] px-3 text-[12px] font-semibold text-[color:var(--text-muted)]">
+            {extension ? `.${extension}` : ""}
+          </div>
+        </div>
+
+        {errorMessage ? (
+          <p className="mt-3 text-[12.5px] text-[#ffc8d3]">{errorMessage}</p>
+        ) : null}
+
+        <div className="mt-6 flex items-center justify-end gap-2.5">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSaving}
+            className="h-10 rounded-[12px] border border-[rgba(255,255,255,0.14)] px-4 text-[12.8px] font-semibold text-[color:var(--text-muted)] transition hover:bg-[rgba(255,255,255,0.06)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={isSaving}
+            className="h-10 rounded-[12px] border border-[rgba(184,219,128,0.35)] bg-[rgba(184,219,128,0.22)] px-4 text-[12.8px] font-semibold text-[color:var(--accent-green)] transition hover:bg-[rgba(184,219,128,0.28)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isSaving ? "Saving..." : "Save name"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MaterialDeleteModal({
+  errorMessage,
+  isDeleting,
+  isOpen,
+  materialName,
+  onClose,
+  onConfirmDelete,
+}: {
+  errorMessage: string | null;
+  isDeleting: boolean;
+  isOpen: boolean;
+  materialName: string;
+  onClose: () => void;
+  onConfirmDelete: () => void;
+}) {
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-[rgba(6,6,5,0.72)] px-6"
+      onClick={onClose}
+    >
+      <div
+        onClick={(event) => event.stopPropagation()}
+        className="w-full max-w-[430px] rounded-[20px] border border-[rgba(255,255,255,0.1)] bg-[linear-gradient(160deg,rgba(32,34,30,0.98)_0%,rgba(17,18,15,0.94)_100%)] p-6 shadow-[0_30px_65px_rgba(0,0,0,0.45)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-source-modal-title"
+      >
+        <h3
+          id="delete-source-modal-title"
+          className="text-[19px] font-semibold tracking-[-0.03em] text-[color:var(--text-primary)]"
+        >
+          Delete source
+        </h3>
+
+        <p className="mt-3 text-[13px] leading-6 text-[color:var(--text-secondary)]">
+          Delete{" "}
+          <span className="font-semibold text-[color:var(--text-primary)]">
+            {materialName.trim() || "this source"}
+          </span>
+          ? This removes uploaded content and generated previews.
+        </p>
+
+        {errorMessage ? (
+          <p className="mt-3 text-[12.5px] text-[#ffc8d3]">{errorMessage}</p>
+        ) : null}
+
+        <div className="mt-6 flex items-center justify-end gap-2.5">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isDeleting}
+            className="h-10 rounded-[12px] border border-[rgba(255,255,255,0.14)] px-4 text-[12.8px] font-semibold text-[color:var(--text-muted)] transition hover:bg-[rgba(255,255,255,0.06)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirmDelete}
+            disabled={isDeleting}
+            className="h-10 rounded-[12px] border border-[rgba(255,170,184,0.38)] bg-[rgba(255,170,184,0.2)] px-4 text-[12.8px] font-semibold text-[#ffc8d3] transition hover:bg-[rgba(255,170,184,0.27)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isDeleting ? "Deleting..." : "Delete source"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
