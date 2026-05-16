@@ -4,7 +4,29 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { getStoredAccessToken } from "@/lib/api/auth";
-import { createProject } from "@/lib/api/projects";
+import { createProject, type ProjectSummary } from "@/lib/api/projects";
+
+let inFlightProjectCreation:
+  | { accessToken: string; request: Promise<ProjectSummary> }
+  | null = null;
+
+function getOrStartProjectCreation(accessToken: string): Promise<ProjectSummary> {
+  if (
+    inFlightProjectCreation &&
+    inFlightProjectCreation.accessToken === accessToken
+  ) {
+    return inFlightProjectCreation.request;
+  }
+
+  const request = createProject({ accessToken }).finally(() => {
+    if (inFlightProjectCreation?.request === request) {
+      inFlightProjectCreation = null;
+    }
+  });
+
+  inFlightProjectCreation = { accessToken, request };
+  return request;
+}
 
 export default function ProjectCompatibilityPage() {
   const router = useRouter();
@@ -21,7 +43,7 @@ export default function ProjectCompatibilityPage() {
 
     async function redirectToProject() {
       try {
-        const createdProject = await createProject({ accessToken });
+        const createdProject = await getOrStartProjectCreation(accessToken);
         router.replace(`/project/${createdProject.project_uuid}`);
       } catch (cause) {
         if (!isCancelled) {
