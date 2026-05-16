@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 PreviewStatus = Literal["pending", "ready", "failed"]
@@ -45,3 +45,7 @@ class CourseContentRecord(BaseModel):
     source_type: SourceType | None = None
     preview_status: PreviewStatus = "pending"
     preview_count: int = 0
+
+
+class UpdateCourseContentRequest(BaseModel):
+    material_name: str = Field(min_length=1, max_length=180)
