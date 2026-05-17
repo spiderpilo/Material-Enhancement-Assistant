@@ -1215,6 +1215,8 @@ function normalizeQuizTitle(title: string, materials: Material[]) {
   }
 
   return `${getMaterialBaseName(firstMaterial.name)} Quiz`;
+}
+
 function splitMaterialName(
   fileName: string,
   fallbackExtension: Material["extension"],
