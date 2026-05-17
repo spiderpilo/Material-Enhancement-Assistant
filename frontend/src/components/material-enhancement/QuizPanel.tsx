@@ -1,6 +1,5 @@
-import type { GeneratedQuiz, QuizQuestion } from "@/lib/api/quiz";
+import type { GeneratedQuiz } from "@/lib/api/quiz";
 import type { Material } from "@/lib/material-enhancement/workspace";
-import { getMaterialBaseName } from "@/lib/material-enhancement/workspace";
 
 import {
   ArrowLeftIcon,
@@ -25,7 +24,6 @@ type QuizPanelProps = {
   onSelectAnswer: (questionId: string, optionId: string) => void;
   onShowResults: () => void;
   quiz: GeneratedQuiz | null;
-  revealedFeedback: Record<string, boolean>;
   selectedAnswers: Record<string, string>;
   status: QuizGenerationStatus;
   viewMode: QuizViewMode;
@@ -50,7 +48,6 @@ export function QuizPanel({
   onSelectAnswer,
   onShowResults,
   quiz,
-  revealedFeedback,
   selectedAnswers,
   status,
   viewMode,
@@ -59,98 +56,86 @@ export function QuizPanel({
   const totalQuestions = quiz?.questions.length ?? 12;
   const sourceCount = quiz?.source_count ?? checkedMaterials.length;
   const summary = getQuizSummary(quiz, selectedAnswers);
+  const selectedOptionId = question ? selectedAnswers[question.id] : undefined;
+  const isLastQuestion = activeQuestionIndex >= totalQuestions - 1;
 
   return (
-    <section className="shadow-panel surface-inset relative flex h-[949px] min-h-[949px] flex-col overflow-hidden rounded-[24px] border border-[rgba(255,255,255,0.1)] bg-[#1f2328]">
-      <div className="flex h-[86px] shrink-0 items-center justify-between border-b border-[rgba(255,255,255,0.08)] bg-[#181c21] px-7">
+    <section className="flex h-full min-h-0 flex-col">
+      <header className="flex shrink-0 items-start justify-between gap-4 border-b border-white/[0.08] px-6 pb-5 pt-6">
         <div className="min-w-0">
-          <p className="text-[13px] text-[color:var(--text-muted)]">
-            Quizmaker
+          <p className="text-[13px] font-medium text-white/46">
+            Studio &gt; App
           </p>
-          <div className="mt-1 flex min-w-0 items-center gap-3">
-            <h2 className="truncate text-[28px] font-semibold text-[color:var(--text-primary)]">
-              {quiz?.title ?? "Generated Quiz"}
-            </h2>
-            <span className="shrink-0 rounded-full border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.05)] px-3 py-1 text-[12px] font-semibold text-[color:var(--text-secondary)]">
-              Based on {sourceCount} source{sourceCount === 1 ? "" : "s"}
-            </span>
-          </div>
+          <h2 className="mt-3 truncate text-[28px] font-semibold tracking-[-0.05em] text-[color:var(--text-primary)]">
+            {quiz?.title ?? "Generated Quiz"}
+          </h2>
+          <p className="mt-2 text-[12px] font-medium text-white/52">
+            Based on {Math.max(sourceCount, 1)} source{Math.max(sourceCount, 1) === 1 ? "" : "s"}
+          </p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.04)] text-[color:var(--text-secondary)] transition hover:bg-[rgba(255,255,255,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
-            aria-label="Quiz options"
-          >
-            <span className="text-[22px] leading-none">...</span>
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.04)] text-[color:var(--text-secondary)] transition hover:bg-[rgba(255,255,255,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
-            aria-label="Close quiz panel"
-          >
-            <CloseIcon className="h-5 w-5" />
-          </button>
-        </div>
-      </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.06] text-white/70 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-white/[0.12] hover:bg-white/[0.1] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.35)]"
+          aria-label="Close quiz panel"
+        >
+          <CloseIcon className="h-5 w-5" />
+        </button>
+      </header>
 
       {status === "loading" ? (
         <QuizPanelState
-          label="Making quiz"
-          detail={`${checkedMaterials.length} selected source${checkedMaterials.length === 1 ? "" : "s"}`}
+          detail={`Generating questions based on ${Math.max(checkedMaterials.length, 1)} source${Math.max(checkedMaterials.length, 1) === 1 ? "" : "s"}.`}
+          label="Generating Quiz..."
+          loading
         />
       ) : status === "error" ? (
         <QuizPanelState
-          label="Quiz generation failed"
-          detail={errorMessage ?? "Unable to generate quiz."}
           actionLabel="Try again"
+          detail={errorMessage ?? "Unable to generate quiz."}
+          label="Quiz generation failed"
           onAction={onRetry}
         />
       ) : quiz && viewMode === "results" ? (
         <QuizResultsView
-          quiz={quiz}
           onReset={onReset}
           onReview={onReview}
-          selectedAnswers={selectedAnswers}
+          quiz={quiz}
           summary={summary}
         />
       ) : question && quiz ? (
         <>
-          <div className="min-h-0 flex-1 overflow-y-auto px-[72px] py-11">
-            <div className="mx-auto max-w-[980px]">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-[24px] font-semibold text-[rgba(245,245,244,0.42)]">
-                    {activeQuestionIndex + 1} / {totalQuestions}
-                  </p>
-                  <h3 className="mt-8 max-w-[860px] text-[27px] font-semibold leading-[1.45] text-[color:var(--text-primary)]">
-                    {question.prompt}
-                  </h3>
-                  <p className="mt-4 text-[14px] font-medium text-[color:var(--text-muted)]">
-                    {getQuestionStatusLabel({
-                      hasFeedback: Boolean(revealedFeedback[question.id]),
-                      selectedOptionId: selectedAnswers[question.id],
-                      question,
-                    })}
-                  </p>
+          <div className="studio-scroll min-h-0 flex-1 overflow-y-auto px-6 py-6">
+            <div className="mx-auto w-full max-w-[620px]">
+              <div className="rounded-[24px] border border-white/[0.08] bg-[linear-gradient(150deg,rgba(255,255,255,0.08)_0%,rgba(255,255,255,0.03)_100%)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.18)]">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/38">
+                      Progress
+                    </p>
+                    <p className="mt-3 text-[24px] font-semibold tracking-[-0.05em] text-[color:var(--text-primary)]">
+                      {activeQuestionIndex + 1} / {totalQuestions}
+                    </p>
+                  </div>
+
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.06] text-[color:var(--accent-green)]">
+                    <QuizIcon className="h-5 w-5" />
+                  </div>
                 </div>
 
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] text-[color:var(--text-muted)]">
-                  <QuizIcon className="h-6 w-6" />
-                </div>
+                <h3 className="mt-6 text-[28px] font-semibold leading-[1.32] tracking-[-0.04em] text-[color:var(--text-primary)]">
+                  {question.prompt}
+                </h3>
+
+                <p className="mt-4 text-[13px] text-white/48">
+                  {selectedOptionId ? "Answer selected." : "Choose one answer and continue when ready."}
+                </p>
               </div>
 
-              <div className="mt-10 space-y-4">
+              <div className="mt-5 space-y-3">
                 {question.options.map((option) => {
-                  const selectedOptionId = selectedAnswers[question.id];
-                  const hasFeedback = Boolean(revealedFeedback[question.id]);
                   const isSelected = selectedOptionId === option.id;
-                  const isCorrect = question.correct_option_id === option.id;
-                  const showCorrect = hasFeedback && isCorrect;
-                  const showWrongSelected = hasFeedback && isSelected && !isCorrect;
-                  const showCorrectSelected = hasFeedback && isSelected && isCorrect;
 
                   return (
                     <button
@@ -158,89 +143,40 @@ export function QuizPanel({
                       type="button"
                       onClick={() => onSelectAnswer(question.id, option.id)}
                       className={[
-                        "w-full rounded-[20px] border px-9 py-7 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]",
-                        getOptionClass({
-                          hasFeedback,
-                          isCorrect,
-                          isSelected,
-                        }),
+                        "w-full rounded-[22px] border px-5 py-5 text-left transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.35)]",
+                        isSelected
+                          ? "border-[rgba(184,219,128,0.34)] bg-[rgba(255,255,255,0.08)] shadow-[0_0_0_1px_rgba(184,219,128,0.14),0_0_28px_rgba(184,219,128,0.08)]"
+                          : "border-white/[0.08] bg-[rgba(255,255,255,0.04)] hover:-translate-y-0.5 hover:border-white/[0.14] hover:bg-[rgba(255,255,255,0.06)]",
                       ].join(" ")}
                     >
-                      <div className="flex items-start gap-6">
-                        <SelectionIndicator
-                          isCorrect={showCorrect}
-                          isSelected={isSelected}
-                          isWrong={showWrongSelected}
-                        />
+                      <div className="flex items-start gap-4">
+                        <div
+                          className={[
+                            "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border text-[13px] font-semibold transition-all duration-200",
+                            isSelected
+                              ? "border-[rgba(184,219,128,0.42)] bg-[rgba(184,219,128,0.14)] text-[color:var(--accent-green)]"
+                              : "border-white/[0.12] bg-white/[0.03] text-white/72",
+                          ].join(" ")}
+                        >
+                          {option.label}
+                        </div>
 
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-start gap-4">
-                            <span
-                              className={[
-                                "mt-0.5 w-7 shrink-0 text-[22px] font-semibold",
-                                showWrongSelected
-                                  ? "text-[#ff9aa8]"
-                                  : showCorrect
-                                    ? "text-[#5ee087]"
-                                    : "text-[rgba(245,245,244,0.62)]",
-                              ].join(" ")}
-                            >
-                              {option.label}.
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <p
-                                className={[
-                                  "text-[22px] leading-[1.35]",
-                                  showWrongSelected
-                                    ? "text-[#ffd2d8]"
-                                    : showCorrect
-                                      ? "text-[color:var(--text-primary)]"
-                                      : "text-[color:var(--text-secondary)]",
-                                ].join(" ")}
-                              >
-                                {option.text}
-                              </p>
-
-                              {showCorrectSelected ? (
-                                <div className="mt-5 rounded-[16px] border border-[rgba(31,198,94,0.26)] bg-[rgba(31,198,94,0.08)] px-5 py-4">
-                                  <p className="inline-flex items-center gap-3 text-[18px] font-semibold text-[#5ee087]">
-                                    <CheckIcon className="h-5 w-5" />
-                                    Right answer
-                                  </p>
-                                  <p className="mt-3 text-[17px] leading-[1.55] text-[rgba(226,244,231,0.78)]">
-                                    {option.explanation || question.explanation}
-                                  </p>
-                                </div>
-                              ) : null}
-
-                              {showWrongSelected ? (
-                                <div className="mt-5 rounded-[16px] border border-[rgba(255,154,168,0.28)] bg-[rgba(255,154,168,0.08)] px-5 py-4">
-                                  <p className="text-[18px] font-semibold text-[#ff9aa8]">
-                                    Wrong answer
-                                  </p>
-                                  <p className="mt-3 text-[17px] leading-[1.55] text-[rgba(255,219,224,0.8)]">
-                                    {option.explanation || question.explanation}
-                                  </p>
-                                  <p className="mt-3 text-[16px] font-medium text-[rgba(245,245,244,0.88)]">
-                                    Correct answer: {getCorrectAnswerLabel(question)}
-                                  </p>
-                                </div>
-                              ) : null}
-
-                              {showCorrect && !isSelected ? (
-                                <div className="mt-5 rounded-[16px] border border-[rgba(31,198,94,0.22)] bg-[rgba(31,198,94,0.06)] px-5 py-4">
-                                  <p className="inline-flex items-center gap-3 text-[18px] font-semibold text-[#5ee087]">
-                                    <CheckIcon className="h-5 w-5" />
-                                    Correct answer
-                                  </p>
-                                  <p className="mt-3 text-[17px] leading-[1.55] text-[rgba(226,244,231,0.78)]">
-                                    {option.explanation || question.explanation}
-                                  </p>
-                                </div>
-                              ) : null}
-                            </div>
-                          </div>
+                          <p
+                            className={[
+                              "text-[18px] leading-[1.45]",
+                              isSelected ? "text-[color:var(--text-primary)]" : "text-white/82",
+                            ].join(" ")}
+                          >
+                            {option.text}
+                          </p>
                         </div>
+
+                        {isSelected ? (
+                          <div className="mt-1 shrink-0 text-[color:var(--accent-green)]">
+                            <CheckIcon className="h-5 w-5" />
+                          </div>
+                        ) : null}
                       </div>
                     </button>
                   );
@@ -249,46 +185,39 @@ export function QuizPanel({
             </div>
           </div>
 
-          <div className="flex h-[92px] shrink-0 items-center justify-between border-t border-[rgba(255,255,255,0.08)] bg-[#181c21] px-7">
-            <div className="flex items-center gap-3">
-              <QuizNavButton
-                direction="previous"
-                disabled={activeQuestionIndex === 0}
+          <div className="shrink-0 border-t border-white/[0.08] bg-[rgba(17,19,22,0.55)] px-6 py-4">
+            <div className="mx-auto flex w-full max-w-[620px] items-center justify-between gap-3">
+              <button
+                type="button"
                 onClick={() => onNavigate("previous")}
-              />
-              <QuizNavButton
-                direction="next"
-                disabled={activeQuestionIndex >= totalQuestions - 1}
-                onClick={() => onNavigate("next")}
-              />
-              <span className="ml-3 text-[13px] font-semibold text-[color:var(--text-muted)]">
-                {summary.answeredCount} answered · {summary.skippedCount} skipped
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={onReset}
-                className="h-11 rounded-[12px] border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.04)] px-5 text-[14px] font-semibold text-[color:var(--text-secondary)] transition hover:bg-[rgba(255,255,255,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
+                disabled={activeQuestionIndex === 0}
+                className={[
+                  "inline-flex h-11 items-center gap-2 rounded-[16px] border px-4 text-[14px] font-medium transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.35)]",
+                  activeQuestionIndex === 0
+                    ? "cursor-not-allowed border-white/[0.06] bg-white/[0.03] text-white/28"
+                    : "border-white/[0.08] bg-white/[0.05] text-white/74 hover:-translate-y-0.5 hover:border-white/[0.12] hover:bg-white/[0.08]",
+                ].join(" ")}
               >
-                Retake Quiz
+                <ArrowLeftIcon className="h-4.5 w-4.5" />
+                Previous
               </button>
+
               <button
                 type="button"
-                onClick={onShowResults}
-                className="h-11 rounded-[12px] bg-[color:var(--accent-green)] px-6 text-[14px] font-semibold text-[#111411] transition hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
+                onClick={isLastQuestion ? onShowResults : () => onNavigate("next")}
+                className="inline-flex h-12 items-center gap-2 rounded-[16px] bg-[color:var(--accent-green)] px-6 text-[15px] font-semibold text-[#111411] shadow-[0_12px_30px_rgba(184,219,128,0.2)] transition-all duration-200 ease-out hover:-translate-y-0.5 hover:brightness-105 active:translate-y-px active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.35)]"
               >
-                See Results
+                {isLastQuestion ? "Finish" : "Next"}
+                <ArrowRightIcon className="h-4.5 w-4.5" />
               </button>
             </div>
           </div>
         </>
       ) : (
         <QuizPanelState
-          label="No quiz yet"
-          detail={formatSourceNames(checkedMaterials)}
           actionLabel="Generate quiz"
+          detail={checkedMaterials.length > 0 ? "Open Quiz Maker to generate a quiz from your selected sources." : "Select one or more sources before generating a quiz."}
+          label="No quiz yet"
           onAction={onRetry}
         />
       )}
@@ -300,30 +229,38 @@ function QuizPanelState({
   actionLabel,
   detail,
   label,
+  loading = false,
   onAction,
 }: {
   actionLabel?: string;
   detail: string;
   label: string;
+  loading?: boolean;
   onAction?: () => void;
 }) {
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center px-8">
-      <div className="max-w-[420px] text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[18px] border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.05)] text-[color:var(--accent-green)]">
-          <QuizIcon className="h-8 w-8" />
+    <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-8">
+      <div className="w-full max-w-[420px] rounded-[28px] border border-white/[0.08] bg-[linear-gradient(150deg,rgba(255,255,255,0.08)_0%,rgba(255,255,255,0.03)_100%)] px-8 py-9 text-center shadow-[0_22px_46px_rgba(0,0,0,0.22)]">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[20px] border border-white/[0.08] bg-white/[0.05] text-[color:var(--accent-green)]">
+          {loading ? (
+            <span className="h-7 w-7 rounded-full border-2 border-current/25 border-t-current animate-[spin_1000ms_linear_infinite]" />
+          ) : (
+            <QuizIcon className="h-8 w-8" />
+          )}
         </div>
-        <h3 className="mt-6 text-[24px] font-semibold text-[color:var(--text-primary)]">
+
+        <h3 className="mt-6 text-[24px] font-semibold tracking-[-0.04em] text-[color:var(--text-primary)]">
           {label}
         </h3>
-        <p className="mt-3 text-[14px] leading-[1.6] text-[color:var(--text-muted)]">
+        <p className="mt-3 text-[14px] leading-[1.65] text-white/58">
           {detail}
         </p>
+
         {actionLabel && onAction ? (
           <button
             type="button"
             onClick={onAction}
-            className="mt-7 h-11 rounded-[12px] bg-[color:var(--accent-green)] px-6 text-[14px] font-semibold text-[#111411] transition hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
+            className="mt-7 inline-flex h-11 items-center justify-center rounded-[14px] bg-[color:var(--accent-green)] px-5 text-[14px] font-semibold text-[#111411] transition-all duration-200 ease-out hover:-translate-y-0.5 hover:brightness-105 active:translate-y-px active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.35)]"
           >
             {actionLabel}
           </button>
@@ -334,189 +271,68 @@ function QuizPanelState({
 }
 
 function QuizResultsView({
-  quiz,
   onReset,
   onReview,
-  selectedAnswers,
+  quiz,
   summary,
 }: {
-  quiz: GeneratedQuiz;
   onReset: () => void;
   onReview: () => void;
-  selectedAnswers: Record<string, string>;
+  quiz: GeneratedQuiz;
   summary: QuizSummary;
 }) {
   const totalQuestions = quiz.questions.length;
   const percentage = totalQuestions > 0 ? Math.round((summary.correctCount / totalQuestions) * 100) : 0;
-  const progressDegrees = totalQuestions > 0 ? (summary.correctCount / totalQuestions) * 360 : 0;
-  const heading =
-    summary.answeredCount === 0
-      ? "No questions answered."
-      : summary.correctCount === totalQuestions
-        ? "All answers correct."
-        : "Quiz review ready.";
 
   return (
     <>
-      <div className="min-h-0 flex-1 overflow-y-auto px-[72px] py-11">
-        <div className="mx-auto max-w-[980px]">
-          <h3 className="text-[52px] font-semibold tracking-[-0.04em] text-[color:var(--text-primary)]">
-            {heading}
-          </h3>
-          <p className="mt-4 max-w-[640px] text-[17px] leading-[1.65] text-[color:var(--text-muted)]">
-            Review every question with the stored feedback, or retake the quiz and try a fresh pass.
-          </p>
-
-          <div className="mt-10 rounded-[30px] border border-[rgba(255,255,255,0.08)] bg-[#20242a] p-10">
-            <div className="flex flex-wrap items-center gap-10">
-              <div
-                className="flex h-[278px] w-[278px] items-center justify-center rounded-full"
-                style={{
-                  background: `conic-gradient(#1fc65e 0deg ${progressDegrees}deg, rgba(255,255,255,0.14) ${progressDegrees}deg 360deg)`,
-                }}
-              >
-                <div className="flex h-[206px] w-[206px] flex-col items-center justify-center rounded-full bg-[#1b1f25]">
-                  <p className="text-[58px] font-semibold leading-none text-[color:var(--text-primary)]">
-                    {summary.correctCount}/{totalQuestions}
-                  </p>
-                  <p className="mt-3 text-[28px] font-medium text-[color:var(--text-secondary)]">
-                    {percentage}%
-                  </p>
-                </div>
-              </div>
-
-              <div className="min-w-[260px] flex-1 space-y-6">
-                <SummaryStat label="Right" tone="green" value={summary.correctCount} />
-                <SummaryStat label="Wrong" tone="red" value={summary.wrongCount} />
-                <SummaryStat label="Skipped" tone="neutral" value={summary.skippedCount} />
-                <div className="rounded-[20px] border border-[rgba(255,255,255,0.08)] bg-[rgba(0,0,0,0.12)] px-5 py-4">
-                  <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-[color:var(--text-subtle)]">
-                    Review note
-                  </p>
-                  <p className="mt-3 text-[16px] leading-[1.6] text-[color:var(--text-secondary)]">
-                    {summary.answeredCount === 0
-                      ? "Everything is skipped. Review Quiz opens the question flow without forcing any answer."
-                      : "Review Quiz keeps every marked answer, including skipped questions and feedback reveals."}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-8 rounded-[26px] border border-[rgba(255,255,255,0.08)] bg-[#20242a] p-8">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-[color:var(--text-subtle)]">
-              Answer state
+      <div className="studio-scroll min-h-0 flex-1 overflow-y-auto px-6 py-6">
+        <div className="mx-auto w-full max-w-[620px]">
+          <div className="rounded-[26px] border border-white/[0.08] bg-[linear-gradient(150deg,rgba(255,255,255,0.08)_0%,rgba(255,255,255,0.03)_100%)] p-6 shadow-[0_18px_40px_rgba(0,0,0,0.18)]">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/38">
+              Quiz Complete
             </p>
-            <div className="mt-5 grid gap-4 md:grid-cols-3">
-              {quiz.questions.slice(0, 12).map((question, index) => {
-                const selectedOptionId = selectedAnswers[question.id];
-                const isCorrect = selectedOptionId === question.correct_option_id;
+            <h3 className="mt-4 text-[34px] font-semibold tracking-[-0.05em] text-[color:var(--text-primary)]">
+              {summary.correctCount} / {totalQuestions} correct
+            </h3>
+            <p className="mt-3 text-[14px] leading-[1.65] text-white/56">
+              You answered {summary.answeredCount} question{summary.answeredCount === 1 ? "" : "s"} and scored {percentage}%.
+            </p>
 
-                return (
-                  <div
-                    key={question.id}
-                    className={[
-                      "rounded-[18px] border px-5 py-4",
-                      !selectedOptionId
-                        ? "border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)]"
-                        : isCorrect
-                          ? "border-[rgba(31,198,94,0.36)] bg-[rgba(31,198,94,0.07)]"
-                          : "border-[rgba(255,154,168,0.36)] bg-[rgba(255,154,168,0.07)]",
-                    ].join(" ")}
-                  >
-                    <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-[color:var(--text-subtle)]">
-                      Question {index + 1}
-                    </p>
-                    <p className="mt-3 text-[15px] font-medium text-[color:var(--text-primary)]">
-                      {!selectedOptionId ? "Skipped" : isCorrect ? "Right answer" : "Wrong answer"}
-                    </p>
-                  </div>
-                );
-              })}
+            <div className="mt-6 grid gap-3 sm:grid-cols-3">
+              <ResultStatCard label="Correct" tone="green" value={summary.correctCount} />
+              <ResultStatCard label="Wrong" tone="red" value={summary.wrongCount} />
+              <ResultStatCard label="Skipped" tone="neutral" value={summary.skippedCount} />
             </div>
           </div>
         </div>
       </div>
 
-      <div className="flex h-[92px] shrink-0 items-center justify-end gap-3 border-t border-[rgba(255,255,255,0.08)] bg-[#181c21] px-7">
-        <button
-          type="button"
-          onClick={onReset}
-          className="h-11 rounded-[12px] border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.04)] px-5 text-[14px] font-semibold text-[color:var(--text-secondary)] transition hover:bg-[rgba(255,255,255,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
-        >
-          Retake Quiz
-        </button>
-        <button
-          type="button"
-          onClick={onReview}
-          className="h-11 rounded-[12px] bg-[color:var(--accent-green)] px-6 text-[14px] font-semibold text-[#111411] transition hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
-        >
-          Review Quiz
-        </button>
+      <div className="shrink-0 border-t border-white/[0.08] bg-[rgba(17,19,22,0.55)] px-6 py-4">
+        <div className="mx-auto flex w-full max-w-[620px] items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={onReset}
+            className="inline-flex h-11 items-center rounded-[16px] border border-white/[0.08] bg-white/[0.05] px-4 text-[14px] font-medium text-white/76 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-white/[0.12] hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.35)]"
+          >
+            Retake Quiz
+          </button>
+
+          <button
+            type="button"
+            onClick={onReview}
+            className="inline-flex h-12 items-center gap-2 rounded-[16px] bg-[color:var(--accent-green)] px-6 text-[15px] font-semibold text-[#111411] shadow-[0_12px_30px_rgba(184,219,128,0.2)] transition-all duration-200 ease-out hover:-translate-y-0.5 hover:brightness-105 active:translate-y-px active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.35)]"
+          >
+            Review
+            <ArrowRightIcon className="h-4.5 w-4.5" />
+          </button>
+        </div>
       </div>
     </>
   );
 }
 
-function QuizNavButton({
-  direction,
-  disabled,
-  onClick,
-}: {
-  direction: "previous" | "next";
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      aria-label={direction === "previous" ? "Previous question" : "Next question"}
-      className={[
-        "flex h-11 w-11 items-center justify-center rounded-[12px] border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.04)] text-[color:var(--text-secondary)] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]",
-        disabled ? "opacity-35" : "hover:bg-[rgba(255,255,255,0.08)]",
-      ].join(" ")}
-    >
-      {direction === "previous" ? (
-        <ArrowLeftIcon className="h-5 w-5" />
-      ) : (
-        <ArrowRightIcon className="h-5 w-5" />
-      )}
-    </button>
-  );
-}
-
-function SelectionIndicator({
-  isCorrect,
-  isSelected,
-  isWrong,
-}: {
-  isCorrect: boolean;
-  isSelected: boolean;
-  isWrong: boolean;
-}) {
-  return (
-    <span
-      className={[
-        "mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 transition",
-        isWrong
-          ? "border-[#ff7c90] bg-[rgba(255,124,144,0.12)]"
-          : isCorrect
-            ? "border-[#1fc65e] bg-[rgba(31,198,94,0.14)]"
-            : isSelected
-              ? "border-[rgba(247,246,211,0.42)] bg-[rgba(255,255,255,0.06)]"
-              : "border-[rgba(255,255,255,0.12)] bg-transparent",
-      ].join(" ")}
-      aria-hidden="true"
-    >
-      {isCorrect ? <CheckIcon className="h-3.5 w-3.5 text-[#5ee087]" /> : null}
-      {isWrong ? <span className="h-2.5 w-2.5 rounded-full bg-[#ff7c90]" /> : null}
-    </span>
-  );
-}
-
-function SummaryStat({
+function ResultStatCard({
   label,
   tone,
   value,
@@ -526,75 +342,24 @@ function SummaryStat({
   value: number;
 }) {
   return (
-    <div className="flex items-center justify-between gap-6">
-      <span className="text-[20px] text-[color:var(--text-secondary)]">
+    <div
+      className={[
+        "rounded-[20px] border px-4 py-4",
+        tone === "green"
+          ? "border-[rgba(184,219,128,0.22)] bg-[rgba(184,219,128,0.08)]"
+          : tone === "red"
+            ? "border-[rgba(255,154,168,0.22)] bg-[rgba(255,154,168,0.08)]"
+            : "border-white/[0.08] bg-white/[0.04]",
+      ].join(" ")}
+    >
+      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/38">
         {label}
-      </span>
-      <span
-        className={[
-          "text-[34px] font-semibold leading-none",
-          tone === "green"
-            ? "text-[#45b450]"
-            : tone === "red"
-              ? "text-[#ff9aa8]"
-              : "text-[color:var(--text-primary)]",
-        ].join(" ")}
-      >
+      </p>
+      <p className="mt-3 text-[28px] font-semibold tracking-[-0.04em] text-[color:var(--text-primary)]">
         {value}
-      </span>
+      </p>
     </div>
   );
-}
-
-function getOptionClass({
-  hasFeedback,
-  isCorrect,
-  isSelected,
-}: {
-  hasFeedback: boolean;
-  isCorrect: boolean;
-  isSelected: boolean;
-}) {
-  if (hasFeedback && isSelected && !isCorrect) {
-    return "border-[rgba(255,124,144,0.68)] bg-[rgba(255,124,144,0.08)] shadow-[0_0_0_1px_rgba(255,124,144,0.22)]";
-  }
-
-  if (hasFeedback && isCorrect) {
-    return "border-[#1fc65e] bg-[rgba(31,198,94,0.08)] shadow-[0_0_0_1px_rgba(31,198,94,0.4)]";
-  }
-
-  if (isSelected) {
-    return "border-[rgba(247,246,211,0.42)] bg-[rgba(255,255,255,0.07)]";
-  }
-
-  return "border-[rgba(255,255,255,0.05)] bg-[#191d23] hover:border-[rgba(255,255,255,0.1)] hover:bg-[#1b2027]";
-}
-
-function getQuestionStatusLabel({
-  hasFeedback,
-  selectedOptionId,
-  question,
-}: {
-  hasFeedback: boolean;
-  selectedOptionId?: string;
-  question: QuizQuestion;
-}) {
-  if (!selectedOptionId) {
-    return "Skipped for now. Use Next to keep reviewing.";
-  }
-
-  if (!hasFeedback) {
-    return "Answer selected.";
-  }
-
-  return selectedOptionId === question.correct_option_id
-    ? "Right answer selected."
-    : "Wrong answer selected. Correct choice is highlighted in green.";
-}
-
-function getCorrectAnswerLabel(question: QuizQuestion) {
-  const correctOption = question.options.find((option) => option.id === question.correct_option_id);
-  return correctOption ? `${correctOption.label}. ${correctOption.text}` : "Unavailable";
 }
 
 function getQuizSummary(
@@ -632,15 +397,4 @@ function getQuizSummary(
     wrongCount: answeredCount - correctCount,
     skippedCount: quiz.questions.length - answeredCount,
   };
-}
-
-function formatSourceNames(materials: Material[]): string {
-  if (materials.length === 0) {
-    return "Select sources from the left panel first.";
-  }
-
-  return materials
-    .slice(0, 3)
-    .map((material) => getMaterialBaseName(material.name))
-    .join(", ");
 }

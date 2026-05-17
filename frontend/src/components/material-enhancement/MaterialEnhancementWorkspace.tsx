@@ -13,7 +13,6 @@ import { MaterialsSidebar } from "@/components/material-enhancement/MaterialsSid
 import { PreviewWorkspace } from "@/components/material-enhancement/PreviewWorkspace";
 import { ProjectHeader } from "@/components/material-enhancement/ProjectHeader";
 import {
-  QuizPanel,
   type QuizGenerationStatus,
   type QuizViewMode,
 } from "@/components/material-enhancement/QuizPanel";
@@ -28,6 +27,7 @@ import {
   createMaterialFromCourseContentRecord,
   createMaterialFromProjectMaterialRecord,
   generateRecommendations,
+  getMaterialBaseName,
   getSelectedMaterial,
   getSelectedPreviewItem,
   revokeMaterialObjectUrls,
@@ -41,10 +41,18 @@ import {
   updateProjectTitle,
 } from "@/lib/api/projects";
 
-const EXPANDED_GRID_COLUMNS = "320px minmax(0,1fr) 320px";
-const COLLAPSED_GRID_COLUMNS = "84px minmax(0,1fr) 320px";
+const EXPANDED_LEFT_GRID_COLUMNS = "320px";
+const COLLAPSED_LEFT_GRID_COLUMNS = "84px";
+const STUDIO_COLLAPSED_WIDTH = "320px";
+const STUDIO_EXPANDED_WIDTH = "minmax(0, min(720px, calc(100vw - 32px)))";
 const PREVIEW_POLL_INTERVAL_MS = 1400;
 const PREVIEW_POLL_ATTEMPTS = 40;
+
+type GeneratedQuizHistoryItem = {
+  createdAt: number;
+  id: string;
+  quiz: GeneratedQuiz;
+};
 
 export function MaterialEnhancementWorkspace({
   projectUuid,
@@ -64,12 +72,12 @@ export function MaterialEnhancementWorkspace({
   const [activeTool, setActiveTool] = useState<ActiveTool>("summary");
   const [isQuizExpanded, setIsQuizExpanded] = useState(false);
   const [quizStatus, setQuizStatus] = useState<QuizGenerationStatus>("idle");
-  const [quizData, setQuizData] = useState<GeneratedQuiz | null>(null);
+  const [quizHistory, setQuizHistory] = useState<GeneratedQuizHistoryItem[]>([]);
+  const [activeQuizHistoryId, setActiveQuizHistoryId] = useState<string | null>(null);
   const [quizErrorMessage, setQuizErrorMessage] = useState<string | null>(null);
-  const [quizSourceKey, setQuizSourceKey] = useState("");
+  const [pendingQuizSourceCount, setPendingQuizSourceCount] = useState<number | null>(null);
   const [activeQuizQuestionIndex, setActiveQuizQuestionIndex] = useState(0);
   const [selectedQuizAnswers, setSelectedQuizAnswers] = useState<Record<string, string>>({});
-  const [revealedQuizFeedback, setRevealedQuizFeedback] = useState<Record<string, boolean>>({});
   const [quizViewMode, setQuizViewMode] = useState<QuizViewMode>("question");
   const [recommendations, setRecommendations] = useState<Recommendation[]>(
     generateRecommendations(null),
@@ -102,31 +110,13 @@ export function MaterialEnhancementWorkspace({
     checkedMaterialIds.includes(material.id),
   );
   const currentQuizSourceKey = buildQuizSourceKey(checkedMaterials);
+  const activeQuizHistoryItem =
+    quizHistory.find((quizHistoryItem) => quizHistoryItem.id === activeQuizHistoryId) ?? null;
+  const activeQuiz = activeQuizHistoryItem?.quiz ?? null;
 
   useEffect(() => {
     setRecommendations(generateRecommendations(selectedMaterial));
   }, [selectedMaterial]);
-
-  useEffect(() => {
-    if (!quizSourceKey) {
-      return;
-    }
-
-    if (quizSourceKey === currentQuizSourceKey) {
-      return;
-    }
-
-    setIsQuizExpanded(false);
-    setQuizStatus("idle");
-    setQuizData(null);
-    setQuizErrorMessage(null);
-    setQuizSourceKey("");
-    quizRequestKeyRef.current = "";
-    setActiveQuizQuestionIndex(0);
-    setSelectedQuizAnswers({});
-    setRevealedQuizFeedback({});
-    setQuizViewMode("question");
-  }, [currentQuizSourceKey, quizSourceKey]);
 
   useEffect(() => {
     selectedMaterialIdRef.current = selectedMaterialId;
@@ -163,6 +153,23 @@ export function MaterialEnhancementWorkspace({
       window.clearTimeout(timeoutId);
     };
   }, [toastMessage]);
+
+  useEffect(() => {
+    if (!isQuizExpanded) {
+      return;
+    }
+
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousDocumentOverflow = document.documentElement.style.overflow;
+
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousDocumentOverflow;
+    };
+  }, [isQuizExpanded]);
 
   useEffect(() => {
     const normalizedProjectUuid = projectUuid.trim();
@@ -235,6 +242,16 @@ export function MaterialEnhancementWorkspace({
     setCheckedMaterialIds([]);
     setSelectedMaterialId(firstMaterial?.id ?? null);
     setSelectedPreviewItemId(firstMaterial?.previewItems[0]?.id ?? null);
+    setIsQuizExpanded(false);
+    setQuizStatus("idle");
+    setQuizHistory([]);
+    setActiveQuizHistoryId(null);
+    setQuizErrorMessage(null);
+    setPendingQuizSourceCount(null);
+    quizRequestKeyRef.current = "";
+    setActiveQuizQuestionIndex(0);
+    setSelectedQuizAnswers({});
+    setQuizViewMode("question");
 
     for (const material of nextMaterials) {
       if (material.databaseId) {
@@ -563,10 +580,6 @@ export function MaterialEnhancementWorkspace({
       return;
     }
 
-    if (quizData && quizSourceKey === currentQuizSourceKey) {
-      return;
-    }
-
     const accessToken = getStoredAccessToken();
     if (!accessToken) {
       setToastMessage("Sign in before generating a quiz.");
@@ -582,15 +595,14 @@ export function MaterialEnhancementWorkspace({
       return;
     }
 
-    const requestedSourceKey = currentQuizSourceKey;
+    const requestedSourceKey = `${currentQuizSourceKey}:${Date.now()}`;
+    const sourceCount = checkedMaterials.length;
     quizRequestKeyRef.current = requestedSourceKey;
     setQuizStatus("loading");
-    setQuizData(null);
     setQuizErrorMessage(null);
-    setQuizSourceKey(requestedSourceKey);
+    setPendingQuizSourceCount(sourceCount);
     setActiveQuizQuestionIndex(0);
     setSelectedQuizAnswers({});
-    setRevealedQuizFeedback({});
     setQuizViewMode("question");
 
     try {
@@ -604,8 +616,23 @@ export function MaterialEnhancementWorkspace({
         return;
       }
 
-      setQuizData(generatedQuiz);
+      const createdAt = Date.now();
+      const generatedQuizHistoryItem: GeneratedQuizHistoryItem = {
+        createdAt,
+        id: `${generatedQuiz.quiz_id}-${createdAt}`,
+        quiz: {
+          ...generatedQuiz,
+          title: normalizeQuizTitle(generatedQuiz.title, checkedMaterials),
+        },
+      };
+
+      setQuizHistory((currentQuizHistory) => [
+        generatedQuizHistoryItem,
+        ...currentQuizHistory,
+      ]);
+      setActiveQuizHistoryId(generatedQuizHistoryItem.id);
       setQuizStatus("ready");
+      setPendingQuizSourceCount(null);
       if (options?.openWhenReady) {
         setIsQuizExpanded(true);
       }
@@ -618,27 +645,36 @@ export function MaterialEnhancementWorkspace({
       const message = cause instanceof Error ? cause.message : "Unable to generate quiz.";
       setQuizStatus("error");
       setQuizErrorMessage(message);
+      setPendingQuizSourceCount(null);
       setToastMessage(message);
     }
   };
 
-  const handleOpenQuiz = () => {
-    if (quizData && quizSourceKey === currentQuizSourceKey) {
-      setIsQuizExpanded(true);
+  const handleOpenQuiz = (quizHistoryId: string) => {
+    const quizHistoryItem = quizHistory.find((item) => item.id === quizHistoryId);
+
+    if (!quizHistoryItem) {
       return;
     }
 
-    void ensureQuizGenerated({ openWhenReady: true });
+    setActiveQuizHistoryId(quizHistoryItem.id);
+    setQuizStatus("ready");
+    setQuizErrorMessage(null);
+    setPendingQuizSourceCount(null);
+    setActiveQuizQuestionIndex(0);
+    setSelectedQuizAnswers({});
+    setQuizViewMode("question");
+    setIsQuizExpanded(true);
   };
 
   const handleNavigateQuiz = (direction: "previous" | "next") => {
-    if (!quizData) {
+    if (!activeQuiz) {
       return;
     }
 
     setActiveQuizQuestionIndex((currentIndex) => {
       const nextIndex = direction === "previous" ? currentIndex - 1 : currentIndex + 1;
-      return Math.min(Math.max(nextIndex, 0), quizData.questions.length - 1);
+      return Math.min(Math.max(nextIndex, 0), activeQuiz.questions.length - 1);
     });
   };
 
@@ -647,14 +683,10 @@ export function MaterialEnhancementWorkspace({
       ...currentAnswers,
       [questionId]: optionId,
     }));
-    setRevealedQuizFeedback((currentFeedback) => ({
-      ...currentFeedback,
-      [questionId]: true,
-    }));
   };
 
   const handleShowQuizResults = () => {
-    if (!quizData) {
+    if (!activeQuiz) {
       return;
     }
 
@@ -662,7 +694,7 @@ export function MaterialEnhancementWorkspace({
   };
 
   const handleReviewQuiz = () => {
-    if (!quizData) {
+    if (!activeQuiz) {
       return;
     }
 
@@ -672,7 +704,6 @@ export function MaterialEnhancementWorkspace({
   const handleResetQuiz = () => {
     setActiveQuizQuestionIndex(0);
     setSelectedQuizAnswers({});
-    setRevealedQuizFeedback({});
     setQuizViewMode("question");
   };
 
@@ -833,11 +864,12 @@ export function MaterialEnhancementWorkspace({
         />
 
         <div
-          className="mt-[22px] grid gap-5 transition-[grid-template-columns] duration-300 ease-out"
+          className="mt-[22px] grid gap-5 transition-[grid-template-columns] duration-[320ms] ease-[cubic-bezier(0.2,0.8,0.2,1)]"
           style={{
-            gridTemplateColumns: isLeftPanelCollapsed
-              ? COLLAPSED_GRID_COLUMNS
-              : EXPANDED_GRID_COLUMNS,
+            gridTemplateColumns: getWorkspaceGridTemplateColumns({
+              isLeftPanelCollapsed,
+              isQuizExpanded,
+            }),
           }}
         >
           <MaterialsSidebar
@@ -859,48 +891,37 @@ export function MaterialEnhancementWorkspace({
             selectedPreviewItemId={selectedPreviewItemId}
           />
 
-          {isQuizExpanded ? (
-            <div className="col-span-2">
-              <QuizPanel
-                activeQuestionIndex={activeQuizQuestionIndex}
-                checkedMaterials={checkedMaterials}
-                errorMessage={quizErrorMessage}
-                onClose={() => setIsQuizExpanded(false)}
-                onNavigate={handleNavigateQuiz}
-                onReset={handleResetQuiz}
-                onRetry={ensureQuizGenerated}
-                onReview={handleReviewQuiz}
-                onSelectAnswer={handleSelectQuizAnswer}
-                onShowResults={handleShowQuizResults}
-                quiz={quizData}
-                revealedFeedback={revealedQuizFeedback}
-                selectedAnswers={selectedQuizAnswers}
-                status={quizStatus}
-                viewMode={quizViewMode}
-              />
-            </div>
-          ) : (
-            <>
-              <PreviewWorkspace
-                onApplyRecommendation={handleApplyRecommendation}
-                onNavigate={navigatePreview}
-                previewItem={selectedPreviewItem}
-                recommendations={recommendations}
-                selectedMaterial={selectedMaterial}
-              />
+          <PreviewWorkspace
+            onApplyRecommendation={handleApplyRecommendation}
+            onNavigate={navigatePreview}
+            previewItem={selectedPreviewItem}
+            recommendations={recommendations}
+            selectedMaterial={selectedMaterial}
+          />
 
-              <AIToolsSidebar
-                activeTool={activeTool}
-                checkedMaterials={checkedMaterials}
-                onOpenHelp={handleOpenHelp}
-                onOpenQuiz={handleOpenQuiz}
-                onSelectTool={handleSelectTool}
-                quiz={quizData}
-                quizErrorMessage={quizErrorMessage}
-                quizStatus={quizStatus}
-              />
-            </>
-          )}
+          <AIToolsSidebar
+            activeQuestionIndex={activeQuizQuestionIndex}
+            activeTool={activeTool}
+            checkedMaterials={checkedMaterials}
+            isQuizExpanded={isQuizExpanded}
+            onCloseQuiz={() => setIsQuizExpanded(false)}
+            onNavigateQuiz={handleNavigateQuiz}
+            onOpenHelp={handleOpenHelp}
+            onOpenQuiz={handleOpenQuiz}
+            onResetQuiz={handleResetQuiz}
+            onRetryQuiz={ensureQuizGenerated}
+            onReviewQuiz={handleReviewQuiz}
+            onSelectQuizAnswer={handleSelectQuizAnswer}
+            onSelectTool={handleSelectTool}
+            onShowQuizResults={handleShowQuizResults}
+            pendingQuizSourceCount={pendingQuizSourceCount}
+            quiz={activeQuiz}
+            quizErrorMessage={quizErrorMessage}
+            quizHistory={quizHistory}
+            quizStatus={quizStatus}
+            quizViewMode={quizViewMode}
+            selectedQuizAnswers={selectedQuizAnswers}
+          />
         </div>
       </div>
 
@@ -931,4 +952,35 @@ function buildQuizSourceKey(materials: Material[]): string {
     .filter((databaseId): databaseId is number => typeof databaseId === "number")
     .sort((firstId, secondId) => firstId - secondId)
     .join("|");
+}
+
+function getWorkspaceGridTemplateColumns({
+  isLeftPanelCollapsed,
+  isQuizExpanded,
+}: {
+  isLeftPanelCollapsed: boolean;
+  isQuizExpanded: boolean;
+}) {
+  const leftColumn = isLeftPanelCollapsed
+    ? COLLAPSED_LEFT_GRID_COLUMNS
+    : EXPANDED_LEFT_GRID_COLUMNS;
+  const studioColumn = isQuizExpanded ? STUDIO_EXPANDED_WIDTH : STUDIO_COLLAPSED_WIDTH;
+
+  return `${leftColumn} minmax(0,1fr) ${studioColumn}`;
+}
+
+function normalizeQuizTitle(title: string, materials: Material[]) {
+  const normalizedTitle = title.trim();
+
+  if (normalizedTitle) {
+    return normalizedTitle;
+  }
+
+  const firstMaterial = materials[0];
+
+  if (!firstMaterial) {
+    return "Generated Quiz";
+  }
+
+  return `${getMaterialBaseName(firstMaterial.name)} Quiz`;
 }
