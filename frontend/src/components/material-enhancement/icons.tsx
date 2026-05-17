@@ -146,27 +146,6 @@ export function SummaryIcon(props: SvgIconProps) {
   );
 }
 
-export function MindmapIcon(props: SvgIconProps) {
-  return (
-    <SvgIcon {...props}>
-      <circle cx="12" cy="12" r="2" fill="currentColor" />
-
-      <circle cx="12" cy="4.5" r="1.5" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="19.5" cy="12" r="1.5" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="12" cy="19.5" r="1.5" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="4.5" cy="12" r="1.5" stroke="currentColor" strokeWidth="1.5" />
-
-      {/* Connecting lines */}
-      <path
-        d="M12 10V6.5M14 12H17.5M12 14V17.5M10 12H6.5"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    </SvgIcon>
-  );
-}
-
 export function QuizIcon(props: SvgIconProps) {
   return (
     <SvgIcon {...props}>
@@ -178,43 +157,14 @@ export function QuizIcon(props: SvgIconProps) {
   );
 }
 
-export function FlashcardsIcon(props: SvgIconProps) {
+export function SlideDeckIcon(props: SvgIconProps) {
   return (
     <SvgIcon {...props}>
-      <rect
-        x="6.5"
-        y="6"
-        width="10"
-        height="10"
-        rx="2"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        opacity="0.5"
-      />
-
-      <rect
-        x="9"
-        y="8"
-        width="10"
-        height="10"
-        rx="2.5"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        fill="none"
-      />
-
-      <path
-        d="M12 11c1.8-2 4.5-2 6 0M18 11v2.5M18 13.5h-2.5"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-
-      <path
-        d="M11.5 14.5l.4 1.1 1.1.4-1.1.4-.4 1.1-.4-1.1-1.1-.4 1.1-.4.4-1.1z"
-        fill="currentColor"
-      />
+      <rect x="5" y="6" width="14" height="10.5" rx="2.25" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8 19h8" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
+      <path d="M10 16.5v2.5M14 16.5v2.5" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
+      <path d="M8 9.5h6.5M8 12h4.25" stroke="currentColor" strokeLinecap="round" strokeWidth="1.4" />
+      <circle cx="16.25" cy="11.75" r="1.1" fill="currentColor" />
     </SvgIcon>
   );
 }
