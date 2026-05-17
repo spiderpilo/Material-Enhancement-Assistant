@@ -722,6 +722,142 @@ def get_course_content_preview_for_user(
     return get_course_content_preview(course_content_id=course_content_id)
 
 
+def update_course_content_name_for_user(
+    *,
+    access_token: str,
+    course_content_id: int,
+    material_name: str,
+) -> CourseContentRecord:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    _assert_course_content_owned_by_username(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        course_content_id=course_content_id,
+        owner_user_id=auth_user.user_id,
+    )
+
+    record = _fetch_course_content_record(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        course_content_id=course_content_id,
+    )
+    next_material_name = _normalize_locked_material_name(
+        requested_name=material_name,
+        current_name=record.material_name,
+    )
+
+    if next_material_name != record.material_name:
+        record = _update_course_content_record_name(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            course_content_id=course_content_id,
+            material_name=next_material_name,
+        )
+
+    source_type = record.source_type or _detect_source_type(record.material_name)
+    preview_metadata = _refresh_course_content_preview_metadata(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        bucket=settings.storage_bucket,
+        course_content_id=record.id,
+        material_name=record.material_name,
+        access_url=record.access_url,
+        source_type=source_type,
+        fallback_preview_status=record.preview_status,
+        fallback_preview_count=record.preview_count,
+    )
+
+    return record.model_copy(update=preview_metadata)
+
+
+def delete_course_content_for_user(
+    *,
+    access_token: str,
+    course_content_id: int,
+) -> None:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    _assert_course_content_owned_by_username(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        course_content_id=course_content_id,
+        owner_user_id=auth_user.user_id,
+    )
+
+    record = _fetch_course_content_record_optional(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        course_content_id=course_content_id,
+    )
+    if record is None:
+        raise ProjectNotFoundError("Course content was not found.")
+
+    material_links = _fetch_project_material_links_for_material(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        material_id=course_content_id,
+    )
+    for link in material_links:
+        project_id = _read_optional_int(link, "project_id")
+        if project_id is None:
+            continue
+
+        cleanup_error = _delete_project_material_link(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            project_id=project_id,
+            material_id=course_content_id,
+        )
+        if cleanup_error:
+            raise SupabaseServiceError(cleanup_error)
+
+    _delete_course_content_preview_assets(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        bucket=settings.storage_bucket,
+        course_content_id=course_content_id,
+    )
+
+    source_storage_path = _extract_storage_path_from_access_url(
+        access_url=record.access_url,
+        bucket=settings.storage_bucket,
+    )
+    if source_storage_path:
+        source_delete_error = _delete_storage_object_if_exists(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            bucket=settings.storage_bucket,
+            storage_path=source_storage_path,
+        )
+        if source_delete_error:
+            raise SupabaseServiceError(source_delete_error)
+
+    delete_error = _delete_course_content_record(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        course_content_id=course_content_id,
+    )
+    if delete_error:
+        raise SupabaseServiceError(delete_error)
+
+
 def get_course_content_texts_for_user(
     *,
     access_token: str,
@@ -819,6 +955,136 @@ def _build_preview_status_storage_path(*, course_content_id: int) -> str:
 
 def _build_preview_item_storage_path(*, course_content_id: int, image_name: str) -> str:
     return f"{PREVIEW_STORAGE_PREFIX}/{course_content_id}/{image_name}"
+
+
+def _normalize_locked_material_name(*, requested_name: str, current_name: str) -> str:
+    normalized_requested_name = requested_name.strip()
+    requested_base_name = os.path.splitext(normalized_requested_name)[0].strip()
+    if not requested_base_name:
+        raise SupabaseServiceError("Source name cannot be empty.")
+
+    current_suffix = os.path.splitext(current_name)[1].lower()
+    if not current_suffix:
+        raise SupabaseServiceError("Source filename is missing an extension.")
+    _detect_source_type(f"placeholder{current_suffix}")
+
+    sanitized_base_name = sanitize_filename(requested_base_name, fallback_name="material")
+    normalized_base_name = os.path.splitext(sanitized_base_name)[0].strip("._-")
+    if not normalized_base_name:
+        normalized_base_name = "material"
+
+    return f"{normalized_base_name}{current_suffix}"
+
+
+def _refresh_course_content_preview_metadata(
+    *,
+    url: str,
+    service_role_key: str,
+    bucket: str,
+    course_content_id: int,
+    material_name: str,
+    access_url: str,
+    source_type: SourceType,
+    fallback_preview_status: PreviewStatus,
+    fallback_preview_count: int,
+) -> dict[str, Any]:
+    preview_status_payload = _download_preview_status(
+        url=url,
+        service_role_key=service_role_key,
+        bucket=bucket,
+        course_content_id=course_content_id,
+    )
+    preview_manifest = _download_preview_manifest(
+        url=url,
+        service_role_key=service_role_key,
+        bucket=bucket,
+        course_content_id=course_content_id,
+    )
+
+    preview_status: PreviewStatus = fallback_preview_status
+    raw_preview_status = preview_status_payload.get("preview_status")
+    if raw_preview_status in {"pending", "ready", "failed"}:
+        preview_status = raw_preview_status
+
+    preview_count = fallback_preview_count
+    raw_preview_count = preview_status_payload.get("preview_count")
+    if isinstance(raw_preview_count, int):
+        preview_count = raw_preview_count
+
+    preview_error = preview_status_payload.get("preview_error")
+    if not isinstance(preview_error, str):
+        preview_error = None
+
+    if preview_status_payload or preview_manifest:
+        current_access_url = preview_status_payload.get("access_url")
+        if not isinstance(current_access_url, str) or not current_access_url.strip():
+            current_access_url = access_url
+
+        _upload_preview_status(
+            url=url,
+            service_role_key=service_role_key,
+            bucket=bucket,
+            course_content_id=course_content_id,
+            material_name=material_name,
+            access_url=current_access_url,
+            source_type=source_type,
+            preview_status=preview_status,
+            preview_count=preview_count,
+            preview_error=preview_error,
+        )
+
+    if preview_manifest:
+        _upload_preview_manifest(
+            url=url,
+            service_role_key=service_role_key,
+            bucket=bucket,
+            course_content_id=course_content_id,
+            manifest=preview_manifest.model_copy(update={"material_name": material_name}),
+        )
+
+    return {
+        "preview_status": preview_status,
+        "preview_count": preview_count,
+    }
+
+
+def _delete_course_content_preview_assets(
+    *,
+    url: str,
+    service_role_key: str,
+    bucket: str,
+    course_content_id: int,
+) -> None:
+    preview_manifest = _download_preview_manifest(
+        url=url,
+        service_role_key=service_role_key,
+        bucket=bucket,
+        course_content_id=course_content_id,
+    )
+
+    preview_storage_paths = {
+        _build_preview_manifest_storage_path(course_content_id=course_content_id),
+        _build_preview_status_storage_path(course_content_id=course_content_id),
+    }
+
+    if preview_manifest:
+        for item in preview_manifest.items:
+            preview_item_storage_path = _extract_storage_path_from_access_url(
+                access_url=item.image_url,
+                bucket=bucket,
+            )
+            if preview_item_storage_path:
+                preview_storage_paths.add(preview_item_storage_path)
+
+    for storage_path in sorted(preview_storage_paths):
+        cleanup_error = _delete_storage_object_if_exists(
+            url=url,
+            service_role_key=service_role_key,
+            bucket=bucket,
+            storage_path=storage_path,
+        )
+        if cleanup_error:
+            raise SupabaseServiceError(cleanup_error)
 
 
 def _create_supabase_auth_user(
@@ -1466,6 +1732,29 @@ def _fetch_project_material_links(
     return _decode_json_rows(response_body, "project_materials")
 
 
+def _fetch_project_material_links_for_material(
+    *,
+    url: str,
+    service_role_key: str,
+    material_id: int,
+) -> list[dict[str, Any]]:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/project_materials"
+        f"?material_id=eq.{material_id}&select=project_id,material_id"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+
+    return _decode_json_rows(response_body, "project_materials")
+
+
 def _fetch_project_material_records(
     *,
     url: str,
@@ -1722,6 +2011,33 @@ def _fetch_course_content_record(
     return CourseContentRecord.model_validate(rows[0])
 
 
+def _update_course_content_record_name(
+    *,
+    url: str,
+    service_role_key: str,
+    course_content_id: int,
+    material_name: str,
+) -> CourseContentRecord:
+    payload = json.dumps({"material_name": material_name}).encode("utf-8")
+    response_body = _send_request(
+        endpoint=f"{url.rstrip('/')}/rest/v1/course_contents?id=eq.{course_content_id}",
+        method="PATCH",
+        data=payload,
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Prefer": "return=representation",
+        },
+        expected_statuses={200, 204},
+    )
+    rows = _decode_json_rows(response_body, "course_contents") if response_body else []
+    if not rows:
+        raise ProjectNotFoundError("Course content was not found.")
+
+    return CourseContentRecord.model_validate(rows[0])
+
+
 def _fetch_course_content_record_optional(
     *,
     url: str,
@@ -1764,6 +2080,28 @@ def _delete_storage_object(
 
     try:
         _send_request(
+            endpoint=endpoint,
+            method="DELETE",
+            headers=_build_auth_headers(service_role_key),
+            expected_statuses={200, 204},
+        )
+    except SupabaseServiceError as exc:
+        return str(exc)
+
+    return None
+
+
+def _delete_storage_object_if_exists(
+    *,
+    url: str,
+    service_role_key: str,
+    bucket: str,
+    storage_path: str,
+) -> Optional[str]:
+    endpoint = _build_storage_endpoint(url=url, bucket=bucket, storage_path=storage_path)
+
+    try:
+        _send_request_optional(
             endpoint=endpoint,
             method="DELETE",
             headers=_build_auth_headers(service_role_key),
@@ -1950,6 +2288,21 @@ def _build_object_url(*, url: str, bucket: str, storage_path: str) -> str:
     quoted_bucket = parse.quote(bucket, safe="")
     quoted_path = parse.quote(storage_path, safe="/")
     return f"{url.rstrip('/')}/storage/v1/object/{quoted_bucket}/{quoted_path}"
+
+
+def _extract_storage_path_from_access_url(*, access_url: str, bucket: str) -> str | None:
+    parsed_url = parse.urlparse(access_url)
+    normalized_bucket = parse.quote(bucket, safe="")
+    expected_prefix = f"/storage/v1/object/{normalized_bucket}/"
+
+    if not parsed_url.path.startswith(expected_prefix):
+        return None
+
+    encoded_path = parsed_url.path.removeprefix(expected_prefix)
+    if not encoded_path:
+        return None
+
+    return parse.unquote(encoded_path)
 
 
 def _download_storage_object_optional(

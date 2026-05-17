@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { DragEvent } from "react";
 
 import type { Material, PreviewItem } from "@/lib/material-enhancement/workspace";
@@ -6,12 +7,15 @@ import { SUPPORTED_FILE_TYPE_LABEL, getMaterialMeta } from "@/lib/material-enhan
 import {
   AddIcon,
   CheckIcon,
+  EditIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   FileIcon,
   ImageFileIcon,
+  OverflowVerticalIcon,
   PanelCollapseIcon,
   PanelExpandIcon,
+  TrashIcon,
   UploadCloudIcon,
 } from "./icons";
 
@@ -26,6 +30,8 @@ type MaterialsSidebarProps = {
   onDragOver: (event: DragEvent<HTMLDivElement>) => void;
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
   onOpenAddMaterials: () => void;
+  onRequestMaterialDelete: (materialId: string) => void;
+  onRequestMaterialRename: (materialId: string) => void;
   onSelectMaterial: (materialId: string) => void;
   onSelectPreviewItem: (materialId: string, previewItemId: string) => void;
   onToggleCollapsed: () => void;
@@ -45,6 +51,8 @@ export function MaterialsSidebar({
   onDragOver,
   onDrop,
   onOpenAddMaterials,
+  onRequestMaterialDelete,
+  onRequestMaterialRename,
   onSelectMaterial,
   onSelectPreviewItem,
   onToggleCollapsed,
@@ -53,8 +61,42 @@ export function MaterialsSidebar({
   selectedPreviewItemId,
 }: MaterialsSidebarProps) {
   const checkedMaterialIdSet = new Set(checkedMaterialIds);
+  const [openActionMenuMaterialId, setOpenActionMenuMaterialId] = useState<string | null>(null);
+  const activeMenuContainerRef = useRef<HTMLDivElement | null>(null);
+  const visibleActionMenuMaterialId =
+    openActionMenuMaterialId &&
+    materials.some((material) => material.id === openActionMenuMaterialId)
+      ? openActionMenuMaterialId
+      : null;
   const basePanelClass =
     "shadow-panel relative flex h-[949px] min-h-[949px] flex-col overflow-hidden rounded-[24px] border border-[color:var(--border-soft)] bg-[color:var(--bg-panel-left)] backdrop-blur-[12px]";
+
+  useEffect(() => {
+    if (!visibleActionMenuMaterialId) {
+      activeMenuContainerRef.current = null;
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!activeMenuContainerRef.current?.contains(event.target as Node)) {
+        setOpenActionMenuMaterialId(null);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenActionMenuMaterialId(null);
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [visibleActionMenuMaterialId]);
 
   if (isCollapsed) {
     return (
@@ -74,7 +116,10 @@ export function MaterialsSidebar({
         <div className="flex w-full flex-col items-center gap-3">
           <button
             type="button"
-            onClick={onToggleCollapsed}
+            onClick={() => {
+              setOpenActionMenuMaterialId(null);
+              onToggleCollapsed();
+            }}
             className="flex h-10 w-10 items-center justify-center rounded-[14px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] text-[color:var(--accent-cream)] transition hover:bg-[rgba(255,255,255,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
             aria-label="Expand materials sidebar"
           >
@@ -156,7 +201,10 @@ export function MaterialsSidebar({
 
         <button
           type="button"
-          onClick={onToggleCollapsed}
+          onClick={() => {
+            setOpenActionMenuMaterialId(null);
+            onToggleCollapsed();
+          }}
           className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] text-[color:var(--accent-cream)] transition hover:bg-[rgba(255,255,255,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
           aria-label="Collapse materials sidebar"
         >
@@ -190,6 +238,7 @@ export function MaterialsSidebar({
               const isChecked = checkedMaterialIdSet.has(material.id);
               const showsExpansionToggle = material.kind !== "image";
               const showsNestedItems = isSelected && material.kind !== "image";
+              const isActionMenuOpen = visibleActionMenuMaterialId === material.id;
 
               return (
                 <article
@@ -204,7 +253,10 @@ export function MaterialsSidebar({
                   <div className="flex items-center gap-3 px-4 py-3">
                     <button
                       type="button"
-                      onClick={() => onSelectMaterial(material.id)}
+                      onClick={() => {
+                        setOpenActionMenuMaterialId(null);
+                        onSelectMaterial(material.id);
+                      }}
                       className="flex min-w-0 flex-1 items-center gap-3 text-left focus-visible:outline-none"
                     >
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] text-[color:var(--accent-pink)]">
@@ -228,7 +280,10 @@ export function MaterialsSidebar({
                     {showsExpansionToggle ? (
                       <button
                         type="button"
-                        onClick={() => onSelectMaterial(material.id)}
+                        onClick={() => {
+                          setOpenActionMenuMaterialId(null);
+                          onSelectMaterial(material.id);
+                        }}
                         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-[rgba(255,255,255,0.05)] text-[color:var(--text-muted)] transition hover:bg-[rgba(255,255,255,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
                         aria-label={isSelected ? "Collapse material previews" : "Expand material previews"}
                       >
@@ -240,11 +295,72 @@ export function MaterialsSidebar({
                       </button>
                     ) : null}
 
-                    <MaterialCheckbox
-                      checked={isChecked}
-                      label={`Include ${material.name} in AI tools`}
-                      onToggle={() => onToggleMaterialChecked(material.id)}
-                    />
+                    <div
+                      ref={(node) => {
+                        if (isActionMenuOpen) {
+                          activeMenuContainerRef.current = node;
+                        }
+                      }}
+                      className="relative flex items-center gap-1"
+                    >
+                      <button
+                        type="button"
+                        aria-label={`Open actions for ${material.name}`}
+                        aria-haspopup="menu"
+                        aria-expanded={isActionMenuOpen}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setOpenActionMenuMaterialId((currentValue) =>
+                            currentValue === material.id ? null : material.id,
+                          );
+                        }}
+                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.04)] text-[color:var(--text-muted)] transition hover:bg-[rgba(255,255,255,0.08)] hover:text-[color:var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]"
+                      >
+                        <OverflowVerticalIcon className="h-[14px] w-[14px]" />
+                      </button>
+
+                      {isActionMenuOpen ? (
+                        <div
+                          role="menu"
+                          className="absolute right-0 top-8 z-40 w-[154px] overflow-hidden rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[linear-gradient(180deg,rgba(255,255,255,0.11)_0%,rgba(255,255,255,0.03)_100%),linear-gradient(145deg,rgba(29,31,26,0.96)_0%,rgba(17,18,14,0.92)_100%)] p-1 shadow-[0_20px_44px_rgba(0,0,0,0.4)] backdrop-blur-[20px]"
+                        >
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setOpenActionMenuMaterialId(null);
+                              onRequestMaterialRename(material.id);
+                            }}
+                            className="flex w-full items-center gap-2 rounded-[9px] px-3 py-2 text-left text-[12.5px] font-medium text-[#e7ebdf] transition hover:bg-[rgba(255,255,255,0.08)] hover:text-white"
+                          >
+                            <EditIcon className="h-4 w-4 shrink-0" />
+                            <span>Rename</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setOpenActionMenuMaterialId(null);
+                              onRequestMaterialDelete(material.id);
+                            }}
+                            className="mt-1 flex w-full items-center gap-2 rounded-[9px] px-3 py-2 text-left text-[12.5px] font-medium text-[#f2b9c6] transition hover:bg-[rgba(242,185,198,0.16)] hover:text-[#ffd8e2]"
+                          >
+                            <TrashIcon className="h-4 w-4 shrink-0" />
+                            <span>Delete</span>
+                          </button>
+                        </div>
+                      ) : null}
+
+                      <MaterialCheckbox
+                        checked={isChecked}
+                        label={`Include ${material.name} in AI tools`}
+                        onToggle={() => onToggleMaterialChecked(material.id)}
+                      />
+                    </div>
                   </div>
 
                   {showsNestedItems ? (
