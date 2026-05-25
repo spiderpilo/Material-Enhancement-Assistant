@@ -24,10 +24,12 @@ export type GeneratedQuiz = {
 
 export async function generateQuiz({
   accessToken,
+  projectUuid,
   materialIds,
   questionCount = 12,
 }: {
   accessToken: string;
+  projectUuid: string;
   materialIds: number[];
   questionCount?: number;
 }): Promise<GeneratedQuiz> {
@@ -38,6 +40,7 @@ export async function generateQuiz({
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
+      project_uuid: projectUuid,
       material_ids: materialIds,
       question_count: questionCount,
     }),

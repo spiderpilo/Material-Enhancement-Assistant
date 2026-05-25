@@ -7,9 +7,11 @@ from app.services.llm_service import GeminiServiceError, MissingAPIKeyError, gen
 from app.services.supabase_service import (
     AuthenticationError,
     MissingSupabaseConfigError,
+    ProjectAccessDeniedError,
     ProjectNotFoundError,
     SupabaseServiceError,
     get_course_content_texts_for_user,
+    save_generated_quiz_for_user,
 )
 
 
@@ -34,18 +36,29 @@ def generate_quiz_from_materials(
     authorization: str | None = Header(default=None),
 ) -> GeneratedQuiz:
     try:
+        access_token = _extract_bearer_token(authorization)
         materials = get_course_content_texts_for_user(
-            access_token=_extract_bearer_token(authorization),
+            access_token=access_token,
+            project_uuid=payload.project_uuid,
             material_ids=payload.material_ids,
         )
-        return generate_quiz(
+        generated_quiz = generate_quiz(
             materials=materials,
             question_count=payload.question_count,
         )
+        save_generated_quiz_for_user(
+            access_token=access_token,
+            project_uuid=payload.project_uuid,
+            material_ids=payload.material_ids,
+            quiz=generated_quiz,
+        )
+        return generated_quiz
     except MissingSupabaseConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ProjectAccessDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except MissingAPIKeyError as exc:

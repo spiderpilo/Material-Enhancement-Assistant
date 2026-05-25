@@ -17,7 +17,7 @@ from app.models.document_model import (
     SourceType,
 )
 from app.models.project_model import ProjectMaterialRecord, ProjectRecord, ProjectSummary
-from app.models.quiz_model import QuizSourceMaterial
+from app.models.quiz_model import GeneratedQuiz, GeneratedQuizHistoryRecord, QuizSourceMaterial
 from app.services.parser_service import DocumentParseError, parse_document
 from app.services.preview_service import DocumentPreviewError, render_course_content_previews
 from app.utils.file_utils import sanitize_filename
@@ -861,6 +861,7 @@ def delete_course_content_for_user(
 def get_course_content_texts_for_user(
     *,
     access_token: str,
+    project_uuid: str | None = None,
     material_ids: list[int],
 ) -> list[QuizSourceMaterial]:
     try:
@@ -874,6 +875,22 @@ def get_course_content_texts_for_user(
         access_token=access_token,
     )
     unique_material_ids = list(dict.fromkeys(material_ids))
+    normalized_project_uuid = (project_uuid or "").strip()
+
+    if normalized_project_uuid:
+        project_row = _fetch_owned_project_row_by_uuid(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            project_uuid=normalized_project_uuid,
+            owner_user_id=auth_user.user_id,
+        )
+        project_id = _read_int(project_row, "id")
+        _assert_materials_linked_to_project(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            project_id=project_id,
+            material_ids=unique_material_ids,
+        )
 
     for material_id in unique_material_ids:
         _assert_course_content_owned_by_username(
@@ -938,6 +955,126 @@ def get_course_content_texts_for_user(
         raise SupabaseServiceError(f"Unable to read selected sources for quiz generation: {detail}")
 
     return source_materials
+
+
+def save_generated_quiz_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+    material_ids: list[int],
+    quiz: GeneratedQuiz,
+) -> None:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    normalized_project_uuid = project_uuid.strip()
+    if not normalized_project_uuid:
+        raise ProjectNotFoundError("Project was not found.")
+
+    project_row = _fetch_owned_project_row_by_uuid(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=normalized_project_uuid,
+        owner_user_id=auth_user.user_id,
+    )
+    project_id = _read_int(project_row, "id")
+    unique_material_ids = list(dict.fromkeys(material_ids))
+
+    _assert_materials_linked_to_project(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project_id,
+        material_ids=unique_material_ids,
+    )
+
+    for material_id in unique_material_ids:
+        _assert_course_content_owned_by_username(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            course_content_id=material_id,
+            owner_user_id=auth_user.user_id,
+        )
+
+    _insert_generated_material_record(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=normalized_project_uuid,
+        name=quiz.title,
+        tool_type="quiz",
+        source_material_ids=unique_material_ids,
+        payload=quiz.model_dump(mode="json"),
+    )
+
+
+def list_generated_quizzes_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+) -> list[GeneratedQuizHistoryRecord]:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    normalized_project_uuid = project_uuid.strip()
+    if not normalized_project_uuid:
+        raise ProjectNotFoundError("Project was not found.")
+
+    _fetch_owned_project_row_by_uuid(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=normalized_project_uuid,
+        owner_user_id=auth_user.user_id,
+    )
+
+    rows = _fetch_generated_material_rows(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=normalized_project_uuid,
+        tool_type="quiz",
+    )
+
+    generated_quizzes: list[GeneratedQuizHistoryRecord] = []
+    for row in rows:
+        raw_payload = row.get("payload")
+        payload = raw_payload if isinstance(raw_payload, dict) else None
+        if payload is None:
+            continue
+
+        if isinstance(payload.get("quiz"), dict):
+            payload = payload["quiz"]
+
+        try:
+            generated_quiz = GeneratedQuiz.model_validate(payload)
+        except Exception as exc:
+            logger.warning(
+                "Skipping malformed generated quiz id=%s: %s",
+                row.get("id"),
+                exc,
+            )
+            continue
+
+        generated_quizzes.append(
+            GeneratedQuizHistoryRecord(
+                id=_read_int(row, "id"),
+                created_at=row.get("created_at"),
+                quiz=generated_quiz,
+            )
+        )
+
+    return generated_quizzes
 
 
 def _build_storage_path(filename: str) -> str:
@@ -1856,6 +1993,35 @@ def _assert_course_content_owned_by_username(
     raise ProjectNotFoundError("Course content was not found.")
 
 
+def _assert_materials_linked_to_project(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    material_ids: list[int],
+) -> None:
+    project_material_links = _fetch_project_material_links(
+        url=url,
+        service_role_key=service_role_key,
+        project_id=project_id,
+    )
+    project_material_ids = {
+        material_id
+        for material_id in (
+            _read_optional_int(project_material_link, "material_id")
+            for project_material_link in project_material_links
+        )
+        if material_id is not None
+    }
+    missing_material_ids = [
+        material_id for material_id in material_ids if material_id not in project_material_ids
+    ]
+    if missing_material_ids:
+        raise ProjectAccessDeniedError(
+            "One or more selected sources are not part of this project."
+        )
+
+
 def _fetch_course_content_records_by_id(
     *,
     url: str,
@@ -1885,6 +2051,67 @@ def _fetch_course_content_records_by_id(
             records_by_id[row_id] = row
 
     return records_by_id
+
+
+def _insert_generated_material_record(
+    *,
+    url: str,
+    service_role_key: str,
+    project_uuid: str,
+    name: str,
+    tool_type: str,
+    source_material_ids: list[int],
+    payload: dict[str, Any],
+) -> None:
+    request_payload = json.dumps(
+        {
+            "project_uuid": project_uuid,
+            "name": name,
+            "tool_type": tool_type,
+            "source_material_ids": source_material_ids,
+            "payload": payload,
+            "file_location": "inline://payload",
+        }
+    ).encode("utf-8")
+
+    _send_request(
+        endpoint=f"{url.rstrip('/')}/rest/v1/generated_materials",
+        method="POST",
+        data=request_payload,
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        expected_statuses={200, 201},
+    )
+
+
+def _fetch_generated_material_rows(
+    *,
+    url: str,
+    service_role_key: str,
+    project_uuid: str,
+    tool_type: str,
+) -> list[dict[str, Any]]:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/generated_materials"
+        f"?project_uuid=eq.{parse.quote(project_uuid, safe='')}"
+        f"&tool_type=eq.{parse.quote(tool_type, safe='')}"
+        "&select=id,uuid,created_at,payload,name,tool_type"
+        "&order=created_at.desc,id.desc"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+
+    return _decode_json_rows(response_body, "generated_materials")
 
 
 def _read_latest_project_material_timestamp(material_links: list[dict[str, Any]]) -> Any:

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 
+from app.models.quiz_model import ListGeneratedQuizHistoryResponse
 from app.models.project_model import (
     CreateProjectRequest,
     ListProjectsResponse,
@@ -16,6 +17,7 @@ from app.services.supabase_service import (
     create_project_for_user,
     delete_project_for_user,
     get_project_for_user,
+    list_generated_quizzes_for_user,
     list_projects_for_user,
     update_project_for_user,
 )
@@ -88,6 +90,37 @@ def get_project(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SupabaseServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get(
+    "/projects/{project_uuid}/generated-materials",
+    response_model=ListGeneratedQuizHistoryResponse,
+)
+def list_generated_materials_for_project(
+    project_uuid: str,
+    tool: str = Query(default="quiz"),
+    authorization: str | None = Header(default=None),
+) -> ListGeneratedQuizHistoryResponse:
+    normalized_tool = tool.strip().lower()
+    if normalized_tool != "quiz":
+        raise HTTPException(status_code=400, detail="Only tool=quiz is currently supported.")
+
+    try:
+        generated_quizzes = list_generated_quizzes_for_user(
+            access_token=_extract_bearer_token(authorization),
+            project_uuid=project_uuid,
+        )
+        return ListGeneratedQuizHistoryResponse(generated_quizzes=generated_quizzes)
+    except MissingSupabaseConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ProjectAccessDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SupabaseServiceError as exc:
