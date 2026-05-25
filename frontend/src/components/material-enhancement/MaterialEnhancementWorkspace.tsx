@@ -42,6 +42,8 @@ import {
 } from "@/lib/api/course-content";
 import {
   getProject,
+  listGeneratedMaterials,
+  type GeneratedQuizHistoryRecord,
   type Project,
   updateProjectTitle,
 } from "@/lib/api/projects";
@@ -214,11 +216,23 @@ export function MaterialEnhancementWorkspace({
           accessToken: signedInAccessToken,
           projectUuid: normalizedProjectUuid,
         });
+        let generatedQuizHistoryRecords: GeneratedQuizHistoryRecord[] = [];
+        try {
+          generatedQuizHistoryRecords = await listGeneratedMaterials({
+            accessToken: signedInAccessToken,
+            projectUuid: normalizedProjectUuid,
+            tool: "quiz",
+          });
+        } catch (cause) {
+          if (!isCancelled && isMountedRef.current) {
+            setToastMessage(cause instanceof Error ? cause.message : "Unable to load saved quizzes.");
+          }
+        }
 
         if (isCancelled || !isMountedRef.current) {
           return;
         }
-        applyProjectDetail(project, signedInAccessToken);
+        applyProjectDetail(project, signedInAccessToken, generatedQuizHistoryRecords);
       } catch (cause) {
         if (!isCancelled && isMountedRef.current) {
           setToastMessage(cause instanceof Error ? cause.message : "Unable to load projects.");
@@ -239,11 +253,16 @@ export function MaterialEnhancementWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectUuid]);
 
-  const applyProjectDetail = (project: Project, accessToken: string) => {
+  const applyProjectDetail = (
+    project: Project,
+    accessToken: string,
+    generatedQuizHistoryRecords: GeneratedQuizHistoryRecord[],
+  ) => {
     const nextMaterials = project.materials
       .map((record) => createMaterialFromProjectMaterialRecord(record))
       .filter((material): material is Material => Boolean(material));
     const firstMaterial = nextMaterials[0];
+    const nextQuizHistory = createQuizHistoryFromRecords(generatedQuizHistoryRecords, nextMaterials);
 
     setProjects((currentProjects) => {
       const withoutProject = currentProjects.filter((item) => item.id !== project.id);
@@ -260,8 +279,8 @@ export function MaterialEnhancementWorkspace({
     setSelectedPreviewItemId(firstMaterial?.previewItems[0]?.id ?? null);
     setIsQuizExpanded(false);
     setQuizStatus("idle");
-    setQuizHistory([]);
-    setActiveQuizHistoryId(null);
+    setQuizHistory(nextQuizHistory);
+    setActiveQuizHistoryId(nextQuizHistory[0]?.id ?? null);
     setQuizErrorMessage(null);
     setPendingQuizSourceCount(null);
     quizRequestKeyRef.current = "";
@@ -601,6 +620,10 @@ export function MaterialEnhancementWorkspace({
       setToastMessage("Sign in before generating a quiz.");
       return;
     }
+    if (!normalizedRouteProjectUuid || normalizedRouteProjectUuid === "undefined") {
+      setToastMessage("Project is still loading. Try again.");
+      return;
+    }
 
     const materialIds = checkedMaterials
       .map((material) => material.databaseId)
@@ -624,6 +647,7 @@ export function MaterialEnhancementWorkspace({
     try {
       const generatedQuiz = await generateQuiz({
         accessToken,
+        projectUuid: normalizedRouteProjectUuid,
         materialIds,
         questionCount: 12,
       });
@@ -1215,6 +1239,27 @@ function normalizeQuizTitle(title: string, materials: Material[]) {
   }
 
   return `${getMaterialBaseName(firstMaterial.name)} Quiz`;
+}
+
+function createQuizHistoryFromRecords(
+  records: GeneratedQuizHistoryRecord[],
+  materials: Material[],
+): GeneratedQuizHistoryItem[] {
+  return records.map((record, index) => {
+    const parsedCreatedAt = record.created_at ? Date.parse(record.created_at) : Number.NaN;
+    const createdAt = Number.isFinite(parsedCreatedAt)
+      ? parsedCreatedAt
+      : Date.now() - index;
+
+    return {
+      createdAt,
+      id: `saved-quiz-${record.id}`,
+      quiz: {
+        ...record.quiz,
+        title: normalizeQuizTitle(record.quiz.title, materials),
+      },
+    };
+  });
 }
 
 function splitMaterialName(
