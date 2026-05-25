@@ -11,6 +11,7 @@ class QuizSourceMaterial:
 
 
 class QuizGenerateRequest(BaseModel):
+    project_uuid: str = Field(min_length=1)
     material_ids: list[int] = Field(min_length=1, max_length=12)
     question_count: int = Field(default=12, ge=12, le=12)
 

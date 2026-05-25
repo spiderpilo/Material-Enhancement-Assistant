@@ -6,6 +6,7 @@ import {
   type QuizGenerationStatus,
   type QuizViewMode,
 } from "@/components/material-enhancement/QuizPanel";
+import type { GeneratedMaterial } from "@/lib/api/generated-materials";
 import type { GeneratedQuiz } from "@/lib/api/quiz";
 import type { ActiveTool, Material } from "@/lib/material-enhancement/workspace";
 
@@ -28,8 +29,11 @@ type AIToolsSidebarProps = {
   activeQuestionIndex: number;
   activeTool: ActiveTool;
   checkedMaterials: Material[];
+  generatedMaterials: GeneratedMaterial[];
   isQuizExpanded: boolean;
   onCloseQuiz: () => void;
+  onDownloadGeneratedMaterial: (generatedMaterialUuid: string) => void;
+  onGenerateSlideDeck: () => void;
   onNavigateQuiz: (direction: "previous" | "next") => void;
   onOpenHelp: () => void;
   onOpenQuiz: (quizHistoryId: string) => void;
@@ -46,6 +50,8 @@ type AIToolsSidebarProps = {
   quizStatus: QuizGenerationStatus;
   quizViewMode: QuizViewMode;
   selectedQuizAnswers: Record<string, string>;
+  slideDeckErrorMessage: string | null;
+  slideDeckStatus: "idle" | "loading" | "error";
 };
 
 type ToolIcon = ComponentType<ComponentPropsWithoutRef<"svg">>;
@@ -108,8 +114,11 @@ export function AIToolsSidebar({
   activeQuestionIndex,
   activeTool,
   checkedMaterials,
+  generatedMaterials,
   isQuizExpanded,
   onCloseQuiz,
+  onDownloadGeneratedMaterial,
+  onGenerateSlideDeck,
   onNavigateQuiz,
   onOpenHelp,
   onOpenQuiz,
@@ -126,6 +135,8 @@ export function AIToolsSidebar({
   quizStatus,
   quizViewMode,
   selectedQuizAnswers,
+  slideDeckErrorMessage,
+  slideDeckStatus,
 }: AIToolsSidebarProps) {
   const [relativeNow, setRelativeNow] = useState(() => Date.now());
   const tools = TOOL_DEFINITIONS.map((tool) => ({
@@ -134,9 +145,15 @@ export function AIToolsSidebar({
   }));
   const showQuizLoadingRow =
     quizStatus === "loading" && pendingQuizSourceCount !== null;
+  const showGeneratedMaterialsSection =
+    generatedMaterials.length > 0 ||
+    showQuizLoadingRow ||
+    quizHistory.length > 0 ||
+    slideDeckStatus === "loading" ||
+    slideDeckStatus === "error";
 
   useEffect(() => {
-    if (quizHistory.length === 0) {
+    if (quizHistory.length === 0 && generatedMaterials.length === 0) {
       return;
     }
 
@@ -147,7 +164,7 @@ export function AIToolsSidebar({
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [quizHistory.length]);
+  }, [generatedMaterials.length, quizHistory.length]);
 
   return (
     <aside className="relative flex h-[949px] min-h-0 max-w-full flex-col overflow-hidden rounded-[28px] border border-white/[0.08] bg-[#202328] shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
@@ -192,10 +209,21 @@ export function AIToolsSidebar({
             </div>
 
             <div className="mt-6 border-t border-white/[0.08] pt-6">
-              {showQuizLoadingRow || quizHistory.length > 0 ? (
+              {showGeneratedMaterialsSection ? (
                 <div className="space-y-1.5">
+                  {slideDeckStatus === "loading" ? (
+                    <LoadingArtifactRow label="Generating slide deck..." sourceCount={checkedMaterials.length || 1} />
+                  ) : null}
+
+                  {slideDeckStatus === "error" ? (
+                    <ErrorArtifactRow
+                      message={slideDeckErrorMessage ?? "Slide deck generation failed."}
+                      onRetry={onGenerateSlideDeck}
+                    />
+                  ) : null}
+
                   {showQuizLoadingRow ? (
-                    <LoadingQuizRow sourceCount={pendingQuizSourceCount} />
+                    <LoadingArtifactRow label="Generating quiz..." sourceCount={pendingQuizSourceCount} />
                   ) : null}
 
                   {quizHistory.map((quizHistoryItem) => (
@@ -204,6 +232,15 @@ export function AIToolsSidebar({
                       generatedAt={quizHistoryItem.createdAt}
                       onOpen={() => onOpenQuiz(quizHistoryItem.id)}
                       quiz={quizHistoryItem.quiz}
+                      relativeNow={relativeNow}
+                    />
+                  ))}
+
+                  {generatedMaterials.map((generatedMaterial) => (
+                    <GeneratedMaterialRow
+                      key={generatedMaterial.uuid}
+                      generatedMaterial={generatedMaterial}
+                      onDownload={() => onDownloadGeneratedMaterial(generatedMaterial.uuid)}
                       relativeNow={relativeNow}
                     />
                   ))}
@@ -311,10 +348,12 @@ function AIToolCard({
   );
 }
 
-function LoadingQuizRow({
+function LoadingArtifactRow({
   sourceCount,
+  label,
 }: {
   sourceCount: number | null;
+  label: string;
 }) {
   const normalizedSourceCount = Math.max(sourceCount ?? 1, 1);
 
@@ -329,9 +368,7 @@ function LoadingQuizRow({
         </div>
 
         <div className="min-w-0 flex-1">
-          <h4 className="truncate text-[14px] font-semibold text-[color:var(--text-primary)]">
-            Generating Quiz...
-          </h4>
+          <h4 className="truncate text-[14px] font-semibold text-[color:var(--text-primary)]">{label}</h4>
           <p className="mt-1 text-[11px] font-medium text-white/54">
             based on {normalizedSourceCount} source{normalizedSourceCount === 1 ? "" : "s"}
           </p>
@@ -367,7 +404,7 @@ function GeneratedQuizRow({
           {quiz.title}
         </h4>
         <p className="mt-1 text-[11px] font-medium text-white/54">
-          {quiz.source_count} source{quiz.source_count === 1 ? "" : "s"} · {formatRelativeQuizTime(generatedAt, relativeNow)}
+          {quiz.source_count} source{quiz.source_count === 1 ? "" : "s"} · {formatRelativeTime(generatedAt, relativeNow)}
         </p>
       </div>
 
@@ -378,7 +415,93 @@ function GeneratedQuizRow({
   );
 }
 
-function formatRelativeQuizTime(createdAt: number, relativeNow: number) {
+function GeneratedMaterialRow({
+  generatedMaterial,
+  onDownload,
+  relativeNow,
+}: {
+  generatedMaterial: GeneratedMaterial;
+  onDownload: () => void;
+  relativeNow: number;
+}) {
+  const createdAt = Date.parse(generatedMaterial.created_at);
+  const relativeLabel = formatRelativeTime(createdAt, relativeNow);
+  const isDownloadable = !generatedMaterial.file_location.startsWith("inline://");
+  const displayName = generatedMaterial.name?.trim() || "Generated artifact";
+  const tokenLabel = formatTokenLabel(generatedMaterial);
+
+  return (
+    <button
+      type="button"
+      disabled={!isDownloadable}
+      onClick={isDownloadable ? onDownload : undefined}
+      className={[
+        "animate-studio-output-enter group flex w-full items-center gap-3 rounded-[16px] px-3 py-3.5 text-left transition-all duration-200 ease-out",
+        isDownloadable
+          ? "hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(184,219,128,0.35)]"
+          : "cursor-not-allowed opacity-70",
+      ].join(" ")}
+      title={isDownloadable ? "Download generated file" : "Inline artifact has no downloadable file"}
+    >
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border border-white/[0.08] bg-white/[0.04] text-white/74 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+        {generatedMaterial.tool_type === "slide_deck" ? (
+          <SlideDeckIcon className="h-5 w-5" />
+        ) : (
+          <QuizIcon className="h-5 w-5" />
+        )}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <h4 className="truncate text-[14px] font-semibold text-[color:var(--text-primary)]">
+          {displayName}
+        </h4>
+        <p className="mt-1 text-[11px] font-medium text-white/54">
+          {generatedMaterial.tool_type} · {relativeLabel}
+        </p>
+        {tokenLabel ? (
+          <p className="mt-1 text-[10px] text-white/42">{tokenLabel}</p>
+        ) : null}
+      </div>
+
+      <ArrowRightIcon className="h-4.5 w-4.5 shrink-0 text-white/42" />
+    </button>
+  );
+}
+
+function ErrorArtifactRow({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="rounded-[16px] border border-[rgba(255,126,126,0.22)] bg-[rgba(255,126,126,0.08)] px-3 py-3">
+      <p className="text-[12px] font-semibold text-[color:var(--text-primary)]">Slide deck generation failed</p>
+      <p className="mt-1 text-[11px] text-white/60">{message}</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="mt-2 inline-flex h-8 items-center rounded-[10px] border border-white/[0.16] bg-white/[0.06] px-3 text-[11px] text-white/82 transition hover:bg-white/[0.1]"
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
+
+function formatTokenLabel(generatedMaterial: GeneratedMaterial): string | null {
+  const inputToken = generatedMaterial.input_token;
+  const outputToken = generatedMaterial.output_token;
+
+  if (typeof inputToken !== "number" && typeof outputToken !== "number") {
+    return null;
+  }
+
+  return `in: ${inputToken ?? 0} • out: ${outputToken ?? 0}`;
+}
+
+function formatRelativeTime(createdAt: number, relativeNow: number) {
   const elapsedMs = Math.max(relativeNow - createdAt, 0);
   const elapsedMinutes = Math.floor(elapsedMs / 60_000);
 

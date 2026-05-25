@@ -3,13 +3,13 @@ import logging
 from fastapi import APIRouter, Header, HTTPException
 
 from app.models.quiz_model import GeneratedQuiz, QuizGenerateRequest
-from app.services.llm_service import GeminiServiceError, MissingAPIKeyError, generate_quiz
+from app.services.llm_service import GeminiServiceError, MissingAPIKeyError
 from app.services.supabase_service import (
     AuthenticationError,
     MissingSupabaseConfigError,
     ProjectNotFoundError,
     SupabaseServiceError,
-    get_course_content_texts_for_user,
+    generate_quiz_for_user,
 )
 
 
@@ -34,12 +34,10 @@ def generate_quiz_from_materials(
     authorization: str | None = Header(default=None),
 ) -> GeneratedQuiz:
     try:
-        materials = get_course_content_texts_for_user(
+        return generate_quiz_for_user(
             access_token=_extract_bearer_token(authorization),
+            project_uuid=payload.project_uuid,
             material_ids=payload.material_ids,
-        )
-        return generate_quiz(
-            materials=materials,
             question_count=payload.question_count,
         )
     except MissingSupabaseConfigError as exc:

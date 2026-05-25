@@ -16,8 +16,11 @@ from app.models.document_model import (
     PreviewStatus,
     SourceType,
 )
+from app.models.generated_material_model import GeneratedMaterialRecord
 from app.models.project_model import ProjectMaterialRecord, ProjectRecord, ProjectSummary
-from app.models.quiz_model import QuizSourceMaterial
+from app.models.quiz_model import GeneratedQuiz, QuizSourceMaterial
+from app.services.export_service import build_slide_deck_pptx_bytes
+from app.services.llm_service import generate_quiz_with_usage, generate_slide_deck_outline_with_usage
 from app.services.parser_service import DocumentParseError, parse_document
 from app.services.preview_service import DocumentPreviewError, render_course_content_previews
 from app.utils.file_utils import sanitize_filename
@@ -25,6 +28,8 @@ from app.utils.file_utils import sanitize_filename
 
 REQUEST_TIMEOUT_SECONDS = 30
 PREVIEW_STORAGE_PREFIX = "course-content-previews"
+GENERATED_MATERIALS_STORAGE_PREFIX = "generated-materials"
+PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 logger = logging.getLogger(__name__)
 LEGACY_PROJECTS_NOT_NULL_COLUMNS = ("created_by", "owner_auth_user_id")
 
@@ -55,6 +60,10 @@ class ProjectNotFoundError(SupabaseServiceError):
 
 class ProjectAccessDeniedError(SupabaseServiceError):
     """Raised when a project exists but is not owned by the current user."""
+
+
+class GeneratedMaterialNotFoundError(SupabaseServiceError):
+    """Raised when a generated material record cannot be found for a project."""
 
 
 @dataclass(frozen=True)
@@ -940,9 +949,255 @@ def get_course_content_texts_for_user(
     return source_materials
 
 
+def list_generated_materials_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+) -> list[GeneratedMaterialRecord]:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    owned_project = _fetch_owned_project_row_by_uuid(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=project_uuid,
+        owner_user_id=auth_user.user_id,
+    )
+    normalized_project_uuid = _normalize_project_row(owned_project)["project_uuid"]
+    rows = _fetch_generated_material_rows_for_project_uuid(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=normalized_project_uuid,
+    )
+    return [GeneratedMaterialRecord.model_validate(row) for row in rows]
+
+
+def generate_quiz_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+    material_ids: list[int],
+    question_count: int,
+) -> GeneratedQuiz:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    owned_project = _fetch_owned_project_row_by_uuid(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=project_uuid,
+        owner_user_id=auth_user.user_id,
+    )
+    normalized_project = _normalize_project_row(owned_project)
+    project_id = _read_int(owned_project, "id")
+    unique_material_ids = list(dict.fromkeys(material_ids))
+    _assert_material_ids_linked_to_project(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project_id,
+        material_ids=unique_material_ids,
+    )
+
+    materials = get_course_content_texts_for_user(
+        access_token=access_token,
+        material_ids=unique_material_ids,
+    )
+    generation_result = generate_quiz_with_usage(
+        materials=materials,
+        question_count=question_count,
+    )
+
+    _insert_generated_material_record(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=normalized_project["project_uuid"],
+        name=generation_result.quiz.title,
+        file_location="inline://payload",
+        tool_type="quiz",
+        source_material_ids=unique_material_ids,
+        payload={
+            **generation_result.quiz.model_dump(),
+            "token_source": generation_result.token_usage.source,
+        },
+        input_token=generation_result.token_usage.input_token,
+        output_token=generation_result.token_usage.output_token,
+    )
+    return generation_result.quiz
+
+
+def generate_slide_deck_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+    material_ids: list[int],
+    slide_count: int,
+) -> GeneratedMaterialRecord:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    owned_project = _fetch_owned_project_row_by_uuid(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=project_uuid,
+        owner_user_id=auth_user.user_id,
+    )
+    normalized_project = _normalize_project_row(owned_project)
+    project_id = _read_int(owned_project, "id")
+    unique_material_ids = list(dict.fromkeys(material_ids))
+    _assert_material_ids_linked_to_project(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project_id,
+        material_ids=unique_material_ids,
+    )
+
+    materials = get_course_content_texts_for_user(
+        access_token=access_token,
+        material_ids=unique_material_ids,
+    )
+
+    generation_result = generate_slide_deck_outline_with_usage(
+        materials=materials,
+        slide_count=slide_count,
+    )
+    deck_bytes = build_slide_deck_pptx_bytes(outline=generation_result.outline)
+
+    generated_uuid = str(uuid4())
+    safe_title = sanitize_filename(
+        generation_result.outline.title,
+        fallback_name="generated-slide-deck",
+    )
+    storage_filename = f"{safe_title}.pptx"
+    storage_path = _build_generated_material_storage_path(
+        project_uuid=normalized_project["project_uuid"],
+        generated_material_uuid=generated_uuid,
+        filename=storage_filename,
+    )
+    _upload_or_replace_storage_object(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        bucket=settings.storage_bucket,
+        storage_path=storage_path,
+        file_bytes=deck_bytes,
+        content_type=PPTX_CONTENT_TYPE,
+    )
+    file_location = _build_object_url(
+        url=settings.url,
+        bucket=settings.storage_bucket,
+        storage_path=storage_path,
+    )
+
+    try:
+        return _insert_generated_material_record(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            uuid=generated_uuid,
+            project_uuid=normalized_project["project_uuid"],
+            name=generation_result.outline.title,
+            file_location=file_location,
+            tool_type="slide_deck",
+            source_material_ids=unique_material_ids,
+            payload={
+                "outline": generation_result.outline.model_dump(),
+                "token_source": generation_result.token_usage.source,
+            },
+            input_token=generation_result.token_usage.input_token,
+            output_token=generation_result.token_usage.output_token,
+        )
+    except SupabaseServiceError as exc:
+        cleanup_error = _delete_storage_object_if_exists(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            bucket=settings.storage_bucket,
+            storage_path=storage_path,
+        )
+        if cleanup_error:
+            raise SupabaseServiceError(f"{exc} Cleanup failed: {cleanup_error}") from exc
+        raise
+
+
+def get_generated_material_download_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+    generated_material_uuid: str,
+) -> tuple[str, str]:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    owned_project = _fetch_owned_project_row_by_uuid(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=project_uuid,
+        owner_user_id=auth_user.user_id,
+    )
+    normalized_project = _normalize_project_row(owned_project)
+
+    row = _fetch_generated_material_row_by_uuid_for_project(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=normalized_project["project_uuid"],
+        generated_material_uuid=generated_material_uuid,
+    )
+    record = GeneratedMaterialRecord.model_validate(row)
+
+    if record.file_location.startswith("inline://"):
+        raise SupabaseServiceError("This generated material does not include a downloadable file.")
+
+    filename = sanitize_filename(
+        (record.name or f"generated-{record.tool_type}").strip(),
+        fallback_name=f"generated-{record.tool_type}",
+    )
+    if not filename.lower().endswith(".pptx"):
+        filename = f"{filename}.pptx"
+
+    return record.file_location, filename
+
+
 def _build_storage_path(filename: str) -> str:
     sanitized_filename = sanitize_filename(filename)
     return f"course-contents/{uuid4()}/{sanitized_filename}"
+
+
+def _build_generated_material_storage_path(
+    *,
+    project_uuid: str,
+    generated_material_uuid: str,
+    filename: str,
+) -> str:
+    safe_filename = sanitize_filename(filename, fallback_name="generated-slide-deck.pptx")
+    return (
+        f"{GENERATED_MATERIALS_STORAGE_PREFIX}/"
+        f"{project_uuid}/{generated_material_uuid}/{safe_filename}"
+    )
 
 
 def _build_preview_manifest_storage_path(*, course_content_id: int) -> str:
@@ -1755,6 +2010,33 @@ def _fetch_project_material_links_for_material(
     return _decode_json_rows(response_body, "project_materials")
 
 
+def _assert_material_ids_linked_to_project(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    material_ids: list[int],
+) -> None:
+    project_material_links = _fetch_project_material_links(
+        url=url,
+        service_role_key=service_role_key,
+        project_id=project_id,
+    )
+    linked_material_ids = {
+        material_id
+        for material_id in (
+            _read_optional_int(link, "material_id") for link in project_material_links
+        )
+        if material_id is not None
+    }
+
+    missing_material_ids = [
+        material_id for material_id in material_ids if material_id not in linked_material_ids
+    ]
+    if missing_material_ids:
+        raise ProjectNotFoundError("One or more selected sources are not part of this project.")
+
+
 def _fetch_project_material_records(
     *,
     url: str,
@@ -1885,6 +2167,106 @@ def _fetch_course_content_records_by_id(
             records_by_id[row_id] = row
 
     return records_by_id
+
+
+def _fetch_generated_material_rows_for_project_uuid(
+    *,
+    url: str,
+    service_role_key: str,
+    project_uuid: str,
+) -> list[dict[str, Any]]:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/generated_materials"
+        f"?project_uuid=eq.{parse.quote(project_uuid, safe='')}"
+        "&select=*&order=created_at.desc,id.desc"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+
+    return _decode_json_rows(response_body, "generated_materials")
+
+
+def _fetch_generated_material_row_by_uuid_for_project(
+    *,
+    url: str,
+    service_role_key: str,
+    project_uuid: str,
+    generated_material_uuid: str,
+) -> dict[str, Any]:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/generated_materials"
+        f"?project_uuid=eq.{parse.quote(project_uuid, safe='')}"
+        f"&uuid=eq.{parse.quote(generated_material_uuid, safe='')}"
+        "&select=*"
+        "&limit=1"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+    rows = _decode_json_rows(response_body, "generated_materials")
+    if not rows:
+        raise GeneratedMaterialNotFoundError("Generated material was not found.")
+
+    return rows[0]
+
+
+def _insert_generated_material_record(
+    *,
+    url: str,
+    service_role_key: str,
+    project_uuid: str,
+    name: str | None,
+    file_location: str,
+    tool_type: str,
+    source_material_ids: list[int],
+    payload: dict[str, Any],
+    input_token: int | None,
+    output_token: int | None,
+    uuid: str | None = None,
+) -> GeneratedMaterialRecord:
+    payload_map: dict[str, Any] = {
+        "project_uuid": project_uuid,
+        "name": name,
+        "file_location": file_location,
+        "tool_type": tool_type,
+        "source_material_ids": source_material_ids,
+        "payload": payload,
+        "input_token": input_token,
+        "output_token": output_token,
+    }
+    if uuid:
+        payload_map["uuid"] = uuid
+
+    response_body = _send_request(
+        endpoint=f"{url.rstrip('/')}/rest/v1/generated_materials",
+        method="POST",
+        data=json.dumps(payload_map).encode("utf-8"),
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Prefer": "return=representation",
+        },
+        expected_statuses={200, 201},
+    )
+    rows = _decode_json_rows(response_body, "generated_materials")
+    if not rows:
+        raise SupabaseServiceError("Supabase did not return the inserted generated_materials row.")
+
+    return GeneratedMaterialRecord.model_validate(rows[0])
 
 
 def _read_latest_project_material_timestamp(material_links: list[dict[str, Any]]) -> Any:

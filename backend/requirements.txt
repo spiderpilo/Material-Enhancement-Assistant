@@ -4,6 +4,7 @@ python-multipart
 PyMuPDF
 python-docx
 google-genai
+python-pptx
 python-dotenv
 SQLAlchemy==2.0.0
 python-dotenv==1.0.0
