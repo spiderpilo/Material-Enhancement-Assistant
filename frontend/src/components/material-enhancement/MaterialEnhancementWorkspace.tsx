@@ -17,6 +17,13 @@ import {
   type QuizViewMode,
 } from "@/components/material-enhancement/QuizPanel";
 import { generateQuiz, type GeneratedQuiz } from "@/lib/api/quiz";
+import {
+  generateSlideDeck,
+  type GeneratedMaterialDownloadFormat,
+  getGeneratedMaterialDownload,
+  listGeneratedMaterials as listGeneratedProjectMaterials,
+  type GeneratedMaterial,
+} from "@/lib/api/generated-materials";
 import type {
   ActiveTool,
   Material,
@@ -42,7 +49,7 @@ import {
 } from "@/lib/api/course-content";
 import {
   getProject,
-  listGeneratedMaterials,
+  listGeneratedMaterials as listGeneratedQuizHistory,
   type GeneratedQuizHistoryRecord,
   type Project,
   updateProjectTitle,
@@ -78,11 +85,16 @@ export function MaterialEnhancementWorkspace({
   const [selectedPreviewItemId, setSelectedPreviewItemId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<ActiveTool>("summary");
   const [isQuizExpanded, setIsQuizExpanded] = useState(false);
+  const [isSlideDeckExpanded, setIsSlideDeckExpanded] = useState(false);
+  const [activeSlideDeckUuid, setActiveSlideDeckUuid] = useState<string | null>(null);
   const [quizStatus, setQuizStatus] = useState<QuizGenerationStatus>("idle");
   const [quizHistory, setQuizHistory] = useState<GeneratedQuizHistoryItem[]>([]);
   const [activeQuizHistoryId, setActiveQuizHistoryId] = useState<string | null>(null);
   const [quizErrorMessage, setQuizErrorMessage] = useState<string | null>(null);
   const [pendingQuizSourceCount, setPendingQuizSourceCount] = useState<number | null>(null);
+  const [generatedMaterials, setGeneratedMaterials] = useState<GeneratedMaterial[]>([]);
+  const [isGeneratingSlideDeck, setIsGeneratingSlideDeck] = useState(false);
+  const [slideDeckErrorMessage, setSlideDeckErrorMessage] = useState<string | null>(null);
   const [activeQuizQuestionIndex, setActiveQuizQuestionIndex] = useState(0);
   const [selectedQuizAnswers, setSelectedQuizAnswers] = useState<Record<string, string>>({});
   const [quizViewMode, setQuizViewMode] = useState<QuizViewMode>("question");
@@ -173,7 +185,7 @@ export function MaterialEnhancementWorkspace({
   }, [toastMessage]);
 
   useEffect(() => {
-    if (!isQuizExpanded) {
+    if (!isQuizExpanded && !isSlideDeckExpanded) {
       return;
     }
 
@@ -187,7 +199,7 @@ export function MaterialEnhancementWorkspace({
       document.body.style.overflow = previousBodyOverflow;
       document.documentElement.style.overflow = previousDocumentOverflow;
     };
-  }, [isQuizExpanded]);
+  }, [isQuizExpanded, isSlideDeckExpanded]);
 
   useEffect(() => {
     const normalizedProjectUuid = projectUuid.trim();
@@ -218,7 +230,7 @@ export function MaterialEnhancementWorkspace({
         });
         let generatedQuizHistoryRecords: GeneratedQuizHistoryRecord[] = [];
         try {
-          generatedQuizHistoryRecords = await listGeneratedMaterials({
+          generatedQuizHistoryRecords = await listGeneratedQuizHistory({
             accessToken: signedInAccessToken,
             projectUuid: normalizedProjectUuid,
             tool: "quiz",
@@ -253,6 +265,31 @@ export function MaterialEnhancementWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectUuid]);
 
+  const refreshGeneratedMaterials = async (
+    accessToken: string,
+    targetProjectUuid: string,
+  ) => {
+    try {
+      const nextGeneratedMaterials = await listGeneratedProjectMaterials({
+        accessToken,
+        projectUuid: targetProjectUuid,
+      });
+      if (!isMountedRef.current) {
+        return;
+      }
+      setGeneratedMaterials(nextGeneratedMaterials);
+    } catch (cause) {
+      if (!isMountedRef.current) {
+        return;
+      }
+      setToastMessage(
+        cause instanceof Error
+          ? cause.message
+          : "Unable to load generated materials.",
+      );
+    }
+  };
+
   const applyProjectDetail = (
     project: Project,
     accessToken: string,
@@ -283,6 +320,11 @@ export function MaterialEnhancementWorkspace({
     setActiveQuizHistoryId(nextQuizHistory[0]?.id ?? null);
     setQuizErrorMessage(null);
     setPendingQuizSourceCount(null);
+    setGeneratedMaterials([]);
+    setActiveSlideDeckUuid(null);
+    setIsGeneratingSlideDeck(false);
+    setIsSlideDeckExpanded(false);
+    setSlideDeckErrorMessage(null);
     quizRequestKeyRef.current = "";
     setActiveQuizQuestionIndex(0);
     setSelectedQuizAnswers({});
@@ -293,6 +335,8 @@ export function MaterialEnhancementWorkspace({
         void syncPreviewManifest(material.id, material.databaseId, accessToken);
       }
     }
+
+    void refreshGeneratedMaterials(accessToken, project.project_uuid);
   };
 
   const syncPreviewManifest = async (
@@ -600,8 +644,19 @@ export function MaterialEnhancementWorkspace({
   const handleSelectTool = (tool: ActiveTool) => {
     setActiveTool(tool);
 
+    if (tool !== "slideDeck") {
+      setIsSlideDeckExpanded(false);
+    }
+
     if (tool === "quiz") {
+      setIsSlideDeckExpanded(false);
       void ensureQuizGenerated();
+      return;
+    }
+
+    if (tool === "slideDeck") {
+      setIsQuizExpanded(false);
+      void ensureSlideDeckGenerated();
     }
   };
 
@@ -676,6 +731,7 @@ export function MaterialEnhancementWorkspace({
       if (options?.openWhenReady) {
         setIsQuizExpanded(true);
       }
+      void refreshGeneratedMaterials(accessToken, normalizedRouteProjectUuid);
       setToastMessage("Quiz ready.");
     } catch (cause) {
       if (!isMountedRef.current || quizRequestKeyRef.current !== requestedSourceKey) {
@@ -687,6 +743,111 @@ export function MaterialEnhancementWorkspace({
       setQuizErrorMessage(message);
       setPendingQuizSourceCount(null);
       setToastMessage(message);
+    }
+  };
+
+  const ensureSlideDeckGenerated = async () => {
+    if (isGeneratingSlideDeck) {
+      return;
+    }
+
+    if (!currentQuizSourceKey) {
+      setToastMessage("Check one or more sources before generating a slide deck.");
+      return;
+    }
+
+    if (!normalizedRouteProjectUuid || normalizedRouteProjectUuid === "undefined") {
+      setToastMessage("Invalid project link. Reload from dashboard.");
+      return;
+    }
+
+    const accessToken = getStoredAccessToken();
+    if (!accessToken) {
+      setToastMessage("Sign in before generating a slide deck.");
+      return;
+    }
+
+    const materialIds = checkedMaterials
+      .map((material) => material.databaseId)
+      .filter((databaseId): databaseId is number => typeof databaseId === "number");
+
+    if (materialIds.length !== checkedMaterials.length) {
+      setToastMessage("Only saved sources can be used for slide deck generation.");
+      return;
+    }
+
+    setIsGeneratingSlideDeck(true);
+    setSlideDeckErrorMessage(null);
+
+    try {
+      const generatedArtifact = await generateSlideDeck({
+        accessToken,
+        projectUuid: normalizedRouteProjectUuid,
+        materialIds,
+        slideCount: 10,
+      });
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      void refreshGeneratedMaterials(accessToken, normalizedRouteProjectUuid);
+      setToastMessage(
+        `${generatedArtifact.name ?? "Generated slide deck"} is ready for download.`,
+      );
+    } catch (cause) {
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      const message =
+        cause instanceof Error ? cause.message : "Unable to generate slide deck.";
+      setSlideDeckErrorMessage(message);
+      setToastMessage(message);
+    } finally {
+      if (isMountedRef.current) {
+        setIsGeneratingSlideDeck(false);
+      }
+    }
+  };
+
+  const handleDownloadGeneratedMaterial = async (
+    generatedMaterialUuid: string,
+    format: GeneratedMaterialDownloadFormat = "pptx",
+  ) => {
+    if (!normalizedRouteProjectUuid || normalizedRouteProjectUuid === "undefined") {
+      setToastMessage("Invalid project link. Reload from dashboard.");
+      return;
+    }
+
+    const accessToken = getStoredAccessToken();
+    if (!accessToken) {
+      setToastMessage("Sign in before downloading generated materials.");
+      return;
+    }
+
+    try {
+      const download = await getGeneratedMaterialDownload({
+        accessToken,
+        format,
+        projectUuid: normalizedRouteProjectUuid,
+        generatedMaterialUuid,
+      });
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      window.open(download.download_url, "_blank", "noopener,noreferrer");
+      setToastMessage(`Preparing download: ${download.file_name}`);
+    } catch (cause) {
+      if (!isMountedRef.current) {
+        return;
+      }
+      setToastMessage(
+        cause instanceof Error
+          ? cause.message
+          : "Unable to download generated material.",
+      );
     }
   };
 
@@ -705,6 +866,19 @@ export function MaterialEnhancementWorkspace({
     setSelectedQuizAnswers({});
     setQuizViewMode("question");
     setIsQuizExpanded(true);
+    setIsSlideDeckExpanded(false);
+  };
+
+  const handleOpenSlideDeckPreview = (generatedMaterialUuid: string) => {
+    setActiveSlideDeckUuid(generatedMaterialUuid);
+    setActiveTool("slideDeck");
+    setIsQuizExpanded(false);
+    setIsSlideDeckExpanded(true);
+  };
+
+  const handleSelectSlideDeck = (generatedMaterialUuid: string) => {
+    setActiveSlideDeckUuid(generatedMaterialUuid);
+    setActiveTool("slideDeck");
   };
 
   const handleNavigateQuiz = (direction: "previous" | "next") => {
@@ -1100,6 +1274,7 @@ export function MaterialEnhancementWorkspace({
             gridTemplateColumns: getWorkspaceGridTemplateColumns({
               isLeftPanelCollapsed,
               isQuizExpanded,
+              isSlideDeckExpanded,
             }),
           }}
         >
@@ -1136,14 +1311,21 @@ export function MaterialEnhancementWorkspace({
             activeQuestionIndex={activeQuizQuestionIndex}
             activeTool={activeTool}
             checkedMaterials={checkedMaterials}
+            generatedMaterials={generatedMaterials}
             isQuizExpanded={isQuizExpanded}
+            isSlideDeckExpanded={isSlideDeckExpanded}
+            onCloseSlideDeckPreview={() => setIsSlideDeckExpanded(false)}
             onCloseQuiz={() => setIsQuizExpanded(false)}
+            onDownloadGeneratedMaterial={handleDownloadGeneratedMaterial}
+            onGenerateSlideDeck={ensureSlideDeckGenerated}
             onNavigateQuiz={handleNavigateQuiz}
             onOpenHelp={handleOpenHelp}
             onOpenQuiz={handleOpenQuiz}
+            onOpenSlideDeckPreview={handleOpenSlideDeckPreview}
             onResetQuiz={handleResetQuiz}
             onRetryQuiz={ensureQuizGenerated}
             onReviewQuiz={handleReviewQuiz}
+            onSelectSlideDeck={handleSelectSlideDeck}
             onSelectQuizAnswer={handleSelectQuizAnswer}
             onSelectTool={handleSelectTool}
             onShowQuizResults={handleShowQuizResults}
@@ -1154,6 +1336,15 @@ export function MaterialEnhancementWorkspace({
             quizStatus={quizStatus}
             quizViewMode={quizViewMode}
             selectedQuizAnswers={selectedQuizAnswers}
+            slideDeckErrorMessage={slideDeckErrorMessage}
+            selectedSlideDeckUuid={activeSlideDeckUuid}
+            slideDeckStatus={
+              isGeneratingSlideDeck
+                ? "loading"
+                : slideDeckErrorMessage
+                  ? "error"
+                  : "idle"
+            }
           />
         </div>
       </div>
@@ -1213,14 +1404,17 @@ function buildQuizSourceKey(materials: Material[]): string {
 function getWorkspaceGridTemplateColumns({
   isLeftPanelCollapsed,
   isQuizExpanded,
+  isSlideDeckExpanded,
 }: {
   isLeftPanelCollapsed: boolean;
   isQuizExpanded: boolean;
+  isSlideDeckExpanded: boolean;
 }) {
   const leftColumn = isLeftPanelCollapsed
     ? COLLAPSED_LEFT_GRID_COLUMNS
     : EXPANDED_LEFT_GRID_COLUMNS;
-  const studioColumn = isQuizExpanded ? STUDIO_EXPANDED_WIDTH : STUDIO_COLLAPSED_WIDTH;
+  const studioColumn =
+    isQuizExpanded || isSlideDeckExpanded ? STUDIO_EXPANDED_WIDTH : STUDIO_COLLAPSED_WIDTH;
 
   return `${leftColumn} minmax(0,1fr) ${studioColumn}`;
 }

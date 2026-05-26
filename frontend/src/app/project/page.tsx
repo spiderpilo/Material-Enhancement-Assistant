@@ -38,12 +38,13 @@ export default function ProjectCompatibilityPage() {
       router.replace("/login");
       return;
     }
+    const signedInAccessToken = accessToken;
 
     let isCancelled = false;
 
     async function redirectToProject() {
       try {
-        const createdProject = await getOrStartProjectCreation(accessToken);
+        const createdProject = await getOrStartProjectCreation(signedInAccessToken);
         router.replace(`/project/${createdProject.project_uuid}`);
       } catch (cause) {
         if (!isCancelled) {
