@@ -23,6 +23,8 @@ type DownloadGeneratedMaterialResponse = {
   file_name: string;
 };
 
+export type GeneratedMaterialDownloadFormat = "pptx" | "pdf";
+
 export async function listGeneratedMaterials({
   accessToken,
   projectUuid,
@@ -102,15 +104,18 @@ export async function generateSlideDeck({
 
 export async function getGeneratedMaterialDownload({
   accessToken,
+  format = "pptx",
   projectUuid,
   generatedMaterialUuid,
 }: {
   accessToken: string;
+  format?: GeneratedMaterialDownloadFormat;
   projectUuid: string;
   generatedMaterialUuid: string;
 }): Promise<DownloadGeneratedMaterialResponse> {
+  const searchParams = new URLSearchParams({ format });
   const response = await fetch(
-    `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/generated-materials/${encodeURIComponent(generatedMaterialUuid)}/download`,
+    `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/generated-materials/${encodeURIComponent(generatedMaterialUuid)}/download?${searchParams.toString()}`,
     {
       method: "GET",
       headers: {

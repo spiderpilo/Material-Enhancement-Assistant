@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 
 from app.models.generated_material_model import (
@@ -218,6 +220,7 @@ def generate_slide_deck(
 def get_generated_material_download(
     project_uuid: str,
     generated_material_uuid: str,
+    format: Literal["pptx", "pdf"] = Query(default="pptx"),
     authorization: str | None = Header(default=None),
 ) -> GeneratedMaterialDownloadResponse:
     try:
@@ -225,6 +228,7 @@ def get_generated_material_download(
             access_token=_extract_bearer_token(authorization),
             project_uuid=project_uuid,
             generated_material_uuid=generated_material_uuid,
+            download_format=format,
         )
         return GeneratedMaterialDownloadResponse(
             download_url=download_url,
@@ -239,6 +243,7 @@ def get_generated_material_download(
     except GeneratedMaterialNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SupabaseServiceError as exc:
-        if "downloadable file" in str(exc).lower():
+        normalized_message = str(exc).lower()
+        if "downloadable file" in normalized_message or "pdf download is only available" in normalized_message:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         raise HTTPException(status_code=502, detail=str(exc)) from exc

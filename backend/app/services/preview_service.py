@@ -46,6 +46,18 @@ def render_course_content_previews(
     return source_type, _render_pdf_preview_items(pdf_bytes=pdf_bytes, source_type=source_type)
 
 
+def convert_pptx_to_pdf_bytes(*, filename: str, file_bytes: bytes) -> bytes:
+    source_type = _detect_source_type(filename)
+    if source_type != "pptx":
+        raise DocumentPreviewError("Only PPTX files can be converted to PDF for deck download.")
+
+    return _convert_office_document_to_pdf(
+        filename=filename,
+        file_bytes=file_bytes,
+        source_type=source_type,
+    )
+
+
 def _detect_source_type(filename: str) -> SourceType:
     suffix = Path(filename).suffix.lower()
 

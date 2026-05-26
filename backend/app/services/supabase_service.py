@@ -3,7 +3,7 @@ import logging
 import mimetypes
 import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from urllib import error, parse, request
 from uuid import uuid4
 
@@ -22,7 +22,11 @@ from app.models.quiz_model import GeneratedQuiz, QuizSourceMaterial
 from app.services.export_service import build_slide_deck_pptx_bytes
 from app.services.llm_service import generate_quiz_with_usage, generate_slide_deck_outline_with_usage
 from app.services.parser_service import DocumentParseError, parse_document
-from app.services.preview_service import DocumentPreviewError, render_course_content_previews
+from app.services.preview_service import (
+    DocumentPreviewError,
+    convert_pptx_to_pdf_bytes,
+    render_course_content_previews,
+)
 from app.utils.file_utils import sanitize_filename
 
 
@@ -30,6 +34,7 @@ REQUEST_TIMEOUT_SECONDS = 30
 PREVIEW_STORAGE_PREFIX = "course-content-previews"
 GENERATED_MATERIALS_STORAGE_PREFIX = "generated-materials"
 PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+PDF_CONTENT_TYPE = "application/pdf"
 logger = logging.getLogger(__name__)
 LEGACY_PROJECTS_NOT_NULL_COLUMNS = ("created_by", "owner_auth_user_id")
 
@@ -72,6 +77,12 @@ class AuthenticatedUser:
     email: str
     username: str
     profession: str
+
+
+@dataclass(frozen=True)
+class SlideDeckPreviewBuildResult:
+    payload: dict[str, Any]
+    storage_paths: list[str]
 
 
 def login_account(*, email: str, password: str) -> LoginAccountResponse:
@@ -1107,6 +1118,15 @@ def generate_slide_deck_for_user(
         bucket=settings.storage_bucket,
         storage_path=storage_path,
     )
+    preview_result = _build_generated_slide_deck_preview(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        bucket=settings.storage_bucket,
+        project_uuid=normalized_project["project_uuid"],
+        generated_material_uuid=generated_uuid,
+        deck_filename=storage_filename,
+        deck_bytes=deck_bytes,
+    )
 
     try:
         return _insert_generated_material_record(
@@ -1121,19 +1141,25 @@ def generate_slide_deck_for_user(
             payload={
                 "outline": generation_result.outline.model_dump(),
                 "token_source": generation_result.token_usage.source,
+                "preview": preview_result.payload,
             },
             input_token=generation_result.token_usage.input_token,
             output_token=generation_result.token_usage.output_token,
         )
     except SupabaseServiceError as exc:
-        cleanup_error = _delete_storage_object_if_exists(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
-            bucket=settings.storage_bucket,
-            storage_path=storage_path,
-        )
-        if cleanup_error:
-            raise SupabaseServiceError(f"{exc} Cleanup failed: {cleanup_error}") from exc
+        cleanup_errors: list[str] = []
+        cleanup_paths = [storage_path, *preview_result.storage_paths]
+        for cleanup_path in cleanup_paths:
+            cleanup_error = _delete_storage_object_if_exists(
+                url=settings.url,
+                service_role_key=settings.service_role_key,
+                bucket=settings.storage_bucket,
+                storage_path=cleanup_path,
+            )
+            if cleanup_error:
+                cleanup_errors.append(cleanup_error)
+        if cleanup_errors:
+            raise SupabaseServiceError(f"{exc} Cleanup failed: {' | '.join(cleanup_errors)}") from exc
         raise
 
 
@@ -1142,6 +1168,7 @@ def get_generated_material_download_for_user(
     access_token: str,
     project_uuid: str,
     generated_material_uuid: str,
+    download_format: Literal["pptx", "pdf"] = "pptx",
 ) -> tuple[str, str]:
     try:
         settings = get_supabase_settings()
@@ -1172,12 +1199,72 @@ def get_generated_material_download_for_user(
     if record.file_location.startswith("inline://"):
         raise SupabaseServiceError("This generated material does not include a downloadable file.")
 
-    filename = sanitize_filename(
+    base_filename = sanitize_filename(
         (record.name or f"generated-{record.tool_type}").strip(),
         fallback_name=f"generated-{record.tool_type}",
     )
-    if not filename.lower().endswith(".pptx"):
-        filename = f"{filename}.pptx"
+
+    if download_format == "pdf":
+        if record.tool_type != "slide_deck":
+            raise SupabaseServiceError("PDF download is only available for generated slide decks.")
+
+        pdf_filename = _ensure_file_extension(base_filename=base_filename, extension="pdf")
+        pdf_storage_path = _build_generated_material_storage_path(
+            project_uuid=normalized_project["project_uuid"],
+            generated_material_uuid=record.uuid,
+            filename=pdf_filename,
+        )
+        cached_pdf = _download_storage_object_optional(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            bucket=settings.storage_bucket,
+            storage_path=pdf_storage_path,
+        )
+
+        if cached_pdf is None:
+            source_pptx_storage_path = _extract_storage_path_from_access_url(
+                access_url=record.file_location,
+                bucket=settings.storage_bucket,
+            )
+            source_pptx_bytes: bytes | None = None
+
+            if source_pptx_storage_path:
+                source_pptx_bytes = _download_storage_object_optional(
+                    url=settings.url,
+                    service_role_key=settings.service_role_key,
+                    bucket=settings.storage_bucket,
+                    storage_path=source_pptx_storage_path,
+                )
+
+            if source_pptx_bytes is None:
+                source_pptx_bytes = _send_request(
+                    endpoint=record.file_location,
+                    method="GET",
+                    headers=_build_auth_headers(settings.service_role_key),
+                    expected_statuses={200},
+                )
+
+            source_pptx_name = _ensure_file_extension(base_filename=base_filename, extension="pptx")
+            converted_pdf = convert_pptx_to_pdf_bytes(
+                filename=source_pptx_name,
+                file_bytes=source_pptx_bytes,
+            )
+            _upload_or_replace_storage_object(
+                url=settings.url,
+                service_role_key=settings.service_role_key,
+                bucket=settings.storage_bucket,
+                storage_path=pdf_storage_path,
+                file_bytes=converted_pdf,
+                content_type=PDF_CONTENT_TYPE,
+            )
+
+        return _build_object_url(
+            url=settings.url,
+            bucket=settings.storage_bucket,
+            storage_path=pdf_storage_path,
+        ), pdf_filename
+
+    filename = _ensure_file_extension(base_filename=base_filename, extension="pptx")
 
     return record.file_location, filename
 
@@ -1197,6 +1284,121 @@ def _build_generated_material_storage_path(
     return (
         f"{GENERATED_MATERIALS_STORAGE_PREFIX}/"
         f"{project_uuid}/{generated_material_uuid}/{safe_filename}"
+    )
+
+
+def _build_generated_material_preview_storage_path(
+    *,
+    project_uuid: str,
+    generated_material_uuid: str,
+    image_name: str,
+) -> str:
+    safe_image_name = sanitize_filename(image_name, fallback_name="slide-preview.png")
+    return (
+        f"{GENERATED_MATERIALS_STORAGE_PREFIX}/"
+        f"{project_uuid}/{generated_material_uuid}/preview/{safe_image_name}"
+    )
+
+
+def _ensure_file_extension(*, base_filename: str, extension: str) -> str:
+    normalized_base = base_filename.strip()
+    if not normalized_base:
+        normalized_base = "generated-material"
+
+    root, _ = os.path.splitext(normalized_base)
+    normalized_root = root.strip() if root.strip() else normalized_base
+    return f"{normalized_root}.{extension.lower()}"
+
+
+def _build_generated_slide_deck_preview(
+    *,
+    url: str,
+    service_role_key: str,
+    bucket: str,
+    project_uuid: str,
+    generated_material_uuid: str,
+    deck_filename: str,
+    deck_bytes: bytes,
+) -> SlideDeckPreviewBuildResult:
+    uploaded_preview_paths: list[str] = []
+
+    try:
+        _, rendered_items = render_course_content_previews(
+            filename=deck_filename,
+            file_bytes=deck_bytes,
+        )
+        preview_items: list[dict[str, Any]] = []
+
+        for item in rendered_items:
+            preview_storage_path = _build_generated_material_preview_storage_path(
+                project_uuid=project_uuid,
+                generated_material_uuid=generated_material_uuid,
+                image_name=item.image_name,
+            )
+            _upload_or_replace_storage_object(
+                url=url,
+                service_role_key=service_role_key,
+                bucket=bucket,
+                storage_path=preview_storage_path,
+                file_bytes=item.image_bytes,
+                content_type="image/png",
+            )
+            uploaded_preview_paths.append(preview_storage_path)
+            preview_items.append(
+                {
+                    "id": f"{generated_material_uuid}-{item.index}",
+                    "index": item.index,
+                    "label": item.label,
+                    "title": item.title,
+                    "subtitle": item.subtitle,
+                    "image_url": _build_object_url(
+                        url=url,
+                        bucket=bucket,
+                        storage_path=preview_storage_path,
+                    ),
+                    "width": item.width,
+                    "height": item.height,
+                }
+            )
+    except (DocumentPreviewError, SupabaseServiceError) as exc:
+        cleanup_errors: list[str] = []
+        for uploaded_path in uploaded_preview_paths:
+            cleanup_error = _delete_storage_object_if_exists(
+                url=url,
+                service_role_key=service_role_key,
+                bucket=bucket,
+                storage_path=uploaded_path,
+            )
+            if cleanup_error:
+                cleanup_errors.append(cleanup_error)
+
+        logger.warning(
+            "Generated slide preview failed for generated_material_uuid=%s: %s",
+            generated_material_uuid,
+            exc,
+        )
+        if cleanup_errors:
+            logger.warning(
+                "Generated slide preview cleanup failed for generated_material_uuid=%s: %s",
+                generated_material_uuid,
+                " | ".join(cleanup_errors),
+            )
+        return SlideDeckPreviewBuildResult(
+            payload={
+                "status": "failed",
+                "error": str(exc),
+                "items": [],
+            },
+            storage_paths=[],
+        )
+
+    return SlideDeckPreviewBuildResult(
+        payload={
+            "status": "ready",
+            "error": None,
+            "items": preview_items,
+        },
+        storage_paths=uploaded_preview_paths,
     )
 
 

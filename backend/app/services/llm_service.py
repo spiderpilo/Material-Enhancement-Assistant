@@ -1,5 +1,4 @@
 import json
-import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -10,6 +9,7 @@ from google import genai
 from app.config import DEFAULT_GEMINI_MODEL, get_gemini_api_key
 from app.models.quiz_model import GeneratedQuiz, QuizOption, QuizQuestion, QuizSourceMaterial
 from app.models.slide_deck_model import SlideDeckOutline, SlideDeckOutlineSlide
+from app.utils.token_usage import TokenUsage, extract_token_usage
 
 
 MAX_INPUT_CHARS = 12000
@@ -24,13 +24,6 @@ class MissingAPIKeyError(Exception):
 
 class GeminiServiceError(Exception):
     """Raised when Gemini fails to produce a usable response."""
-
-
-@dataclass(frozen=True)
-class TokenUsage:
-    input_token: int | None
-    output_token: int | None
-    source: str
 
 
 @dataclass(frozen=True)
@@ -124,7 +117,7 @@ def generate_quiz_with_usage(
         source_count=len(materials),
         question_count=question_count,
     )
-    token_usage = _extract_token_usage(
+    token_usage = extract_token_usage(
         response=response,
         prompt=prompt,
         response_text=response_text,
@@ -168,7 +161,7 @@ def generate_slide_deck_outline_with_usage(
 
     payload = _parse_json_object(response_text)
     outline = _normalize_slide_deck_payload(payload=payload, slide_count=slide_count)
-    token_usage = _extract_token_usage(
+    token_usage = extract_token_usage(
         response=response,
         prompt=prompt,
         response_text=response_text,
@@ -429,85 +422,6 @@ def _normalize_slide_deck_payload(*, payload: dict[str, Any], slide_count: int) 
         subtitle=subtitle,
         slides=slides[:slide_count],
     )
-
-
-def _extract_token_usage(
-    *,
-    response: Any,
-    prompt: str,
-    response_text: str,
-) -> TokenUsage:
-    usage_metadata = getattr(response, "usage_metadata", None)
-
-    input_token: int | None = None
-    output_token: int | None = None
-    source = "estimated"
-
-    if usage_metadata is not None:
-        input_token = _read_token_value(
-            usage_metadata,
-            ("prompt_token_count", "input_token_count", "prompt_tokens"),
-        )
-        output_token = _read_token_value(
-            usage_metadata,
-            (
-                "candidates_token_count",
-                "output_token_count",
-                "response_token_count",
-                "completion_token_count",
-                "output_tokens",
-            ),
-        )
-        if input_token is not None or output_token is not None:
-            source = "provider_usage"
-
-    estimated_input = _estimate_token_count(prompt)
-    estimated_output = _estimate_token_count(response_text)
-
-    if input_token is None:
-        input_token = estimated_input
-        if source == "provider_usage":
-            source = "provider_usage_plus_estimate"
-
-    if output_token is None:
-        output_token = estimated_output
-        if source == "provider_usage":
-            source = "provider_usage_plus_estimate"
-
-    return TokenUsage(
-        input_token=input_token,
-        output_token=output_token,
-        source=source,
-    )
-
-
-def _read_token_value(usage_metadata: Any, candidate_keys: tuple[str, ...]) -> int | None:
-    for key in candidate_keys:
-        value: Any = None
-
-        if isinstance(usage_metadata, dict):
-            value = usage_metadata.get(key)
-        else:
-            value = getattr(usage_metadata, key, None)
-            if value is None and hasattr(usage_metadata, "to_dict"):
-                try:
-                    metadata_dict = usage_metadata.to_dict()
-                    if isinstance(metadata_dict, dict):
-                        value = metadata_dict.get(key)
-                except Exception:
-                    value = None
-
-        if isinstance(value, int):
-            return value
-
-    return None
-
-
-def _estimate_token_count(text: str) -> int:
-    if not text:
-        return 0
-
-    return max(1, math.ceil(len(text) / 4))
 
 
 def _read_required_string(payload: dict[str, Any], key: str) -> str:

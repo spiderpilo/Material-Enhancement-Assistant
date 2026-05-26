@@ -19,6 +19,7 @@ import {
 import { generateQuiz, type GeneratedQuiz } from "@/lib/api/quiz";
 import {
   generateSlideDeck,
+  type GeneratedMaterialDownloadFormat,
   getGeneratedMaterialDownload,
   listGeneratedMaterials,
   type GeneratedMaterial,
@@ -82,6 +83,8 @@ export function MaterialEnhancementWorkspace({
   const [selectedPreviewItemId, setSelectedPreviewItemId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<ActiveTool>("summary");
   const [isQuizExpanded, setIsQuizExpanded] = useState(false);
+  const [isSlideDeckExpanded, setIsSlideDeckExpanded] = useState(false);
+  const [activeSlideDeckUuid, setActiveSlideDeckUuid] = useState<string | null>(null);
   const [quizStatus, setQuizStatus] = useState<QuizGenerationStatus>("idle");
   const [quizHistory, setQuizHistory] = useState<GeneratedQuizHistoryItem[]>([]);
   const [activeQuizHistoryId, setActiveQuizHistoryId] = useState<string | null>(null);
@@ -180,7 +183,7 @@ export function MaterialEnhancementWorkspace({
   }, [toastMessage]);
 
   useEffect(() => {
-    if (!isQuizExpanded) {
+    if (!isQuizExpanded && !isSlideDeckExpanded) {
       return;
     }
 
@@ -194,7 +197,7 @@ export function MaterialEnhancementWorkspace({
       document.body.style.overflow = previousBodyOverflow;
       document.documentElement.style.overflow = previousDocumentOverflow;
     };
-  }, [isQuizExpanded]);
+  }, [isQuizExpanded, isSlideDeckExpanded]);
 
   useEffect(() => {
     const normalizedProjectUuid = projectUuid.trim();
@@ -299,7 +302,9 @@ export function MaterialEnhancementWorkspace({
     setQuizErrorMessage(null);
     setPendingQuizSourceCount(null);
     setGeneratedMaterials([]);
+    setActiveSlideDeckUuid(null);
     setIsGeneratingSlideDeck(false);
+    setIsSlideDeckExpanded(false);
     setSlideDeckErrorMessage(null);
     quizRequestKeyRef.current = "";
     setActiveQuizQuestionIndex(0);
@@ -620,12 +625,18 @@ export function MaterialEnhancementWorkspace({
   const handleSelectTool = (tool: ActiveTool) => {
     setActiveTool(tool);
 
+    if (tool !== "slideDeck") {
+      setIsSlideDeckExpanded(false);
+    }
+
     if (tool === "quiz") {
+      setIsSlideDeckExpanded(false);
       void ensureQuizGenerated();
       return;
     }
 
     if (tool === "slideDeck") {
+      setIsQuizExpanded(false);
       void ensureSlideDeckGenerated();
     }
   };
@@ -777,7 +788,10 @@ export function MaterialEnhancementWorkspace({
     }
   };
 
-  const handleDownloadGeneratedMaterial = async (generatedMaterialUuid: string) => {
+  const handleDownloadGeneratedMaterial = async (
+    generatedMaterialUuid: string,
+    format: GeneratedMaterialDownloadFormat = "pptx",
+  ) => {
     if (!normalizedRouteProjectUuid || normalizedRouteProjectUuid === "undefined") {
       setToastMessage("Invalid project link. Reload from dashboard.");
       return;
@@ -792,6 +806,7 @@ export function MaterialEnhancementWorkspace({
     try {
       const download = await getGeneratedMaterialDownload({
         accessToken,
+        format,
         projectUuid: normalizedRouteProjectUuid,
         generatedMaterialUuid,
       });
@@ -828,6 +843,19 @@ export function MaterialEnhancementWorkspace({
     setSelectedQuizAnswers({});
     setQuizViewMode("question");
     setIsQuizExpanded(true);
+    setIsSlideDeckExpanded(false);
+  };
+
+  const handleOpenSlideDeckPreview = (generatedMaterialUuid: string) => {
+    setActiveSlideDeckUuid(generatedMaterialUuid);
+    setActiveTool("slideDeck");
+    setIsQuizExpanded(false);
+    setIsSlideDeckExpanded(true);
+  };
+
+  const handleSelectSlideDeck = (generatedMaterialUuid: string) => {
+    setActiveSlideDeckUuid(generatedMaterialUuid);
+    setActiveTool("slideDeck");
   };
 
   const handleNavigateQuiz = (direction: "previous" | "next") => {
@@ -1223,6 +1251,7 @@ export function MaterialEnhancementWorkspace({
             gridTemplateColumns: getWorkspaceGridTemplateColumns({
               isLeftPanelCollapsed,
               isQuizExpanded,
+              isSlideDeckExpanded,
             }),
           }}
         >
@@ -1261,15 +1290,19 @@ export function MaterialEnhancementWorkspace({
             checkedMaterials={checkedMaterials}
             generatedMaterials={generatedMaterials}
             isQuizExpanded={isQuizExpanded}
+            isSlideDeckExpanded={isSlideDeckExpanded}
+            onCloseSlideDeckPreview={() => setIsSlideDeckExpanded(false)}
             onCloseQuiz={() => setIsQuizExpanded(false)}
             onDownloadGeneratedMaterial={handleDownloadGeneratedMaterial}
             onGenerateSlideDeck={ensureSlideDeckGenerated}
             onNavigateQuiz={handleNavigateQuiz}
             onOpenHelp={handleOpenHelp}
             onOpenQuiz={handleOpenQuiz}
+            onOpenSlideDeckPreview={handleOpenSlideDeckPreview}
             onResetQuiz={handleResetQuiz}
             onRetryQuiz={ensureQuizGenerated}
             onReviewQuiz={handleReviewQuiz}
+            onSelectSlideDeck={handleSelectSlideDeck}
             onSelectQuizAnswer={handleSelectQuizAnswer}
             onSelectTool={handleSelectTool}
             onShowQuizResults={handleShowQuizResults}
@@ -1281,6 +1314,7 @@ export function MaterialEnhancementWorkspace({
             quizViewMode={quizViewMode}
             selectedQuizAnswers={selectedQuizAnswers}
             slideDeckErrorMessage={slideDeckErrorMessage}
+            selectedSlideDeckUuid={activeSlideDeckUuid}
             slideDeckStatus={
               isGeneratingSlideDeck
                 ? "loading"
@@ -1347,14 +1381,17 @@ function buildQuizSourceKey(materials: Material[]): string {
 function getWorkspaceGridTemplateColumns({
   isLeftPanelCollapsed,
   isQuizExpanded,
+  isSlideDeckExpanded,
 }: {
   isLeftPanelCollapsed: boolean;
   isQuizExpanded: boolean;
+  isSlideDeckExpanded: boolean;
 }) {
   const leftColumn = isLeftPanelCollapsed
     ? COLLAPSED_LEFT_GRID_COLUMNS
     : EXPANDED_LEFT_GRID_COLUMNS;
-  const studioColumn = isQuizExpanded ? STUDIO_EXPANDED_WIDTH : STUDIO_COLLAPSED_WIDTH;
+  const studioColumn =
+    isQuizExpanded || isSlideDeckExpanded ? STUDIO_EXPANDED_WIDTH : STUDIO_COLLAPSED_WIDTH;
 
   return `${leftColumn} minmax(0,1fr) ${studioColumn}`;
 }
