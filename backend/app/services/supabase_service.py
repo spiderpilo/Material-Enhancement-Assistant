@@ -7,6 +7,8 @@ from typing import Any, Literal, Optional
 from urllib import error, parse, request
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from app.config import get_supabase_settings
 from app.models.account_model import CreateAccountResponse, LoginAccountResponse, UserProfileRecord
 from app.models.document_model import (
@@ -18,7 +20,7 @@ from app.models.document_model import (
 )
 from app.models.generated_material_model import GeneratedMaterialRecord
 from app.models.project_model import ProjectMaterialRecord, ProjectRecord, ProjectSummary
-from app.models.quiz_model import GeneratedQuiz, QuizSourceMaterial
+from app.models.quiz_model import GeneratedQuiz, GeneratedQuizHistoryRecord, QuizSourceMaterial
 from app.services.export_service import build_slide_deck_pptx_bytes
 from app.services.llm_service import generate_quiz_with_usage, generate_slide_deck_outline_with_usage
 from app.services.parser_service import DocumentParseError, parse_document
@@ -881,6 +883,7 @@ def delete_course_content_for_user(
 def get_course_content_texts_for_user(
     *,
     access_token: str,
+    project_uuid: str | None = None,
     material_ids: list[int],
 ) -> list[QuizSourceMaterial]:
     try:
@@ -894,6 +897,22 @@ def get_course_content_texts_for_user(
         access_token=access_token,
     )
     unique_material_ids = list(dict.fromkeys(material_ids))
+    normalized_project_uuid = (project_uuid or "").strip()
+
+    if normalized_project_uuid:
+        project_row = _fetch_owned_project_row_by_uuid(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            project_uuid=normalized_project_uuid,
+            owner_user_id=auth_user.user_id,
+        )
+        project_id = _read_int(project_row, "id")
+        _assert_materials_linked_to_project(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            project_id=project_id,
+            material_ids=unique_material_ids,
+        )
 
     for material_id in unique_material_ids:
         _assert_course_content_owned_by_username(
@@ -990,6 +1009,72 @@ def list_generated_materials_for_user(
     return [GeneratedMaterialRecord.model_validate(row) for row in rows]
 
 
+def list_generated_quiz_history_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+) -> list[GeneratedQuizHistoryRecord]:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    auth_user = _resolve_authenticated_user(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        access_token=access_token,
+    )
+    owned_project = _fetch_owned_project_row_by_uuid(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=project_uuid,
+        owner_user_id=auth_user.user_id,
+    )
+    normalized_project_uuid = _normalize_project_row(owned_project)["project_uuid"]
+    rows = _fetch_generated_material_rows_for_project_uuid(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_uuid=normalized_project_uuid,
+        tool_type="quiz",
+    )
+
+    quiz_history: list[GeneratedQuizHistoryRecord] = []
+    for row in rows:
+        row_id = _read_optional_int(row, "id")
+        if row_id is None:
+            logger.warning(
+                "Skipping generated quiz row missing id project_uuid=%s",
+                normalized_project_uuid,
+            )
+            continue
+
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            logger.warning(
+                "Skipping generated quiz row id=%s due to non-object payload",
+                row_id,
+            )
+            continue
+
+        try:
+            quiz = GeneratedQuiz.model_validate(payload)
+            quiz_history.append(
+                GeneratedQuizHistoryRecord(
+                    id=row_id,
+                    created_at=row.get("created_at"),
+                    quiz=quiz,
+                )
+            )
+        except ValidationError as exc:
+            logger.warning(
+                "Skipping generated quiz row id=%s due to payload validation error: %s",
+                row_id,
+                exc,
+            )
+
+    return quiz_history
+
+
 def generate_quiz_for_user(
     *,
     access_token: str,
@@ -1023,6 +1108,13 @@ def generate_quiz_for_user(
         material_ids=unique_material_ids,
     )
 
+    for material_id in unique_material_ids:
+        _assert_course_content_owned_by_username(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            course_content_id=material_id,
+            owner_user_id=auth_user.user_id,
+        )
     materials = get_course_content_texts_for_user(
         access_token=access_token,
         material_ids=unique_material_ids,
@@ -2340,6 +2432,35 @@ def _assert_course_content_owned_by_username(
     raise ProjectNotFoundError("Course content was not found.")
 
 
+def _assert_materials_linked_to_project(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    material_ids: list[int],
+) -> None:
+    project_material_links = _fetch_project_material_links(
+        url=url,
+        service_role_key=service_role_key,
+        project_id=project_id,
+    )
+    project_material_ids = {
+        material_id
+        for material_id in (
+            _read_optional_int(project_material_link, "material_id")
+            for project_material_link in project_material_links
+        )
+        if material_id is not None
+    }
+    missing_material_ids = [
+        material_id for material_id in material_ids if material_id not in project_material_ids
+    ]
+    if missing_material_ids:
+        raise ProjectAccessDeniedError(
+            "One or more selected sources are not part of this project."
+        )
+
+
 def _fetch_course_content_records_by_id(
     *,
     url: str,
@@ -2376,11 +2497,22 @@ def _fetch_generated_material_rows_for_project_uuid(
     url: str,
     service_role_key: str,
     project_uuid: str,
+    tool_type: str | None = None,
 ) -> list[dict[str, Any]]:
+    filters = [f"project_uuid=eq.{parse.quote(project_uuid, safe='')}"]
+    if tool_type:
+        filters.append(f"tool_type=eq.{parse.quote(tool_type, safe='')}")
+
+    query = "&".join(
+        [
+            *filters,
+            "select=*",
+            "order=created_at.desc,id.desc",
+        ]
+    )
     endpoint = (
         f"{url.rstrip('/')}/rest/v1/generated_materials"
-        f"?project_uuid=eq.{parse.quote(project_uuid, safe='')}"
-        "&select=*&order=created_at.desc,id.desc"
+        f"?{query}"
     )
     response_body = _send_request(
         endpoint=endpoint,

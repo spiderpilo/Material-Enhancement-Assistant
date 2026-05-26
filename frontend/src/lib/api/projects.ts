@@ -1,5 +1,6 @@
 import type { CourseContentRecord } from "@/lib/api/course-content";
 import { getApiBaseUrl } from "@/lib/api/course-content";
+import type { GeneratedQuiz } from "@/lib/api/quiz";
 
 export type ProjectSummary = {
   id?: number | null;
@@ -18,6 +19,16 @@ export type Project = ProjectSummary & {
 
 type ListProjectsResponse = {
   projects: ProjectSummary[];
+};
+
+export type GeneratedQuizHistoryRecord = {
+  id: number;
+  created_at?: string | null;
+  quiz: GeneratedQuiz;
+};
+
+type ListGeneratedQuizHistoryResponse = {
+  generated_quizzes?: GeneratedQuizHistoryRecord[];
 };
 
 export async function listProjects(accessToken: string, limit?: number): Promise<ProjectSummary[]> {
@@ -118,6 +129,34 @@ export async function deleteProject({
   }
 
   throw new Error(await readProjectErrorMessage(response, "Unable to delete project."));
+}
+
+export async function listGeneratedMaterials({
+  accessToken,
+  projectUuid,
+  tool = "quiz",
+}: {
+  accessToken: string;
+  projectUuid: string;
+  tool?: "quiz";
+}): Promise<GeneratedQuizHistoryRecord[]> {
+  const query = new URLSearchParams({ tool }).toString();
+  const response = await fetch(
+    `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/generated-materials?${query}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  );
+
+  const payload = await readProjectPayload<ListGeneratedQuizHistoryResponse>(
+    response,
+    "Unable to load generated materials.",
+  );
+
+  return Array.isArray(payload.generated_quizzes) ? payload.generated_quizzes : [];
 }
 
 async function readProjectPayload<T>(response: Response, fallbackMessage: string): Promise<T> {

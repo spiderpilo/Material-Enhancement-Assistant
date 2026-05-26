@@ -8,6 +8,7 @@ from app.models.generated_material_model import (
     ListGeneratedMaterialsResponse,
     SlideDeckGenerateRequest,
 )
+from app.models.quiz_model import ListGeneratedQuizHistoryResponse
 from app.models.project_model import (
     CreateProjectRequest,
     ListProjectsResponse,
@@ -29,6 +30,7 @@ from app.services.supabase_service import (
     generate_slide_deck_for_user,
     get_project_for_user,
     get_generated_material_download_for_user,
+    list_generated_quiz_history_for_user,
     list_generated_materials_for_user,
     list_projects_for_user,
     update_project_for_user,
@@ -161,16 +163,25 @@ def delete_project(
 
 @router.get(
     "/projects/{project_uuid}/generated-materials",
-    response_model=ListGeneratedMaterialsResponse,
+    response_model=ListGeneratedMaterialsResponse | ListGeneratedQuizHistoryResponse,
 )
 def list_generated_materials(
     project_uuid: str,
+    tool: Literal["quiz"] | None = Query(default=None),
     authorization: str | None = Header(default=None),
-) -> ListGeneratedMaterialsResponse:
+) -> ListGeneratedMaterialsResponse | ListGeneratedQuizHistoryResponse:
     try:
+        access_token = _extract_bearer_token(authorization)
+        if tool == "quiz":
+            return ListGeneratedQuizHistoryResponse(
+                generated_quizzes=list_generated_quiz_history_for_user(
+                    access_token=access_token,
+                    project_uuid=project_uuid,
+                )
+            )
         return ListGeneratedMaterialsResponse(
             generated_materials=list_generated_materials_for_user(
-                access_token=_extract_bearer_token(authorization),
+                access_token=access_token,
                 project_uuid=project_uuid,
             )
         )

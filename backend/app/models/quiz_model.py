@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -42,3 +43,15 @@ class GeneratedQuiz(BaseModel):
     title: str
     source_count: int
     questions: list[QuizQuestion] = Field(min_length=12, max_length=12)
+
+
+class GeneratedQuizHistoryRecord(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    created_at: datetime | None = None
+    quiz: GeneratedQuiz
+
+
+class ListGeneratedQuizHistoryResponse(BaseModel):
+    generated_quizzes: list[GeneratedQuizHistoryRecord] = Field(default_factory=list)

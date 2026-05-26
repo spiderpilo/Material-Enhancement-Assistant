@@ -7,6 +7,7 @@ from app.services.llm_service import GeminiServiceError, MissingAPIKeyError
 from app.services.supabase_service import (
     AuthenticationError,
     MissingSupabaseConfigError,
+    ProjectAccessDeniedError,
     ProjectNotFoundError,
     SupabaseServiceError,
     generate_quiz_for_user,
@@ -44,6 +45,8 @@ def generate_quiz_from_materials(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ProjectAccessDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except MissingAPIKeyError as exc:

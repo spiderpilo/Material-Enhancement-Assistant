@@ -8,8 +8,10 @@ Minimal FastAPI backend for local testing.
 - `GET /projects` (auth required)
 - `POST /projects` (auth required)
 - `GET /projects/{project_uuid}` (auth required)
+- `GET /projects/{project_uuid}/generated-materials?tool=quiz` (auth required)
 - `PATCH /projects/{project_uuid}` (auth required)
 - `DELETE /projects/{project_uuid}` (auth required)
+- `POST /quiz/generate` (auth required)
 - `POST /upload-doc`
 - `GET /course-contents/{id}/preview`
 - `POST /create-account`
@@ -22,6 +24,8 @@ Project routes use `Authorization: Bearer <mea_access_token>`. The backend resol
 `GET /projects` returns `{ "projects": ProjectSummary[] }` ordered newest-first (by `created_at`).
 
 `GET /projects/{project_uuid}` returns one owned project record. It returns `404` when the UUID does not exist or belongs to another user.
+
+`GET /projects/{project_uuid}/generated-materials?tool=quiz` returns newest-first saved quiz history for the owned project.
 
 `PATCH /projects/{project_uuid}` updates the project name. It returns:
 - `200` on success
@@ -37,6 +41,13 @@ Project routes use `Authorization: Bearer <mea_access_token>`. The backend resol
 - `404` when the UUID does not exist
 
 `POST /upload-doc` accepts a PDF, DOCX, or PPTX file up to 50MB, uploads it to Supabase Storage, inserts a `course_contents` row, queues preview rendering, and returns the inserted record with preview metadata.
+
+`POST /quiz/generate` now requires JSON body:
+- `project_uuid` (string)
+- `material_ids` (array of course content ids)
+- `question_count` (`12`)
+
+The endpoint generates a quiz and persists it to `generated_materials` with `tool_type='quiz'`.
 
 `GET /course-contents/{id}/preview` returns the current preview manifest for a source. While rendering is still running it returns `preview_status: "pending"`. When ready it returns ordered page or slide image URLs.
 
@@ -101,6 +112,13 @@ backend/.venv/bin/python backend/database/apply_migration.py \
 ```
 
 Both migrations are idempotent and keep legacy columns for rollback compatibility.
+
+To support quiz persistence payloads and source tracking, apply:
+
+```bash
+backend/.venv/bin/python backend/database/apply_migration.py \
+  backend/database/migrations/20260525_generated_materials_tool_payload.sql
+```
 
 If project creation fails with:
 `null value in column "created_by" of relation "projects" violates not-null constraint`
