@@ -27,13 +27,11 @@ import {
 import type {
   ActiveTool,
   Material,
-  Recommendation,
 } from "@/lib/material-enhancement/workspace";
 import {
   applyPreviewManifestToMaterial,
   createMaterialFromCourseContentRecord,
   createMaterialFromProjectMaterialRecord,
-  generateRecommendations,
   getMaterialBaseName,
   getSelectedMaterial,
   getSelectedPreviewItem,
@@ -98,9 +96,6 @@ export function MaterialEnhancementWorkspace({
   const [activeQuizQuestionIndex, setActiveQuizQuestionIndex] = useState(0);
   const [selectedQuizAnswers, setSelectedQuizAnswers] = useState<Record<string, string>>({});
   const [quizViewMode, setQuizViewMode] = useState<QuizViewMode>("question");
-  const [recommendations, setRecommendations] = useState<Recommendation[]>(
-    generateRecommendations(null),
-  );
   const [isDragging, setIsDragging] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [renamingMaterialId, setRenamingMaterialId] = useState<string | null>(null);
@@ -143,10 +138,6 @@ export function MaterialEnhancementWorkspace({
   const activeQuizHistoryItem =
     quizHistory.find((quizHistoryItem) => quizHistoryItem.id === activeQuizHistoryId) ?? null;
   const activeQuiz = activeQuizHistoryItem?.quiz ?? null;
-
-  useEffect(() => {
-    setRecommendations(generateRecommendations(selectedMaterial));
-  }, [selectedMaterial]);
 
   useEffect(() => {
     selectedMaterialIdRef.current = selectedMaterialId;
@@ -1245,16 +1236,6 @@ export function MaterialEnhancementWorkspace({
     );
   };
 
-  const handleApplyRecommendation = (recommendationId: Recommendation["id"]) => {
-    setRecommendations((currentRecommendations) =>
-      currentRecommendations.map((recommendation) =>
-        recommendation.id === recommendationId
-          ? { ...recommendation, applied: !recommendation.applied }
-          : recommendation,
-      ),
-    );
-  };
-
   return (
     <main className="min-h-screen overflow-x-auto px-8 pb-7 pt-5">
       <div className="mx-auto w-full min-w-[1480px] max-w-[1852px]">
@@ -1300,10 +1281,10 @@ export function MaterialEnhancementWorkspace({
           />
 
           <PreviewWorkspace
-            onApplyRecommendation={handleApplyRecommendation}
+            key={normalizedRouteProjectUuid}
             onNavigate={navigatePreview}
             previewItem={selectedPreviewItem}
-            recommendations={recommendations}
+            selectedSourceCount={checkedMaterials.length}
             selectedMaterial={selectedMaterial}
           />
 

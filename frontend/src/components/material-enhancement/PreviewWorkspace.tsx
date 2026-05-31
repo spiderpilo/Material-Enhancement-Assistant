@@ -1,4 +1,6 @@
-import type { Material, PreviewItem, Recommendation } from "@/lib/material-enhancement/workspace";
+import { useEffect, useRef, useState } from "react";
+
+import type { Material, PreviewItem } from "@/lib/material-enhancement/workspace";
 import {
   formatFileSize,
   getMaterialBaseName,
@@ -8,29 +10,79 @@ import {
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
-  CheckIcon,
-  ClarityIcon,
-  InteractionIcon,
-  VisualsIcon,
 } from "./icons";
+import { CenterChatComposer } from "./CenterChatComposer";
 
 type PreviewWorkspaceProps = {
-  onApplyRecommendation: (recommendationId: Recommendation["id"]) => void;
   onNavigate: (direction: "previous" | "next") => void;
   previewItem: PreviewItem | null;
-  recommendations: Recommendation[];
+  selectedSourceCount: number;
   selectedMaterial: Material | null;
 };
 
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: number;
+};
+
 export function PreviewWorkspace({
-  onApplyRecommendation,
   onNavigate,
   previewItem,
-  recommendations,
+  selectedSourceCount,
   selectedMaterial,
 }: PreviewWorkspaceProps) {
   const currentIndex = previewItem?.index ?? 0;
   const totalCount = selectedMaterial?.previewItems.length ?? 0;
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const conversationEndRef = useRef<HTMLDivElement>(null);
+  const assistantTimersRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      conversationEndRef.current?.scrollIntoView({
+        behavior: messages.length > 1 ? "smooth" : "auto",
+        block: "end",
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      for (const timerId of assistantTimersRef.current) {
+        window.clearTimeout(timerId);
+      }
+      assistantTimersRef.current = [];
+    };
+  }, []);
+
+  const handleChatSubmit = (message: string) => {
+    const userMessage = createChatMessage("user", message);
+    const assistantMessage = createChatMessage(
+      "assistant",
+      buildAssistantPlaceholderReply({
+        message,
+        selectedSourceCount,
+      }),
+    );
+
+    setMessages((currentMessages) => [...currentMessages, userMessage]);
+
+    // TODO: Replace this local placeholder with a real project chat backend response.
+    const timerId = window.setTimeout(() => {
+      setMessages((currentMessages) => [...currentMessages, assistantMessage]);
+      assistantTimersRef.current = assistantTimersRef.current.filter(
+        (currentTimerId) => currentTimerId !== timerId,
+      );
+    }, 220);
+
+    assistantTimersRef.current.push(timerId);
+  };
 
   return (
     <section className="shadow-panel surface-inset relative flex h-[949px] min-h-[949px] flex-col overflow-hidden rounded-[24px] border border-[color:var(--border-soft)] bg-[color:var(--bg-panel-center)] px-[22px] pt-[18px]">
@@ -67,24 +119,29 @@ export function PreviewWorkspace({
         </div>
       </div>
 
-      <div className="mt-[24px] flex items-center justify-between gap-4">
-        <h2 className="text-[17.7px] font-bold tracking-[-0.05em] text-[color:var(--text-primary)]">
-          AI Recommendations
-        </h2>
-
-        <div className="flex h-6 items-center rounded-full bg-[rgba(255,255,255,0.05)] px-3 text-[11px] font-medium text-[color:var(--text-muted)]">
-          Suggestions are supportive &amp; optional.
+      <div className="mt-4 flex min-h-0 flex-1 flex-col">
+        <div className="studio-scroll min-h-0 flex-1 overflow-y-auto pr-1">
+          {messages.length === 0 ? (
+            <div className="flex h-full items-center justify-center px-4 text-center">
+              <p className="text-[13px] text-white/38">
+                Ask a question about your materials
+              </p>
+            </div>
+          ) : (
+            <div className="flex min-h-full flex-col justify-end gap-3 px-1 py-1">
+              {messages.map((message) => (
+                <ChatMessageBubble key={message.id} message={message} />
+              ))}
+              <div ref={conversationEndRef} />
+            </div>
+          )}
         </div>
-      </div>
 
-      <div className="mt-[13px] grid grid-cols-3 gap-3 pb-4">
-        {recommendations.map((recommendation) => (
-          <RecommendationCard
-            key={recommendation.id}
-            recommendation={recommendation}
-            onApply={() => onApplyRecommendation(recommendation.id)}
-          />
-        ))}
+        <CenterChatComposer
+          disabled={selectedSourceCount === 0}
+          onSubmit={handleChatSubmit}
+          selectedSourceCount={selectedSourceCount}
+        />
       </div>
     </section>
   );
@@ -130,7 +187,7 @@ function PreviewEmptyState() {
         Preview ready
       </h3>
       <p className="mt-3 text-[14px] leading-[23px] text-[#78716c]">
-        Upload a file from the Materials panel to activate the preview stage, navigation controls, and recommendations.
+        Upload a file from the Materials panel to activate the preview stage, navigation controls, and chat composer.
       </p>
     </div>
   );
@@ -348,70 +405,68 @@ function PlaceholderLine({ width }: { width: string }) {
   return <div className="h-3 rounded-full bg-[#ece8e6]" style={{ width }} />;
 }
 
-function RecommendationCard({
-  onApply,
-  recommendation,
-}: {
-  onApply: () => void;
-  recommendation: Recommendation;
-}) {
-  const accentClass =
-    recommendation.accent === "green"
-      ? "text-[color:var(--accent-green)] bg-[rgba(184,219,128,0.1)]"
-      : recommendation.accent === "pink"
-        ? "text-[color:var(--accent-pink)] bg-[rgba(243,158,182,0.1)]"
-        : "text-[color:var(--accent-cream)] bg-[rgba(247,246,211,0.12)]";
+function ChatMessageBubble({ message }: { message: ChatMessage }) {
+  const isUser = message.role === "user";
 
   return (
-    <article
+    <div
       className={[
-        "surface-inset relative flex min-h-[284px] flex-col rounded-[24px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] px-6 pb-[17px] pt-[17px]",
-        recommendation.disabled ? "opacity-65" : "",
+        "animate-center-chat-message-enter flex w-full",
+        isUser ? "justify-end" : "justify-start",
       ].join(" ")}
     >
-      <div className="flex items-start gap-4">
-        <div className={["flex h-10 w-10 items-center justify-center rounded-[16px]", accentClass].join(" ")}>
-          {recommendation.id === "clarity" ? (
-            <ClarityIcon className="h-5 w-5" />
-          ) : recommendation.id === "visuals" ? (
-            <VisualsIcon className="h-5 w-5" />
-          ) : (
-            <InteractionIcon className="h-5 w-5" />
-          )}
-        </div>
-
-        <div>
-          <h3 className="text-[16px] font-bold text-[color:var(--accent-cream)]">
-            {recommendation.title}
-          </h3>
-          <p className="mt-[2px] text-[12px] font-bold uppercase tracking-[0.06em] text-[color:var(--text-subtle)]">
-            {recommendation.label}
-          </p>
-        </div>
-      </div>
-
-      <p className="mt-6 flex-1 text-[13.8px] leading-[22.75px] text-[color:var(--text-secondary)]">
-        {recommendation.description}
-      </p>
-
-      <div className="mt-6 flex justify-end">
-        <button
-          type="button"
-          onClick={onApply}
-          disabled={recommendation.disabled}
-          className={[
-            "shadow-card-soft inline-flex h-10 min-w-[86px] items-center justify-center gap-2 rounded-[12px] px-5 text-[12.7px] font-bold transition",
-            recommendation.disabled
-              ? "bg-[rgba(255,255,255,0.08)] text-[color:var(--text-muted)]"
-              : recommendation.applied
-                ? "bg-[rgba(184,219,128,0.25)] text-[color:var(--accent-green)]"
-                : "bg-[rgba(184,219,128,0.9)] text-[#1c1917] hover:brightness-[1.03]",
-          ].join(" ")}
-        >
-          <CheckIcon className="h-[18px] w-[18px]" />
-          {recommendation.applied ? "Applied" : "Apply"}
-        </button>
-      </div>
-    </article>
+      <article
+        className={[
+          "overflow-hidden rounded-[22px] border px-5 py-4 shadow-[0_10px_24px_rgba(0,0,0,0.18)]",
+          isUser
+            ? "max-w-[72%] border-white/[0.08] bg-[#2A2F38] text-white"
+            : "max-w-[78%] border-white/[0.08] bg-[#242830] text-white",
+        ].join(" ")}
+      >
+        <p className="whitespace-pre-wrap text-[14.5px] leading-[1.7]">
+          {message.content}
+        </p>
+      </article>
+    </div>
   );
+}
+
+function buildAssistantPlaceholderReply({
+  message,
+  selectedSourceCount,
+}: {
+  message: string;
+  selectedSourceCount: number;
+}) {
+  const normalizedMessage = message.trim();
+
+  return [
+    `I'm ready to help with ${selectedSourceCount} selected source${selectedSourceCount === 1 ? "" : "s"}.`,
+    "This is a local placeholder response while chat backend integration is still pending.",
+    normalizedMessage
+      ? `Your latest prompt was: "${normalizedMessage}"`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function createChatMessage(
+  role: ChatMessage["role"],
+  content: string,
+): ChatMessage {
+  return {
+    id: createMessageId(),
+    role,
+    content,
+    timestamp: Date.now(),
+  };
+}
+
+function createMessageId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return Math.random().toString(36).slice(2, 10);
 }
