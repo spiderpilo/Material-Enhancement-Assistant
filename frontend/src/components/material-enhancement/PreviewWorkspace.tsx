@@ -85,8 +85,8 @@ export function PreviewWorkspace({
   };
 
   return (
-    <section className="shadow-panel surface-inset relative flex h-[949px] min-h-[949px] flex-col overflow-hidden rounded-[24px] border border-[color:var(--border-soft)] bg-[color:var(--bg-panel-center)] px-[22px] pt-[18px]">
-      <div className="relative h-[562px] overflow-hidden rounded-[24px] border border-black/70 bg-[linear-gradient(180deg,rgba(85,66,63,0.9)_0%,rgba(76,61,58,0.96)_100%)]">
+    <section className="shadow-panel surface-inset relative flex h-full min-w-0 min-h-0 flex-col overflow-hidden rounded-[24px] border border-[color:var(--border-soft)] bg-[color:var(--bg-panel-center)] px-4 pt-4 sm:px-5 xl:px-6 2xl:px-[22px] 2xl:pt-[18px]">
+      <div className="relative h-[clamp(260px,40vh,500px)] overflow-hidden rounded-[24px] border border-black/70 bg-[linear-gradient(180deg,rgba(85,66,63,0.9)_0%,rgba(76,61,58,0.96)_100%)] 2xl:h-[clamp(280px,42vh,540px)]">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.03),transparent_70%)]" />
 
         <NavigationButton
@@ -100,7 +100,7 @@ export function PreviewWorkspace({
           onClick={() => onNavigate("next")}
         />
 
-        <div className="absolute inset-x-[9.5%] top-[26px] bottom-[37px]">
+        <div className="absolute inset-x-[8%] top-4 bottom-7 xl:top-5 xl:bottom-8 2xl:inset-x-[9.5%] 2xl:top-[26px] 2xl:bottom-[37px]">
           <div className="shadow-card-soft relative flex h-full items-center justify-center overflow-hidden rounded-[20px] border border-[#e7e5e4] bg-white">
             {selectedMaterial && previewItem ? (
               <PreviewSurface material={selectedMaterial} previewItem={previewItem} />
@@ -110,7 +110,7 @@ export function PreviewWorkspace({
           </div>
         </div>
 
-        <div className="absolute bottom-[11px] left-1/2 -translate-x-1/2 text-center">
+        <div className="absolute bottom-[11px] left-1/2 max-w-[calc(100%_-_3rem)] -translate-x-1/2 text-center">
           <p className="text-[12.6px] font-semibold text-[color:var(--text-muted)]">
             {selectedMaterial && previewItem
               ? getPreviewLabel(selectedMaterial, previewItem)
@@ -119,7 +119,7 @@ export function PreviewWorkspace({
         </div>
       </div>
 
-      <div className="mt-4 flex min-h-0 flex-1 flex-col">
+      <div className="mt-3 flex min-h-0 flex-1 flex-col 2xl:mt-4">
         <div className="studio-scroll min-h-0 flex-1 overflow-y-auto pr-1">
           {messages.length === 0 ? (
             <div className="flex h-full items-center justify-center px-4 text-center">
@@ -163,7 +163,7 @@ function NavigationButton({
       disabled={disabled}
       aria-label={direction === "previous" ? "Previous preview item" : "Next preview item"}
       className={[
-        "absolute top-[241px] z-10 flex h-10 w-10 items-center justify-center rounded-[12px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] text-[color:var(--text-primary)] shadow-[0_18px_45px_0_rgba(0,0,0,0.45)] transition",
+        "absolute top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-[12px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] text-[color:var(--text-primary)] shadow-[0_18px_45px_0_rgba(0,0,0,0.45)] transition",
         direction === "previous" ? "left-6" : "right-6",
         disabled
           ? "opacity-35"
