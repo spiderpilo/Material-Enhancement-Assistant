@@ -100,7 +100,7 @@ export function PreviewWorkspace({
           onClick={() => onNavigate("next")}
         />
 
-        <div className="absolute inset-x-[clamp(4.25rem,10%,5.75rem)] top-4 bottom-7 xl:top-5 xl:bottom-8 2xl:top-[26px] 2xl:bottom-[37px]">
+        <div className="absolute inset-x-[clamp(4rem,9%,5.25rem)] top-3 bottom-7 xl:top-4 xl:bottom-8 2xl:top-[22px] 2xl:bottom-[37px]">
           <div className="shadow-card-soft relative flex h-full items-center justify-center overflow-hidden rounded-[20px] border border-[#e7e5e4] bg-white">
             {selectedMaterial && previewItem ? (
               <PreviewSurface material={selectedMaterial} previewItem={previewItem} />
@@ -183,12 +183,14 @@ function NavigationButton({
 
 function PreviewEmptyState() {
   return (
-    <div className="flex max-w-[380px] flex-col items-center justify-center px-10 text-center">
-      <div className="mb-5 h-24 w-24 rounded-[28px] border border-[rgba(41,37,36,0.08)] bg-[linear-gradient(145deg,rgba(184,219,128,0.16)_0%,rgba(247,246,211,0.28)_100%)]" />
-      <h3 className="text-[26px] font-bold tracking-[-0.05em] text-[#292524]">
+    <div className="flex w-full max-w-[400px] flex-col items-center justify-center px-6 text-center">
+      <div className="mb-3 h-14 w-14 rounded-[18px] border border-[rgba(41,37,36,0.08)] bg-[linear-gradient(145deg,rgba(184,219,128,0.16)_0%,rgba(247,246,211,0.28)_100%)]" />
+
+      <h3 className="text-[18px] font-semibold tracking-[-0.04em] text-[#292524]">
         Preview ready
       </h3>
-      <p className="mt-3 text-[14px] leading-[23px] text-[#78716c]">
+
+      <p className="mt-2 max-w-[32ch] text-[12px] leading-[18px] text-[#78716c]">
         Upload a file from the Materials panel to activate the preview stage, navigation controls, and chat composer.
       </p>
     </div>
@@ -203,13 +205,20 @@ function PreviewSurface({
   previewItem: PreviewItem;
 }) {
   if (previewItem.imageUrl) {
+    const shouldBoostFit = previewItem.kind === "slide" || previewItem.kind === "page";
+
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={previewItem.imageUrl}
-        alt={`${material.name} preview`}
-        className="h-full w-full object-contain bg-[#fcfbfa]"
-      />
+      <div className="flex h-full w-full items-center justify-center overflow-hidden bg-[#fcfbfa]">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={previewItem.imageUrl}
+          alt={`${material.name} preview`}
+          className={[
+            "h-full w-full object-contain transition-transform duration-200 ease-out",
+            shouldBoostFit ? "scale-[1.05] xl:scale-[1.08] 2xl:scale-[1.06]" : "",
+          ].join(" ")}
+        />
+      </div>
     );
   }
 
