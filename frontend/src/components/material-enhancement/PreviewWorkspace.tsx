@@ -100,7 +100,7 @@ export function PreviewWorkspace({
           onClick={() => onNavigate("next")}
         />
 
-        <div className="absolute inset-x-[8%] top-4 bottom-7 xl:top-5 xl:bottom-8 2xl:inset-x-[9.5%] 2xl:top-[26px] 2xl:bottom-[37px]">
+        <div className="absolute inset-x-[clamp(4.25rem,10%,5.75rem)] top-4 bottom-7 xl:top-5 xl:bottom-8 2xl:top-[26px] 2xl:bottom-[37px]">
           <div className="shadow-card-soft relative flex h-full items-center justify-center overflow-hidden rounded-[20px] border border-[#e7e5e4] bg-white">
             {selectedMaterial && previewItem ? (
               <PreviewSurface material={selectedMaterial} previewItem={previewItem} />
@@ -164,7 +164,9 @@ function NavigationButton({
       aria-label={direction === "previous" ? "Previous preview item" : "Next preview item"}
       className={[
         "absolute top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-[12px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] text-[color:var(--text-primary)] shadow-[0_18px_45px_0_rgba(0,0,0,0.45)] transition",
-        direction === "previous" ? "left-6" : "right-6",
+        direction === "previous"
+          ? "left-[clamp(0.75rem,2vw,1.5rem)]"
+          : "right-[clamp(0.75rem,2vw,1.5rem)]",
         disabled
           ? "opacity-35"
           : "hover:bg-[rgba(255,255,255,0.09)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]",

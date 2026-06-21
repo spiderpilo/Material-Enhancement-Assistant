@@ -57,7 +57,7 @@ const EXPANDED_LEFT_GRID_COLUMNS = "clamp(272px, 22vw, 320px)";
 const COLLAPSED_LEFT_GRID_COLUMNS = "84px";
 const STUDIO_COLLAPSED_WIDTH = "clamp(280px, 24vw, 320px)";
 const STUDIO_EXPANDED_WIDTH = "clamp(320px, 34vw, 680px)";
-const WORKSPACE_GRID_HEIGHT = "clamp(520px, calc(100dvh - 172px), 900px)";
+const WORKSPACE_GRID_HEIGHT = "clamp(520px, calc(100dvh - 100px), 920px)";
 const PREVIEW_POLL_INTERVAL_MS = 1400;
 const PREVIEW_POLL_ATTEMPTS = 40;
 
@@ -1238,7 +1238,7 @@ export function MaterialEnhancementWorkspace({
   };
 
   return (
-    <main className="min-h-screen overflow-x-hidden px-3 pb-4 pt-4 sm:px-4 sm:pb-5 lg:px-5 xl:px-6 xl:pt-5 2xl:px-8 2xl:pb-7">
+    <main className="min-h-screen overflow-x-hidden px-3 pb-1 pt-3 sm:px-4 sm:pb-2 sm:pt-3.5 lg:px-5 xl:px-6 xl:pb-3 xl:pt-4 2xl:px-8 2xl:pb-5 2xl:pt-5">
       <div className="mx-auto w-full max-w-[1852px] min-w-0">
         <ProjectHeader
           isProjectNameEditable={isProjectNameEditable}
@@ -1251,7 +1251,7 @@ export function MaterialEnhancementWorkspace({
         />
 
         <div
-          className="mt-4 grid min-w-0 auto-rows-fr gap-3 transition-[grid-template-columns] duration-[320ms] ease-[cubic-bezier(0.2,0.8,0.2,1)] sm:mt-5 sm:gap-4 2xl:mt-6 2xl:gap-5"
+          className="mt-3 grid min-w-0 auto-rows-fr gap-3 transition-[grid-template-columns] duration-[320ms] ease-[cubic-bezier(0.2,0.8,0.2,1)] sm:mt-4 sm:gap-4 2xl:mt-5 2xl:gap-5"
           style={{
             height: WORKSPACE_GRID_HEIGHT,
             gridTemplateColumns: getWorkspaceGridTemplateColumns({
