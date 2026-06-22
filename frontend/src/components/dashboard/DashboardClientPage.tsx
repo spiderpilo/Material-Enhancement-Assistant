@@ -29,7 +29,7 @@ import {
 } from "@/lib/api/projects";
 
 const dashboardDesktopGrid =
-  "xl:w-[1376px] xl:grid-cols-[289px_repeat(3,329px)] xl:auto-rows-[280px]";
+  "xl:grid-cols-[289px_repeat(3,minmax(0,1fr))] xl:auto-rows-[280px]";
 const projectSkeletonCount = 4;
 
 const displayFontStyle: CSSProperties = {
