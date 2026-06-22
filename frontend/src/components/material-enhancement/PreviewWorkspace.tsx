@@ -1,4 +1,6 @@
-import type { Material, PreviewItem, Recommendation } from "@/lib/material-enhancement/workspace";
+import { useEffect, useRef, useState } from "react";
+
+import type { Material, PreviewItem } from "@/lib/material-enhancement/workspace";
 import {
   formatFileSize,
   getMaterialBaseName,
@@ -8,33 +10,83 @@ import {
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
-  CheckIcon,
-  ClarityIcon,
-  InteractionIcon,
-  VisualsIcon,
 } from "./icons";
+import { CenterChatComposer } from "./CenterChatComposer";
 
 type PreviewWorkspaceProps = {
-  onApplyRecommendation: (recommendationId: Recommendation["id"]) => void;
   onNavigate: (direction: "previous" | "next") => void;
   previewItem: PreviewItem | null;
-  recommendations: Recommendation[];
+  selectedSourceCount: number;
   selectedMaterial: Material | null;
 };
 
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: number;
+};
+
 export function PreviewWorkspace({
-  onApplyRecommendation,
   onNavigate,
   previewItem,
-  recommendations,
+  selectedSourceCount,
   selectedMaterial,
 }: PreviewWorkspaceProps) {
   const currentIndex = previewItem?.index ?? 0;
   const totalCount = selectedMaterial?.previewItems.length ?? 0;
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const conversationEndRef = useRef<HTMLDivElement>(null);
+  const assistantTimersRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      conversationEndRef.current?.scrollIntoView({
+        behavior: messages.length > 1 ? "smooth" : "auto",
+        block: "end",
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      for (const timerId of assistantTimersRef.current) {
+        window.clearTimeout(timerId);
+      }
+      assistantTimersRef.current = [];
+    };
+  }, []);
+
+  const handleChatSubmit = (message: string) => {
+    const userMessage = createChatMessage("user", message);
+    const assistantMessage = createChatMessage(
+      "assistant",
+      buildAssistantPlaceholderReply({
+        message,
+        selectedSourceCount,
+      }),
+    );
+
+    setMessages((currentMessages) => [...currentMessages, userMessage]);
+
+    // TODO: Replace this local placeholder with a real project chat backend response.
+    const timerId = window.setTimeout(() => {
+      setMessages((currentMessages) => [...currentMessages, assistantMessage]);
+      assistantTimersRef.current = assistantTimersRef.current.filter(
+        (currentTimerId) => currentTimerId !== timerId,
+      );
+    }, 220);
+
+    assistantTimersRef.current.push(timerId);
+  };
 
   return (
-    <section className="shadow-panel surface-inset relative flex h-[949px] min-h-[949px] flex-col overflow-hidden rounded-[24px] border border-[color:var(--border-soft)] bg-[color:var(--bg-panel-center)] px-[22px] pt-[18px]">
-      <div className="relative h-[562px] overflow-hidden rounded-[24px] border border-black/70 bg-[linear-gradient(180deg,rgba(85,66,63,0.9)_0%,rgba(76,61,58,0.96)_100%)]">
+    <section className="shadow-panel surface-inset relative flex h-full min-w-0 min-h-0 flex-col overflow-hidden rounded-[24px] border border-[color:var(--border-soft)] bg-[color:var(--bg-panel-center)] px-4 pt-4 sm:px-5 xl:px-6 2xl:px-[22px] 2xl:pt-[18px]">
+      <div className="relative h-[clamp(260px,40vh,500px)] overflow-hidden rounded-[24px] border border-black/70 bg-[linear-gradient(180deg,rgba(85,66,63,0.9)_0%,rgba(76,61,58,0.96)_100%)] 2xl:h-[clamp(280px,42vh,540px)]">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.03),transparent_70%)]" />
 
         <NavigationButton
@@ -48,7 +100,7 @@ export function PreviewWorkspace({
           onClick={() => onNavigate("next")}
         />
 
-        <div className="absolute inset-x-[9.5%] top-[26px] bottom-[37px]">
+        <div className="absolute inset-x-[clamp(4rem,9%,5.25rem)] top-3 bottom-7 xl:top-4 xl:bottom-8 2xl:top-[22px] 2xl:bottom-[37px]">
           <div className="shadow-card-soft relative flex h-full items-center justify-center overflow-hidden rounded-[20px] border border-[#e7e5e4] bg-white">
             {selectedMaterial && previewItem ? (
               <PreviewSurface material={selectedMaterial} previewItem={previewItem} />
@@ -58,7 +110,7 @@ export function PreviewWorkspace({
           </div>
         </div>
 
-        <div className="absolute bottom-[11px] left-1/2 -translate-x-1/2 text-center">
+        <div className="absolute bottom-[11px] left-1/2 max-w-[calc(100%_-_3rem)] -translate-x-1/2 text-center">
           <p className="text-[12.6px] font-semibold text-[color:var(--text-muted)]">
             {selectedMaterial && previewItem
               ? getPreviewLabel(selectedMaterial, previewItem)
@@ -67,24 +119,29 @@ export function PreviewWorkspace({
         </div>
       </div>
 
-      <div className="mt-[24px] flex items-center justify-between gap-4">
-        <h2 className="text-[17.7px] font-bold tracking-[-0.05em] text-[color:var(--text-primary)]">
-          AI Recommendations
-        </h2>
-
-        <div className="flex h-6 items-center rounded-full bg-[rgba(255,255,255,0.05)] px-3 text-[11px] font-medium text-[color:var(--text-muted)]">
-          Suggestions are supportive &amp; optional.
+      <div className="mt-3 flex min-h-0 flex-1 flex-col 2xl:mt-4">
+        <div className="studio-scroll min-h-0 flex-1 overflow-y-auto pr-1">
+          {messages.length === 0 ? (
+            <div className="flex h-full items-center justify-center px-4 text-center">
+              <p className="text-[13px] text-white/38">
+                Ask a question about your materials
+              </p>
+            </div>
+          ) : (
+            <div className="flex min-h-full flex-col justify-end gap-3 px-1 py-1">
+              {messages.map((message) => (
+                <ChatMessageBubble key={message.id} message={message} />
+              ))}
+              <div ref={conversationEndRef} />
+            </div>
+          )}
         </div>
-      </div>
 
-      <div className="mt-[13px] grid grid-cols-3 gap-3 pb-4">
-        {recommendations.map((recommendation) => (
-          <RecommendationCard
-            key={recommendation.id}
-            recommendation={recommendation}
-            onApply={() => onApplyRecommendation(recommendation.id)}
-          />
-        ))}
+        <CenterChatComposer
+          disabled={selectedSourceCount === 0}
+          onSubmit={handleChatSubmit}
+          selectedSourceCount={selectedSourceCount}
+        />
       </div>
     </section>
   );
@@ -106,8 +163,10 @@ function NavigationButton({
       disabled={disabled}
       aria-label={direction === "previous" ? "Previous preview item" : "Next preview item"}
       className={[
-        "absolute top-[241px] z-10 flex h-10 w-10 items-center justify-center rounded-[12px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] text-[color:var(--text-primary)] shadow-[0_18px_45px_0_rgba(0,0,0,0.45)] transition",
-        direction === "previous" ? "left-6" : "right-6",
+        "absolute top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-[12px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] text-[color:var(--text-primary)] shadow-[0_18px_45px_0_rgba(0,0,0,0.45)] transition",
+        direction === "previous"
+          ? "left-[clamp(0.75rem,2vw,1.5rem)]"
+          : "right-[clamp(0.75rem,2vw,1.5rem)]",
         disabled
           ? "opacity-35"
           : "hover:bg-[rgba(255,255,255,0.09)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]",
@@ -124,13 +183,15 @@ function NavigationButton({
 
 function PreviewEmptyState() {
   return (
-    <div className="flex max-w-[380px] flex-col items-center justify-center px-10 text-center">
-      <div className="mb-5 h-24 w-24 rounded-[28px] border border-[rgba(41,37,36,0.08)] bg-[linear-gradient(145deg,rgba(184,219,128,0.16)_0%,rgba(247,246,211,0.28)_100%)]" />
-      <h3 className="text-[26px] font-bold tracking-[-0.05em] text-[#292524]">
+    <div className="flex w-full max-w-[400px] flex-col items-center justify-center px-6 text-center">
+      <div className="mb-3 h-14 w-14 rounded-[18px] border border-[rgba(41,37,36,0.08)] bg-[linear-gradient(145deg,rgba(184,219,128,0.16)_0%,rgba(247,246,211,0.28)_100%)]" />
+
+      <h3 className="text-[18px] font-semibold tracking-[-0.04em] text-[#292524]">
         Preview ready
       </h3>
-      <p className="mt-3 text-[14px] leading-[23px] text-[#78716c]">
-        Upload a file from the Materials panel to activate the preview stage, navigation controls, and recommendations.
+
+      <p className="mt-2 max-w-[32ch] text-[12px] leading-[18px] text-[#78716c]">
+        Upload a file from the Materials panel to activate the preview stage, navigation controls, and chat composer.
       </p>
     </div>
   );
@@ -144,13 +205,20 @@ function PreviewSurface({
   previewItem: PreviewItem;
 }) {
   if (previewItem.imageUrl) {
+    const shouldBoostFit = previewItem.kind === "slide" || previewItem.kind === "page";
+
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={previewItem.imageUrl}
-        alt={`${material.name} preview`}
-        className="h-full w-full object-contain bg-[#fcfbfa]"
-      />
+      <div className="flex h-full w-full items-center justify-center overflow-hidden bg-[#fcfbfa]">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={previewItem.imageUrl}
+          alt={`${material.name} preview`}
+          className={[
+            "h-full w-full object-contain transition-transform duration-200 ease-out",
+            shouldBoostFit ? "scale-[1.05] xl:scale-[1.08] 2xl:scale-[1.06]" : "",
+          ].join(" ")}
+        />
+      </div>
     );
   }
 
@@ -348,70 +416,68 @@ function PlaceholderLine({ width }: { width: string }) {
   return <div className="h-3 rounded-full bg-[#ece8e6]" style={{ width }} />;
 }
 
-function RecommendationCard({
-  onApply,
-  recommendation,
-}: {
-  onApply: () => void;
-  recommendation: Recommendation;
-}) {
-  const accentClass =
-    recommendation.accent === "green"
-      ? "text-[color:var(--accent-green)] bg-[rgba(184,219,128,0.1)]"
-      : recommendation.accent === "pink"
-        ? "text-[color:var(--accent-pink)] bg-[rgba(243,158,182,0.1)]"
-        : "text-[color:var(--accent-cream)] bg-[rgba(247,246,211,0.12)]";
+function ChatMessageBubble({ message }: { message: ChatMessage }) {
+  const isUser = message.role === "user";
 
   return (
-    <article
+    <div
       className={[
-        "surface-inset relative flex min-h-[284px] flex-col rounded-[24px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] px-6 pb-[17px] pt-[17px]",
-        recommendation.disabled ? "opacity-65" : "",
+        "animate-center-chat-message-enter flex w-full",
+        isUser ? "justify-end" : "justify-start",
       ].join(" ")}
     >
-      <div className="flex items-start gap-4">
-        <div className={["flex h-10 w-10 items-center justify-center rounded-[16px]", accentClass].join(" ")}>
-          {recommendation.id === "clarity" ? (
-            <ClarityIcon className="h-5 w-5" />
-          ) : recommendation.id === "visuals" ? (
-            <VisualsIcon className="h-5 w-5" />
-          ) : (
-            <InteractionIcon className="h-5 w-5" />
-          )}
-        </div>
-
-        <div>
-          <h3 className="text-[16px] font-bold text-[color:var(--accent-cream)]">
-            {recommendation.title}
-          </h3>
-          <p className="mt-[2px] text-[12px] font-bold uppercase tracking-[0.06em] text-[color:var(--text-subtle)]">
-            {recommendation.label}
-          </p>
-        </div>
-      </div>
-
-      <p className="mt-6 flex-1 text-[13.8px] leading-[22.75px] text-[color:var(--text-secondary)]">
-        {recommendation.description}
-      </p>
-
-      <div className="mt-6 flex justify-end">
-        <button
-          type="button"
-          onClick={onApply}
-          disabled={recommendation.disabled}
-          className={[
-            "shadow-card-soft inline-flex h-10 min-w-[86px] items-center justify-center gap-2 rounded-[12px] px-5 text-[12.7px] font-bold transition",
-            recommendation.disabled
-              ? "bg-[rgba(255,255,255,0.08)] text-[color:var(--text-muted)]"
-              : recommendation.applied
-                ? "bg-[rgba(184,219,128,0.25)] text-[color:var(--accent-green)]"
-                : "bg-[rgba(184,219,128,0.9)] text-[#1c1917] hover:brightness-[1.03]",
-          ].join(" ")}
-        >
-          <CheckIcon className="h-[18px] w-[18px]" />
-          {recommendation.applied ? "Applied" : "Apply"}
-        </button>
-      </div>
-    </article>
+      <article
+        className={[
+          "overflow-hidden rounded-[22px] border px-5 py-4 shadow-[0_10px_24px_rgba(0,0,0,0.18)]",
+          isUser
+            ? "max-w-[72%] border-white/[0.08] bg-[#2A2F38] text-white"
+            : "max-w-[78%] border-white/[0.08] bg-[#242830] text-white",
+        ].join(" ")}
+      >
+        <p className="whitespace-pre-wrap text-[14.5px] leading-[1.7]">
+          {message.content}
+        </p>
+      </article>
+    </div>
   );
+}
+
+function buildAssistantPlaceholderReply({
+  message,
+  selectedSourceCount,
+}: {
+  message: string;
+  selectedSourceCount: number;
+}) {
+  const normalizedMessage = message.trim();
+
+  return [
+    `I'm ready to help with ${selectedSourceCount} selected source${selectedSourceCount === 1 ? "" : "s"}.`,
+    "This is a local placeholder response while chat backend integration is still pending.",
+    normalizedMessage
+      ? `Your latest prompt was: "${normalizedMessage}"`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function createChatMessage(
+  role: ChatMessage["role"],
+  content: string,
+): ChatMessage {
+  return {
+    id: createMessageId(),
+    role,
+    content,
+    timestamp: Date.now(),
+  };
+}
+
+function createMessageId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return Math.random().toString(36).slice(2, 10);
 }

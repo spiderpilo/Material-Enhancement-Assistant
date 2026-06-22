@@ -46,7 +46,7 @@ export function DashboardCreateProjectCard({
     <button
       type="button"
       onClick={onClick}
-      className="dashboard-create-card group relative flex h-[280px] w-full justify-self-start rounded-[12px] border border-dashed border-[rgba(255,255,255,0.14)] px-[26px] pb-[60.415px] pt-[59.61px] text-center transition duration-300 hover:-translate-y-[6px] hover:scale-[1.012] hover:border-[rgba(197,225,165,0.22)] hover:shadow-[0_34px_70px_rgba(0,0,0,0.3),0_0_0_1px_rgba(197,225,165,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(197,225,165,0.22)] active:translate-y-[1px] active:scale-[0.995] xl:w-[289px]"
+      className="dashboard-create-card group relative flex h-[280px] w-full justify-self-start rounded-[12px] border border-dashed border-[rgba(255,255,255,0.14)] px-[26px] pb-[60.415px] pt-[59.61px] text-center transition duration-300 hover:-translate-y-[6px] hover:scale-[1.012] hover:border-[rgba(197,225,165,0.22)] hover:shadow-[0_34px_70px_rgba(0,0,0,0.3),0_0_0_1px_rgba(197,225,165,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(197,225,165,0.22)] active:translate-y-[1px] active:scale-[0.995]"
       aria-label="Create a new project"
     >
       <div className="relative flex w-full flex-col items-center justify-center">
@@ -103,7 +103,7 @@ export function DashboardProjectCard({
   }, [isMenuOpen]);
 
   return (
-    <div className="relative w-full xl:w-[329px]">
+    <div className="relative w-full">
       <Link
         href={project.href}
         className="dashboard-project-card group relative flex h-[280px] w-full flex-col rounded-[12px] p-[25px] transition duration-300 hover:-translate-y-[6px] hover:scale-[1.01] hover:border-[rgba(197,225,165,0.18)] hover:shadow-[0_34px_72px_rgba(0,0,0,0.3),0_0_0_1px_rgba(255,255,255,0.05)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(197,225,165,0.2)] active:translate-y-[1px] active:scale-[0.995]"
@@ -201,7 +201,7 @@ export function DashboardProjectCard({
 
 export function DashboardProjectSkeletonCard() {
   return (
-    <div className="dashboard-skeleton-card flex h-[280px] w-full animate-pulse flex-col justify-between rounded-[12px] p-[25px] xl:w-[329px]">
+    <div className="dashboard-skeleton-card flex h-[280px] w-full animate-pulse flex-col justify-between rounded-[12px] p-[25px]">
       <div className="flex flex-col gap-6">
         <div className="h-14 w-14 rounded-[14px] bg-[rgba(255,255,255,0.08)]" />
         <div className="space-y-3">

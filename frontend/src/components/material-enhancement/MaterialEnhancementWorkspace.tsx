@@ -27,13 +27,11 @@ import {
 import type {
   ActiveTool,
   Material,
-  Recommendation,
 } from "@/lib/material-enhancement/workspace";
 import {
   applyPreviewManifestToMaterial,
   createMaterialFromCourseContentRecord,
   createMaterialFromProjectMaterialRecord,
-  generateRecommendations,
   getMaterialBaseName,
   getSelectedMaterial,
   getSelectedPreviewItem,
@@ -55,10 +53,11 @@ import {
   updateProjectTitle,
 } from "@/lib/api/projects";
 
-const EXPANDED_LEFT_GRID_COLUMNS = "320px";
+const EXPANDED_LEFT_GRID_COLUMNS = "clamp(272px, 22vw, 320px)";
 const COLLAPSED_LEFT_GRID_COLUMNS = "84px";
-const STUDIO_COLLAPSED_WIDTH = "320px";
-const STUDIO_EXPANDED_WIDTH = "minmax(0, min(720px, calc(100vw - 32px)))";
+const STUDIO_COLLAPSED_WIDTH = "clamp(280px, 24vw, 320px)";
+const STUDIO_EXPANDED_WIDTH = "clamp(320px, 34vw, 680px)";
+const WORKSPACE_GRID_HEIGHT = "clamp(520px, calc(100dvh - 100px), 920px)";
 const PREVIEW_POLL_INTERVAL_MS = 1400;
 const PREVIEW_POLL_ATTEMPTS = 40;
 
@@ -98,9 +97,6 @@ export function MaterialEnhancementWorkspace({
   const [activeQuizQuestionIndex, setActiveQuizQuestionIndex] = useState(0);
   const [selectedQuizAnswers, setSelectedQuizAnswers] = useState<Record<string, string>>({});
   const [quizViewMode, setQuizViewMode] = useState<QuizViewMode>("question");
-  const [recommendations, setRecommendations] = useState<Recommendation[]>(
-    generateRecommendations(null),
-  );
   const [isDragging, setIsDragging] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [renamingMaterialId, setRenamingMaterialId] = useState<string | null>(null);
@@ -143,10 +139,6 @@ export function MaterialEnhancementWorkspace({
   const activeQuizHistoryItem =
     quizHistory.find((quizHistoryItem) => quizHistoryItem.id === activeQuizHistoryId) ?? null;
   const activeQuiz = activeQuizHistoryItem?.quiz ?? null;
-
-  useEffect(() => {
-    setRecommendations(generateRecommendations(selectedMaterial));
-  }, [selectedMaterial]);
 
   useEffect(() => {
     selectedMaterialIdRef.current = selectedMaterialId;
@@ -1245,19 +1237,9 @@ export function MaterialEnhancementWorkspace({
     );
   };
 
-  const handleApplyRecommendation = (recommendationId: Recommendation["id"]) => {
-    setRecommendations((currentRecommendations) =>
-      currentRecommendations.map((recommendation) =>
-        recommendation.id === recommendationId
-          ? { ...recommendation, applied: !recommendation.applied }
-          : recommendation,
-      ),
-    );
-  };
-
   return (
-    <main className="min-h-screen overflow-x-auto px-8 pb-7 pt-5">
-      <div className="mx-auto w-full min-w-[1480px] max-w-[1852px]">
+    <main className="min-h-screen overflow-x-hidden px-3 pb-1 pt-3 sm:px-4 sm:pb-2 sm:pt-3.5 lg:px-5 xl:px-6 xl:pb-3 xl:pt-4 2xl:px-8 2xl:pb-5 2xl:pt-5">
+      <div className="mx-auto w-full max-w-[1852px] min-w-0">
         <ProjectHeader
           isProjectNameEditable={isProjectNameEditable}
           projectName={projectName}
@@ -1269,8 +1251,9 @@ export function MaterialEnhancementWorkspace({
         />
 
         <div
-          className="mt-[22px] grid gap-5 transition-[grid-template-columns] duration-[320ms] ease-[cubic-bezier(0.2,0.8,0.2,1)]"
+          className="mt-3 grid min-w-0 auto-rows-fr gap-3 transition-[grid-template-columns] duration-[320ms] ease-[cubic-bezier(0.2,0.8,0.2,1)] sm:mt-4 sm:gap-4 2xl:mt-5 2xl:gap-5"
           style={{
+            height: WORKSPACE_GRID_HEIGHT,
             gridTemplateColumns: getWorkspaceGridTemplateColumns({
               isLeftPanelCollapsed,
               isQuizExpanded,
@@ -1300,10 +1283,10 @@ export function MaterialEnhancementWorkspace({
           />
 
           <PreviewWorkspace
-            onApplyRecommendation={handleApplyRecommendation}
+            key={normalizedRouteProjectUuid}
             onNavigate={navigatePreview}
             previewItem={selectedPreviewItem}
-            recommendations={recommendations}
+            selectedSourceCount={checkedMaterials.length}
             selectedMaterial={selectedMaterial}
           />
 
@@ -1350,7 +1333,7 @@ export function MaterialEnhancementWorkspace({
       </div>
 
       {toastMessage ? (
-        <div className="pointer-events-none fixed right-7 top-6 z-50 max-w-[360px] rounded-[16px] border border-[color:var(--border-soft)] bg-[rgba(28,25,23,0.94)] px-4 py-3 text-[13px] text-[color:var(--text-primary)] shadow-[0_18px_45px_0_rgba(0,0,0,0.5)] backdrop-blur-[10px]">
+        <div className="pointer-events-none fixed right-3 top-3 z-50 max-w-[360px] rounded-[16px] border border-[color:var(--border-soft)] bg-[rgba(28,25,23,0.94)] px-4 py-3 text-[13px] text-[color:var(--text-primary)] shadow-[0_18px_45px_0_rgba(0,0,0,0.5)] backdrop-blur-[10px] sm:right-5 sm:top-5 xl:right-7 xl:top-6">
           {toastMessage}
         </div>
       ) : null}
