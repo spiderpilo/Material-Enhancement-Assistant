@@ -69,7 +69,7 @@ export function MaterialsSidebar({
       ? openActionMenuMaterialId
       : null;
   const basePanelClass =
-    "shadow-panel relative flex h-[949px] min-h-[949px] flex-col overflow-hidden rounded-[24px] border border-[color:var(--border-soft)] bg-[color:var(--bg-panel-left)] backdrop-blur-[12px]";
+    "shadow-panel relative flex h-full min-w-0 min-h-0 flex-col overflow-hidden rounded-[24px] border border-[color:var(--border-soft)] bg-[color:var(--bg-panel-left)] backdrop-blur-[12px]";
 
   useEffect(() => {
     if (!visibleActionMenuMaterialId) {
@@ -103,7 +103,7 @@ export function MaterialsSidebar({
       <aside
         className={[
           basePanelClass,
-          "items-center px-3 py-4",
+          "items-center px-3 py-3.5 2xl:py-4",
           isDragging
             ? "bg-[rgba(184,219,128,0.1)] shadow-[0_0_0_1px_rgba(184,219,128,0.26),0_18px_45px_rgba(0,0,0,0.42)]"
             : "",
@@ -187,8 +187,8 @@ export function MaterialsSidebar({
   }
 
   return (
-    <aside
-      className={[basePanelClass, "px-4 pb-4 pt-5"].join(" ")}
+      <aside
+        className={[basePanelClass, "px-3.5 pb-3.5 pt-4 sm:px-4 sm:pb-4 sm:pt-5"].join(" ")}
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}

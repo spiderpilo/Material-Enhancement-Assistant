@@ -136,8 +136,8 @@ export function PreviewWorkspace({
   };
 
   return (
-    <section className="shadow-panel surface-inset relative flex h-[949px] min-h-[949px] flex-col overflow-hidden rounded-[24px] border border-[color:var(--border-soft)] bg-[color:var(--bg-panel-center)] px-[22px] pt-[18px]">
-      <div className="relative h-[562px] overflow-hidden rounded-[24px] border border-black/70 bg-[linear-gradient(180deg,rgba(85,66,63,0.9)_0%,rgba(76,61,58,0.96)_100%)]">
+    <section className="shadow-panel surface-inset relative flex h-full min-w-0 min-h-0 flex-col overflow-hidden rounded-[24px] border border-[color:var(--border-soft)] bg-[color:var(--bg-panel-center)] px-4 pt-4 sm:px-5 xl:px-6 2xl:px-[22px] 2xl:pt-[18px]">
+      <div className="relative h-[clamp(260px,40vh,500px)] overflow-hidden rounded-[24px] border border-black/70 bg-[linear-gradient(180deg,rgba(85,66,63,0.9)_0%,rgba(76,61,58,0.96)_100%)] 2xl:h-[clamp(280px,42vh,540px)]">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.03),transparent_70%)]" />
 
         <NavigationButton
@@ -151,7 +151,7 @@ export function PreviewWorkspace({
           onClick={() => onNavigate("next")}
         />
 
-        <div className="absolute inset-x-[9.5%] top-[26px] bottom-[37px]">
+        <div className="absolute inset-x-[clamp(4rem,9%,5.25rem)] top-3 bottom-7 xl:top-4 xl:bottom-8 2xl:top-[22px] 2xl:bottom-[37px]">
           <div className="shadow-card-soft relative flex h-full items-center justify-center overflow-hidden rounded-[20px] border border-[#e7e5e4] bg-white">
             {selectedMaterial && previewItem ? (
               <PreviewSurface material={selectedMaterial} previewItem={previewItem} />
@@ -161,7 +161,7 @@ export function PreviewWorkspace({
           </div>
         </div>
 
-        <div className="absolute bottom-[11px] left-1/2 -translate-x-1/2 text-center">
+        <div className="absolute bottom-[11px] left-1/2 max-w-[calc(100%_-_3rem)] -translate-x-1/2 text-center">
           <p className="text-[12.6px] font-semibold text-[color:var(--text-muted)]">
             {selectedMaterial && previewItem
               ? getPreviewLabel(selectedMaterial, previewItem)
@@ -170,7 +170,7 @@ export function PreviewWorkspace({
         </div>
       </div>
 
-      <div className="mt-4 flex min-h-0 flex-1 flex-col">
+      <div className="mt-3 flex min-h-0 flex-1 flex-col 2xl:mt-4">
         <div className="studio-scroll min-h-0 flex-1 overflow-y-auto pr-1">
           {messages.length === 0 ? (
             <div className="flex h-full items-center justify-center px-4 text-center">
@@ -214,8 +214,10 @@ function NavigationButton({
       disabled={disabled}
       aria-label={direction === "previous" ? "Previous preview item" : "Next preview item"}
       className={[
-        "absolute top-[241px] z-10 flex h-10 w-10 items-center justify-center rounded-[12px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] text-[color:var(--text-primary)] shadow-[0_18px_45px_0_rgba(0,0,0,0.45)] transition",
-        direction === "previous" ? "left-6" : "right-6",
+        "absolute top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-[12px] border border-[color:var(--border-soft)] bg-[rgba(255,255,255,0.05)] text-[color:var(--text-primary)] shadow-[0_18px_45px_0_rgba(0,0,0,0.45)] transition",
+        direction === "previous"
+          ? "left-[clamp(0.75rem,2vw,1.5rem)]"
+          : "right-[clamp(0.75rem,2vw,1.5rem)]",
         disabled
           ? "opacity-35"
           : "hover:bg-[rgba(255,255,255,0.09)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-green)]",
@@ -232,12 +234,14 @@ function NavigationButton({
 
 function PreviewEmptyState() {
   return (
-    <div className="flex max-w-[380px] flex-col items-center justify-center px-10 text-center">
-      <div className="mb-5 h-24 w-24 rounded-[28px] border border-[rgba(41,37,36,0.08)] bg-[linear-gradient(145deg,rgba(184,219,128,0.16)_0%,rgba(247,246,211,0.28)_100%)]" />
-      <h3 className="text-[26px] font-bold tracking-[-0.05em] text-[#292524]">
+    <div className="flex w-full max-w-[400px] flex-col items-center justify-center px-6 text-center">
+      <div className="mb-3 h-14 w-14 rounded-[18px] border border-[rgba(41,37,36,0.08)] bg-[linear-gradient(145deg,rgba(184,219,128,0.16)_0%,rgba(247,246,211,0.28)_100%)]" />
+
+      <h3 className="text-[18px] font-semibold tracking-[-0.04em] text-[#292524]">
         Preview ready
       </h3>
-      <p className="mt-3 text-[14px] leading-[23px] text-[#78716c]">
+
+      <p className="mt-2 max-w-[32ch] text-[12px] leading-[18px] text-[#78716c]">
         Upload a file from the Materials panel to activate the preview stage, navigation controls, and chat composer.
       </p>
     </div>
@@ -252,13 +256,20 @@ function PreviewSurface({
   previewItem: PreviewItem;
 }) {
   if (previewItem.imageUrl) {
+    const shouldBoostFit = previewItem.kind === "slide" || previewItem.kind === "page";
+
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={previewItem.imageUrl}
-        alt={`${material.name} preview`}
-        className="h-full w-full object-contain bg-[#fcfbfa]"
-      />
+      <div className="flex h-full w-full items-center justify-center overflow-hidden bg-[#fcfbfa]">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={previewItem.imageUrl}
+          alt={`${material.name} preview`}
+          className={[
+            "h-full w-full object-contain transition-transform duration-200 ease-out",
+            shouldBoostFit ? "scale-[1.05] xl:scale-[1.08] 2xl:scale-[1.06]" : "",
+          ].join(" ")}
+        />
+      </div>
     );
   }
 
