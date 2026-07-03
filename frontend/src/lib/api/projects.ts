@@ -27,6 +27,17 @@ export type GeneratedQuizHistoryRecord = {
   quiz: GeneratedQuiz;
 };
 
+export type ProjectChatSource = {
+  id: number;
+  material_name: string;
+};
+
+export type ProjectChatResponse = {
+  answer: string;
+  selection_mode: "selected" | "title_match" | "fallback";
+  sources: ProjectChatSource[];
+};
+
 type ListGeneratedQuizHistoryResponse = {
   generated_quizzes?: GeneratedQuizHistoryRecord[];
 };
@@ -157,6 +168,44 @@ export async function listGeneratedMaterials({
   );
 
   return Array.isArray(payload.generated_quizzes) ? payload.generated_quizzes : [];
+}
+
+export async function askProjectQuestion({
+  accessToken,
+  projectUuid,
+  message,
+  selectedMaterialId,
+}: {
+  accessToken: string;
+  projectUuid: string;
+  message: string;
+  selectedMaterialId?: number | null;
+}): Promise<ProjectChatResponse> {
+  const response = await fetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/chat`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      message,
+      selected_material_id: selectedMaterialId ?? null,
+    }),
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as
+    | ProjectChatResponse
+    | { detail?: string };
+
+  if (!response.ok) {
+    throw new Error(
+      "detail" in payload && payload.detail
+        ? payload.detail
+        : "Unable to generate a chat response.",
+    );
+  }
+
+  return payload as ProjectChatResponse;
 }
 
 async function readProjectPayload<T>(response: Response, fallbackMessage: string): Promise<T> {

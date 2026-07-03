@@ -13,6 +13,7 @@ from app.utils.token_usage import TokenUsage, extract_token_usage
 
 
 MAX_INPUT_CHARS = 12000
+MAX_CHAT_INPUT_CHARS = 24000
 MAX_QUIZ_INPUT_CHARS = 24000
 MAX_SLIDE_INPUT_CHARS = 28000
 QUIZ_OPTION_LABELS = ("A", "B", "C", "D")
@@ -46,6 +47,38 @@ def improve_clarity(text: str) -> str:
         )
 
     prompt = _build_prompt(text[:MAX_INPUT_CHARS])
+    client = genai.Client(api_key=api_key)
+
+    try:
+        response = client.models.generate_content(
+            model=DEFAULT_GEMINI_MODEL,
+            contents=prompt,
+        )
+    except Exception as exc:
+        raise GeminiServiceError(f"Gemini request failed: {exc}") from exc
+
+    try:
+        response_text = response.text
+    except Exception as exc:
+        raise GeminiServiceError(f"Gemini returned an unreadable response: {exc}") from exc
+
+    if not response_text or not response_text.strip():
+        raise GeminiServiceError("Gemini returned an empty response.")
+
+    return response_text.strip()
+
+
+def answer_project_question(*, question: str, materials: list[QuizSourceMaterial]) -> str:
+    api_key = get_gemini_api_key()
+    if not api_key:
+        raise MissingAPIKeyError(
+            "Gemini API key not found. Set GOOGLE_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY."
+        )
+
+    if not materials:
+        raise GeminiServiceError("At least one source material is required.")
+
+    prompt = _build_project_chat_prompt(question=question, materials=materials)
     client = genai.Client(api_key=api_key)
 
     try:
@@ -177,6 +210,28 @@ def _build_prompt(text: str) -> str:
         "1. A concise clearer rewrite.\n"
         "2. A brief note on what changed.\n\n"
         f"Material:\n{text}"
+    )
+
+
+def _build_project_chat_prompt(*, question: str, materials: list[QuizSourceMaterial]) -> str:
+    source_blocks: list[str] = []
+    remaining_chars = MAX_CHAT_INPUT_CHARS
+
+    for material in materials:
+        if remaining_chars <= 0:
+            break
+
+        clipped_text = material.text[:remaining_chars]
+        remaining_chars -= len(clipped_text)
+        source_blocks.append(f"Document: {material.name}\n{clipped_text}")
+
+    return (
+        "You are a curriculum assistant that answers only from the provided course documents.\n"
+        "Use the documents as the source of truth. If the documents do not contain enough information, say that clearly and do not guess.\n"
+        "Prefer the document titles when referring to sources. Keep the answer concise, direct, and helpful for a student or instructor.\n\n"
+        f"Question:\n{question}\n\n"
+        "Documents:\n"
+        f"{'\n\n'.join(source_blocks)}"
     )
 
 

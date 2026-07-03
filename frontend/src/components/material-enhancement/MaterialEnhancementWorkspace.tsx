@@ -1283,8 +1283,9 @@ export function MaterialEnhancementWorkspace({
           <PreviewWorkspace
             key={normalizedRouteProjectUuid}
             onNavigate={navigatePreview}
+            projectUuid={normalizedRouteProjectUuid}
             previewItem={selectedPreviewItem}
-            selectedSourceCount={checkedMaterials.length}
+            selectedSourceCount={materials.length}
             selectedMaterial={selectedMaterial}
           />
 

@@ -6,6 +6,8 @@ import {
   getMaterialBaseName,
   getPreviewLabel,
 } from "@/lib/material-enhancement/workspace";
+import { askProjectQuestion } from "@/lib/api/projects";
+import { getStoredAccessToken } from "@/lib/api/auth";
 
 import {
   ArrowLeftIcon,
@@ -15,6 +17,7 @@ import { CenterChatComposer } from "./CenterChatComposer";
 
 type PreviewWorkspaceProps = {
   onNavigate: (direction: "previous" | "next") => void;
+  projectUuid: string;
   previewItem: PreviewItem | null;
   selectedSourceCount: number;
   selectedMaterial: Material | null;
@@ -25,10 +28,14 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  sources?: string[];
+  isLoading?: boolean;
+  selectionMode?: "selected" | "title_match" | "fallback";
 };
 
 export function PreviewWorkspace({
   onNavigate,
+  projectUuid,
   previewItem,
   selectedSourceCount,
   selectedMaterial,
@@ -36,8 +43,8 @@ export function PreviewWorkspace({
   const currentIndex = previewItem?.index ?? 0;
   const totalCount = selectedMaterial?.previewItems.length ?? 0;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isChatSubmitting, setIsChatSubmitting] = useState(false);
   const conversationEndRef = useRef<HTMLDivElement>(null);
-  const assistantTimersRef = useRef<number[]>([]);
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
@@ -52,36 +59,80 @@ export function PreviewWorkspace({
     };
   }, [messages]);
 
-  useEffect(() => {
-    return () => {
-      for (const timerId of assistantTimersRef.current) {
-        window.clearTimeout(timerId);
-      }
-      assistantTimersRef.current = [];
-    };
-  }, []);
-
-  const handleChatSubmit = (message: string) => {
+  const handleChatSubmit = async (message: string) => {
     const userMessage = createChatMessage("user", message);
-    const assistantMessage = createChatMessage(
-      "assistant",
-      buildAssistantPlaceholderReply({
-        message,
-        selectedSourceCount,
-      }),
-    );
+    const assistantMessageId = createMessageId();
 
-    setMessages((currentMessages) => [...currentMessages, userMessage]);
+    setMessages((currentMessages) => [
+      ...currentMessages,
+      userMessage,
+      {
+        id: assistantMessageId,
+        role: "assistant",
+        content: "Reading the best-matching document...",
+        timestamp: Date.now(),
+        isLoading: true,
+      },
+    ]);
 
-    // TODO: Replace this local placeholder with a real project chat backend response.
-    const timerId = window.setTimeout(() => {
-      setMessages((currentMessages) => [...currentMessages, assistantMessage]);
-      assistantTimersRef.current = assistantTimersRef.current.filter(
-        (currentTimerId) => currentTimerId !== timerId,
+    setIsChatSubmitting(true);
+
+    const accessToken = getStoredAccessToken();
+    if (!accessToken) {
+      setMessages((currentMessages) =>
+        currentMessages.map((messageItem) =>
+          messageItem.id === assistantMessageId
+            ? {
+                ...messageItem,
+                content: "Sign in to use the document assistant.",
+                isLoading: false,
+              }
+            : messageItem,
+        ),
       );
-    }, 220);
+      setIsChatSubmitting(false);
+      return;
+    }
 
-    assistantTimersRef.current.push(timerId);
+    try {
+      const response = await askProjectQuestion({
+        accessToken,
+        projectUuid,
+        message,
+        selectedMaterialId: selectedMaterial?.databaseId ?? null,
+      });
+
+      setMessages((currentMessages) =>
+        currentMessages.map((messageItem) =>
+          messageItem.id === assistantMessageId
+            ? {
+                ...messageItem,
+                content: normalizeChatContent(response.answer),
+                sources: response.sources.map((source) => source.material_name),
+                selectionMode: response.selection_mode,
+                isLoading: false,
+              }
+            : messageItem,
+        ),
+      );
+    } catch (error) {
+      setMessages((currentMessages) =>
+        currentMessages.map((messageItem) =>
+          messageItem.id === assistantMessageId
+            ? {
+                ...messageItem,
+                content:
+                  error instanceof Error
+                    ? error.message
+                    : "Unable to answer from the current project documents.",
+                isLoading: false,
+              }
+            : messageItem,
+        ),
+      );
+    } finally {
+      setIsChatSubmitting(false);
+    }
   };
 
   return (
@@ -138,7 +189,7 @@ export function PreviewWorkspace({
         </div>
 
         <CenterChatComposer
-          disabled={selectedSourceCount === 0}
+          disabled={selectedSourceCount === 0 || isChatSubmitting}
           onSubmit={handleChatSubmit}
           selectedSourceCount={selectedSourceCount}
         />
@@ -426,29 +477,26 @@ function ChatMessageBubble({ message }: { message: ChatMessage }) {
         <p className="whitespace-pre-wrap text-[14.5px] leading-[1.7]">
           {message.content}
         </p>
+        {message.sources && message.sources.length > 0 ? (
+          <p className="mt-3 text-[11.5px] leading-5 text-white/58">
+            {message.selectionMode ? `${getSelectionModeLabel(message.selectionMode)} • ` : ""}
+            Sources: {message.sources.join(", ")}
+          </p>
+        ) : null}
       </article>
     </div>
   );
 }
 
-function buildAssistantPlaceholderReply({
-  message,
-  selectedSourceCount,
-}: {
-  message: string;
-  selectedSourceCount: number;
-}) {
-  const normalizedMessage = message.trim();
-
-  return [
-    `I'm ready to help with ${selectedSourceCount} selected source${selectedSourceCount === 1 ? "" : "s"}.`,
-    "This is a local placeholder response while chat backend integration is still pending.",
-    normalizedMessage
-      ? `Your latest prompt was: "${normalizedMessage}"`
-      : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+function getSelectionModeLabel(selectionMode: NonNullable<ChatMessage["selectionMode"]>) {
+  switch (selectionMode) {
+    case "selected":
+      return "Selected document";
+    case "title_match":
+      return "Matched by title";
+    default:
+      return "Fallback document";
+  }
 }
 
 function createChatMessage(
@@ -461,6 +509,26 @@ function createChatMessage(
     content,
     timestamp: Date.now(),
   };
+}
+
+function normalizeChatContent(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value == null) {
+    return "";
+  }
+
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value);
 }
 
 function createMessageId() {

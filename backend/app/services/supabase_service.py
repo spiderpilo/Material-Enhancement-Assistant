@@ -2,6 +2,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 from urllib import error, parse, request
@@ -11,6 +12,7 @@ from pydantic import ValidationError
 
 from app.config import get_supabase_settings
 from app.models.account_model import CreateAccountResponse, LoginAccountResponse, UserProfileRecord
+from app.models.chat_model import ProjectChatResponse, ProjectChatSourceRecord
 from app.models.document_model import (
     CourseContentPreviewItem,
     CourseContentPreviewManifest,
@@ -22,7 +24,11 @@ from app.models.generated_material_model import GeneratedMaterialRecord
 from app.models.project_model import ProjectMaterialRecord, ProjectRecord, ProjectSummary
 from app.models.quiz_model import GeneratedQuiz, GeneratedQuizHistoryRecord, QuizSourceMaterial
 from app.services.export_service import build_slide_deck_pptx_bytes
-from app.services.llm_service import generate_quiz_with_usage, generate_slide_deck_outline_with_usage
+from app.services.llm_service import (
+    answer_project_question as generate_project_chat_answer,
+    generate_quiz_with_usage,
+    generate_slide_deck_outline_with_usage,
+)
 from app.services.parser_service import DocumentParseError, parse_document
 from app.services.preview_service import (
     DocumentPreviewError,
@@ -979,6 +985,46 @@ def get_course_content_texts_for_user(
     return source_materials
 
 
+def answer_project_question_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+    message: str,
+    selected_material_id: int | None = None,
+) -> ProjectChatResponse:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    project = get_project_for_user(access_token=access_token, project_uuid=project_uuid)
+    selected_materials, selection_mode = _select_chat_source_materials(
+        project_materials=project.materials,
+        message=message,
+        selected_material_id=selected_material_id,
+    )
+
+    if not selected_materials:
+        raise ProjectNotFoundError("No course materials were found for this project.")
+
+    source_material_ids = [material.id for material in selected_materials]
+    source_materials = get_course_content_texts_for_user(
+        access_token=access_token,
+        project_uuid=project_uuid,
+        material_ids=source_material_ids,
+    )
+    answer = generate_project_chat_answer(question=message, materials=source_materials)
+
+    return ProjectChatResponse(
+        answer=answer,
+        selection_mode=selection_mode,
+        sources=[
+            ProjectChatSourceRecord(id=material.id, material_name=material.material_name)
+            for material in selected_materials
+        ],
+    )
+
+
 def list_generated_materials_for_user(
     *,
     access_token: str,
@@ -1007,6 +1053,75 @@ def list_generated_materials_for_user(
         project_uuid=normalized_project_uuid,
     )
     return [GeneratedMaterialRecord.model_validate(row) for row in rows]
+
+
+def _select_chat_source_materials(
+    *,
+    project_materials: list[ProjectMaterialRecord],
+    message: str,
+    selected_material_id: int | None,
+) -> tuple[list[ProjectMaterialRecord], str]:
+    if not project_materials:
+        return [], "fallback"
+
+    if selected_material_id is not None:
+        for material in project_materials:
+            if material.id == selected_material_id:
+                return [material], "selected"
+
+        raise ProjectNotFoundError("Selected source was not found in this project.")
+
+    query_tokens = _tokenize_chat_query(message)
+    scored_materials: list[tuple[int, ProjectMaterialRecord]] = []
+
+    for material in project_materials:
+        score = _score_chat_material_title(material.material_name, query_tokens)
+        if score > 0:
+            scored_materials.append((score, material))
+
+    if scored_materials:
+        scored_materials.sort(key=lambda item: (-item[0], item[1].id))
+        return [material for _, material in scored_materials[:3]], "title_match"
+
+    return [project_materials[0]], "fallback"
+
+
+def _score_chat_material_title(title: str, query_tokens: set[str]) -> int:
+    normalized_title = _normalize_chat_text(title)
+    if not normalized_title:
+        return 0
+
+    score = 0
+    title_tokens = set(_tokenize_chat_query(title))
+
+    if title_tokens & query_tokens:
+        score += len(title_tokens & query_tokens) * 2
+
+    for token in query_tokens:
+        if token in normalized_title:
+            score += 1
+
+    if normalized_title in query_tokens:
+        score += 3
+
+    return score
+
+
+def _tokenize_chat_query(text: str) -> set[str]:
+    normalized_text = _normalize_chat_text(text)
+    if not normalized_text:
+        return set()
+
+    tokens = {
+        token
+        for token in normalized_text.split()
+        if len(token) >= 3 and token not in {"the", "and", "for", "with", "from", "this", "that", "what", "how", "why", "when", "where"}
+    }
+    return tokens
+
+
+def _normalize_chat_text(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
 
 
 def list_generated_quiz_history_for_user(
