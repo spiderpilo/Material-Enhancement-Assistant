@@ -31,6 +31,7 @@ from app.services.embedding_service import (
     EmbeddedTextChunk,
     GeminiEmbeddingError,
     MissingGeminiAPIKeyError,
+    TextChunk,
     chunk_text,
     embed_chunks,
     embed_text,
@@ -40,7 +41,7 @@ from app.services.llm_service import (
     generate_quiz_with_usage,
     generate_slide_deck_outline_with_usage,
 )
-from app.services.parser_service import DocumentParseError, parse_document
+from app.services.parser_service import DocumentParseError, ParsedTextUnit, parse_document, parse_document_units
 from app.services.preview_service import (
     DocumentPreviewError,
     convert_pptx_to_pdf_bytes,
@@ -115,6 +116,9 @@ class RagRetrievedChunk:
     chunk_index: int
     text: str
     similarity: float
+    location_kind: str | None = None
+    location_start: int | None = None
+    location_end: int | None = None
 
 
 def login_account(*, email: str, password: str) -> LoginAccountResponse:
@@ -724,8 +728,8 @@ def generate_course_content_rag_index(
             rag_chunk_count=0,
             rag_error=None,
         )
-        text = parse_document(file_bytes=file_bytes, file_type=source_type)
-        chunks = chunk_text(text)
+        parsed_units = parse_document_units(file_bytes=file_bytes, file_type=source_type)
+        chunks = _chunk_parsed_text_units(parsed_units)
         if not chunks:
             raise SupabaseServiceError("No text chunks could be created from the uploaded file.")
 
@@ -771,6 +775,71 @@ def generate_course_content_rag_index(
             rag_chunk_count=0,
             rag_error=str(exc),
         )
+
+
+def _chunk_parsed_text_units(units: list[ParsedTextUnit]) -> list[TextChunk]:
+    normalized_parts: list[str] = []
+    unit_spans: list[dict[str, int | str]] = []
+    cursor = 0
+
+    for unit in units:
+        normalized_text = " ".join(unit.text.split())
+        if not normalized_text:
+            continue
+
+        if normalized_parts:
+            cursor += 1
+
+        start_char = cursor
+        end_char = start_char + len(normalized_text)
+        normalized_parts.append(normalized_text)
+        unit_spans.append(
+            {
+                "start_char": start_char,
+                "end_char": end_char,
+                "location_kind": unit.location_kind,
+                "location_start": unit.location_start,
+                "location_end": unit.location_end,
+            }
+        )
+        cursor = end_char
+
+    if not normalized_parts:
+        return []
+
+    raw_chunks = chunk_text(" ".join(normalized_parts))
+    chunks: list[TextChunk] = []
+
+    for raw_chunk in raw_chunks:
+        overlapping_spans = [
+            unit_span
+            for unit_span in unit_spans
+            if int(unit_span["start_char"]) < raw_chunk.end_char
+            and int(unit_span["end_char"]) > raw_chunk.start_char
+        ]
+        location_kind = (
+            str(overlapping_spans[0]["location_kind"]) if overlapping_spans else None
+        )
+        location_start = min(
+            int(unit_span["location_start"]) for unit_span in overlapping_spans
+        ) if overlapping_spans else None
+        location_end = max(
+            int(unit_span["location_end"]) for unit_span in overlapping_spans
+        ) if overlapping_spans else None
+
+        chunks.append(
+            TextChunk(
+                index=len(chunks),
+                text=raw_chunk.text,
+                start_char=raw_chunk.start_char,
+                end_char=raw_chunk.end_char,
+                location_kind=location_kind,
+                location_start=location_start,
+                location_end=location_end,
+            )
+        )
+
+    return chunks
 
 
 def get_course_content_preview(*, course_content_id: int) -> CourseContentPreviewManifest:
@@ -1110,6 +1179,7 @@ def answer_project_question_for_user(
     project_uuid: str,
     message: str,
     selected_material_id: int | None = None,
+    selected_material_ids: list[int] | None = None,
 ) -> ProjectChatResponse:
     try:
         settings = get_supabase_settings()
@@ -1122,25 +1192,35 @@ def answer_project_question_for_user(
     if not project.materials:
         raise ProjectNotFoundError("No course materials were found for this project.")
 
-    selected_material = None
-    if selected_material_id is not None:
-        selected_material = next(
-            (material for material in project.materials if material.id == selected_material_id),
-            None,
-        )
-        if selected_material is None:
-            raise ProjectNotFoundError("Selected source was not found in this project.")
+    normalized_selected_material_ids = _normalize_selected_material_ids(
+        selected_material_id=selected_material_id,
+        selected_material_ids=selected_material_ids,
+    )
+    selected_materials = []
+    if normalized_selected_material_ids:
+        material_by_id = {
+            material.id: material
+            for material in project.materials
+            if material.id is not None
+        }
+        selected_materials = [
+            material_by_id[material_id]
+            for material_id in normalized_selected_material_ids
+            if material_id in material_by_id
+        ]
+        if len(selected_materials) != len(normalized_selected_material_ids):
+            raise ProjectNotFoundError("One or more selected sources were not found in this project.")
 
     query_embedding = embed_text(message)
-    retrieved_chunks = _match_course_content_chunks(
+    retrieved_chunks = _match_course_content_chunks_for_selection(
         url=settings.url,
         service_role_key=settings.service_role_key,
         project_id=project.id,
         query_embedding=query_embedding,
-        selected_material_id=selected_material_id,
+        selected_material_ids=normalized_selected_material_ids,
         match_count=8,
     )
-    selection_mode = "rag_selected" if selected_material_id is not None else "rag"
+    selection_mode = "rag_selected" if normalized_selected_material_ids else "rag"
 
     if not retrieved_chunks:
         return ProjectChatResponse(
@@ -1150,9 +1230,10 @@ def answer_project_question_for_user(
             ),
             selection_mode="rag_unavailable",
             sources=[
-                ProjectChatSourceRecord(id=selected_material.id, material_name=selected_material.material_name)
+                ProjectChatSourceRecord(id=material.id, material_name=material.material_name)
+                for material in selected_materials
             ]
-            if selected_material
+            if selected_materials
             else [],
         )
 
@@ -1161,7 +1242,7 @@ def answer_project_question_for_user(
         materials=[
             QuizSourceMaterial(
                 id=chunk.course_content_id,
-                name=f"{chunk.material_name} (chunk {chunk.chunk_index + 1})",
+                name=_format_rag_source_name(chunk),
                 text=chunk.text,
             )
             for chunk in retrieved_chunks
@@ -3229,6 +3310,9 @@ def _replace_course_content_chunks(
             "text": embedded_chunk.chunk.text,
             "start_char": embedded_chunk.chunk.start_char,
             "end_char": embedded_chunk.chunk.end_char,
+            "location_kind": embedded_chunk.chunk.location_kind,
+            "location_start": embedded_chunk.chunk.location_start,
+            "location_end": embedded_chunk.chunk.location_end,
             "embedding": _format_vector(embedded_chunk.embedding),
         }
         for embedded_chunk in embedded_chunks
@@ -3271,6 +3355,76 @@ def _delete_course_content_chunks(
     return None
 
 
+def _normalize_selected_material_ids(
+    *,
+    selected_material_id: int | None,
+    selected_material_ids: list[int] | None,
+) -> list[int]:
+    normalized_ids: list[int] = []
+
+    for material_id in [selected_material_id, *(selected_material_ids or [])]:
+        if not isinstance(material_id, int) or material_id <= 0:
+            continue
+        if material_id not in normalized_ids:
+            normalized_ids.append(material_id)
+
+    return normalized_ids
+
+
+def _match_course_content_chunks_for_selection(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    query_embedding: list[float],
+    selected_material_ids: list[int],
+    match_count: int,
+) -> list[RagRetrievedChunk]:
+    if not selected_material_ids:
+        return _match_course_content_chunks(
+            url=url,
+            service_role_key=service_role_key,
+            project_id=project_id,
+            query_embedding=query_embedding,
+            selected_material_id=None,
+            match_count=match_count,
+        )
+
+    if len(selected_material_ids) == 1:
+        return _match_course_content_chunks(
+            url=url,
+            service_role_key=service_role_key,
+            project_id=project_id,
+            query_embedding=query_embedding,
+            selected_material_id=selected_material_ids[0],
+            match_count=match_count,
+        )
+
+    chunk_by_key: dict[tuple[int, int], RagRetrievedChunk] = {}
+
+    for material_id in selected_material_ids:
+        material_chunks = _match_course_content_chunks(
+            url=url,
+            service_role_key=service_role_key,
+            project_id=project_id,
+            query_embedding=query_embedding,
+            selected_material_id=material_id,
+            match_count=match_count,
+        )
+
+        for chunk in material_chunks:
+            chunk_key = (chunk.course_content_id, chunk.chunk_index)
+            previous_chunk = chunk_by_key.get(chunk_key)
+            if previous_chunk is None or chunk.similarity > previous_chunk.similarity:
+                chunk_by_key[chunk_key] = chunk
+
+    return sorted(
+        chunk_by_key.values(),
+        key=lambda chunk: chunk.similarity,
+        reverse=True,
+    )[:match_count]
+
+
 def _match_course_content_chunks(
     *,
     url: str,
@@ -3306,6 +3460,9 @@ def _match_course_content_chunks(
         material_name = row.get("material_name")
         text = row.get("text")
         similarity = row.get("similarity")
+        location_kind = row.get("location_kind")
+        location_start = _read_optional_int(row, "location_start")
+        location_end = _read_optional_int(row, "location_end")
 
         if (
             course_content_id is None
@@ -3322,6 +3479,9 @@ def _match_course_content_chunks(
                 chunk_index=chunk_index,
                 text=text,
                 similarity=float(similarity) if isinstance(similarity, (int, float)) else 0.0,
+                location_kind=location_kind if isinstance(location_kind, str) else None,
+                location_start=location_start,
+                location_end=location_end,
             )
         )
 
@@ -3332,16 +3492,20 @@ def _build_rag_source_records(chunks: list[RagRetrievedChunk]) -> list[ProjectCh
     source_summaries: dict[int, dict[str, Any]] = {}
 
     for chunk in chunks:
+        location_label = _format_rag_location_label(chunk)
         summary = source_summaries.setdefault(
             chunk.course_content_id,
             {
                 "material_name": chunk.material_name,
                 "chunk_count": 0,
                 "top_similarity": chunk.similarity,
+                "locations": [],
             },
         )
         summary["chunk_count"] += 1
         summary["top_similarity"] = max(float(summary["top_similarity"]), chunk.similarity)
+        if location_label and location_label not in summary["locations"]:
+            summary["locations"].append(location_label)
 
     return [
         ProjectChatSourceRecord(
@@ -3349,9 +3513,41 @@ def _build_rag_source_records(chunks: list[RagRetrievedChunk]) -> list[ProjectCh
             material_name=str(summary["material_name"]),
             chunk_count=int(summary["chunk_count"]),
             top_similarity=float(summary["top_similarity"]),
+            locations=[str(location) for location in summary["locations"]],
         )
         for course_content_id, summary in source_summaries.items()
     ]
+
+
+def _format_rag_source_name(chunk: RagRetrievedChunk) -> str:
+    location_label = _format_rag_location_label(chunk)
+    if not location_label:
+        return chunk.material_name
+
+    return f"{chunk.material_name} ({location_label})"
+
+
+def _format_rag_location_label(chunk: RagRetrievedChunk) -> str | None:
+    if not chunk.location_kind or chunk.location_start is None:
+        return None
+
+    location_end = chunk.location_end or chunk.location_start
+    if chunk.location_kind == "page":
+        return f"pages {chunk.location_start}-{location_end}"
+
+    singular_label = {
+        "slide": "slide",
+        "section": "section",
+    }.get(chunk.location_kind, chunk.location_kind)
+    plural_label = {
+        "slide": "slides",
+        "section": "sections",
+    }.get(chunk.location_kind, f"{singular_label}s")
+
+    if location_end != chunk.location_start:
+        return f"{plural_label} {chunk.location_start}-{location_end}"
+
+    return f"{singular_label} {chunk.location_start}"
 
 
 def _upload_preview_manifest(

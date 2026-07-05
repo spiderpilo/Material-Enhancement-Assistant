@@ -131,6 +131,7 @@ def chat_with_project(
             project_uuid=project_uuid,
             message=normalized_message,
             selected_material_id=payload.selected_material_id,
+            selected_material_ids=payload.selected_material_ids,
         )
     except MissingSupabaseConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

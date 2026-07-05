@@ -32,6 +32,7 @@ export type ProjectChatSource = {
   material_name: string;
   chunk_count?: number | null;
   top_similarity?: number | null;
+  locations?: string[];
 };
 
 export type ProjectChatResponse = {
@@ -177,11 +178,13 @@ export async function askProjectQuestion({
   projectUuid,
   message,
   selectedMaterialId,
+  selectedMaterialIds,
 }: {
   accessToken: string;
   projectUuid: string;
   message: string;
   selectedMaterialId?: number | null;
+  selectedMaterialIds?: number[] | null;
 }): Promise<ProjectChatResponse> {
   const response = await fetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/chat`, {
     method: "POST",
@@ -192,6 +195,7 @@ export async function askProjectQuestion({
     body: JSON.stringify({
       message,
       selected_material_id: selectedMaterialId ?? null,
+      selected_material_ids: selectedMaterialIds ?? [],
     }),
   });
 

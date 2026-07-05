@@ -6,7 +6,11 @@ import {
   getMaterialBaseName,
   getPreviewLabel,
 } from "@/lib/material-enhancement/workspace";
-import { askProjectQuestion } from "@/lib/api/projects";
+import {
+  askProjectQuestion,
+  type ProjectChatResponse,
+  type ProjectChatSource,
+} from "@/lib/api/projects";
 import { getStoredAccessToken } from "@/lib/api/auth";
 
 import {
@@ -19,6 +23,7 @@ type PreviewWorkspaceProps = {
   onNavigate: (direction: "previous" | "next") => void;
   projectUuid: string;
   previewItem: PreviewItem | null;
+  selectedSourceIds: number[];
   selectedSourceCount: number;
   selectedMaterial: Material | null;
 };
@@ -30,13 +35,14 @@ type ChatMessage = {
   timestamp: number;
   sources?: string[];
   isLoading?: boolean;
-  selectionMode?: "selected" | "title_match" | "fallback";
+  selectionMode?: ProjectChatResponse["selection_mode"];
 };
 
 export function PreviewWorkspace({
   onNavigate,
   projectUuid,
   previewItem,
+  selectedSourceIds,
   selectedSourceCount,
   selectedMaterial,
 }: PreviewWorkspaceProps) {
@@ -99,7 +105,8 @@ export function PreviewWorkspace({
         accessToken,
         projectUuid,
         message,
-        selectedMaterialId: selectedMaterial?.databaseId ?? null,
+        selectedMaterialId: selectedSourceIds.length === 1 ? selectedSourceIds[0] : null,
+        selectedMaterialIds: selectedSourceIds,
       });
 
       setMessages((currentMessages) =>
@@ -108,7 +115,7 @@ export function PreviewWorkspace({
             ? {
                 ...messageItem,
                 content: normalizeChatContent(response.answer),
-                sources: response.sources.map((source) => source.material_name),
+                sources: response.sources.map(formatChatSourceLabel),
                 selectionMode: response.selection_mode,
                 isLoading: false,
               }
@@ -490,7 +497,7 @@ function ChatMessageBubble({ message }: { message: ChatMessage }) {
         </p>
         {message.sources && message.sources.length > 0 ? (
           <p className="mt-3 text-[11.5px] leading-5 text-white/58">
-            {message.selectionMode ? `${getSelectionModeLabel(message.selectionMode)} • ` : ""}
+            {message.selectionMode ? `${getSelectionModeLabel(message.selectionMode)} - ` : ""}
             Sources: {message.sources.join(", ")}
           </p>
         ) : null}
@@ -501,13 +508,31 @@ function ChatMessageBubble({ message }: { message: ChatMessage }) {
 
 function getSelectionModeLabel(selectionMode: NonNullable<ChatMessage["selectionMode"]>) {
   switch (selectionMode) {
+    case "rag":
+      return "Project sources";
+    case "rag_selected":
+      return "Selected sources";
+    case "rag_unavailable":
+      return "Indexed sources unavailable";
     case "selected":
       return "Selected document";
     case "title_match":
       return "Matched by title";
-    default:
+    case "fallback":
       return "Fallback document";
   }
+}
+
+function formatChatSourceLabel(source: ProjectChatSource): string {
+  const locations = Array.isArray(source.locations)
+    ? source.locations.filter((location) => location.trim().length > 0)
+    : [];
+
+  if (locations.length === 0) {
+    return source.material_name;
+  }
+
+  return `${source.material_name} (${locations.join(", ")})`;
 }
 
 function createChatMessage(

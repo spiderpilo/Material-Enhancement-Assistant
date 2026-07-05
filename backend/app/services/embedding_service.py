@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 from google import genai
 from google.genai import types
@@ -28,6 +29,9 @@ class TextChunk:
     text: str
     start_char: int
     end_char: int
+    location_kind: Optional[str] = None
+    location_start: Optional[int] = None
+    location_end: Optional[int] = None
 
 
 @dataclass(frozen=True)

@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS public.course_content_chunks (
   text text NOT NULL,
   start_char integer,
   end_char integer,
+  location_kind text,
+  location_start integer,
+  location_end integer,
   embedding vector(768) NOT NULL,
   created_at timestamptz NOT NULL DEFAULT NOW(),
   updated_at timestamptz NOT NULL DEFAULT NOW(),
@@ -88,6 +91,9 @@ RETURNS TABLE (
   text text,
   start_char integer,
   end_char integer,
+  location_kind text,
+  location_start integer,
+  location_end integer,
   similarity double precision
 )
 LANGUAGE sql
@@ -102,6 +108,9 @@ AS $$
     chunk.text,
     chunk.start_char,
     chunk.end_char,
+    chunk.location_kind,
+    chunk.location_start,
+    chunk.location_end,
     1 - (chunk.embedding <=> query_embedding) AS similarity
   FROM public.course_content_chunks AS chunk
   JOIN public.course_contents AS course_content

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ProjectChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     selected_material_id: Optional[int] = Field(default=None, ge=1)
+    selected_material_ids: Optional[list[int]] = Field(default=None, max_length=12)
 
 
 class ProjectChatSourceRecord(BaseModel):
@@ -17,6 +18,7 @@ class ProjectChatSourceRecord(BaseModel):
     material_name: str
     chunk_count: Optional[int] = None
     top_similarity: Optional[float] = None
+    locations: list[str] = Field(default_factory=list)
 
 
 class ProjectChatResponse(BaseModel):

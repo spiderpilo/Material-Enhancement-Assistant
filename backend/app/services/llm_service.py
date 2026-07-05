@@ -223,13 +223,23 @@ def _build_project_chat_prompt(*, question: str, materials: list[QuizSourceMater
 
         clipped_text = material.text[:remaining_chars]
         remaining_chars -= len(clipped_text)
-        source_blocks.append(f"Document: {material.name}\n{clipped_text}")
+        source_blocks.append(
+            "Source header: "
+            f"{material.name}\n"
+            "Citation rule: cite the source header location exactly as written; "
+            "do not narrow a page range to a single page.\n"
+            f"Text:\n{clipped_text}"
+        )
 
     joined_sources = "\n\n".join(source_blocks)
     return (
         "You are a curriculum assistant that answers only from the provided course documents.\n"
         "Use the documents as the source of truth. If the documents do not contain enough information, say that clearly and do not guess.\n"
-        "Prefer the document titles when referring to sources. Keep the answer concise, direct, and helpful for a student or instructor.\n\n"
+        "Prefer the source header when referring to sources. "
+        "If a source header gives a page range such as pages 5-11, cite that full range exactly. "
+        "Do not infer or mention a single exact page from within a page range. "
+        "Never mention internal retrieval chunks.\n"
+        "Keep the answer concise, direct, and helpful for a student or instructor.\n\n"
         f"Question:\n{question}\n\n"
         "Documents:\n"
         f"{joined_sources}"

@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -49,7 +52,7 @@ class GeneratedQuizHistoryRecord(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: int
-    created_at: datetime | None = None
+    created_at: Optional[datetime] = None
     quiz: GeneratedQuiz
 
 
