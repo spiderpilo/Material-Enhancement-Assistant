@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query, Response, status
@@ -18,6 +20,7 @@ from app.models.project_model import (
     UpdateProjectRequest,
 )
 from app.services.export_service import SlideDeckExportError
+from app.services.embedding_service import GeminiEmbeddingError, MissingGeminiAPIKeyError
 from app.services.llm_service import GeminiServiceError, MissingAPIKeyError
 from app.services.supabase_service import (
     AuthenticationError,
@@ -139,7 +142,9 @@ def chat_with_project(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except MissingAPIKeyError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except (GeminiServiceError, SupabaseServiceError) as exc:
+    except MissingGeminiAPIKeyError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except (GeminiEmbeddingError, GeminiServiceError, SupabaseServiceError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

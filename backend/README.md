@@ -40,7 +40,7 @@ Project routes use `Authorization: Bearer <mea_access_token>`. The backend resol
 - `403` when the project exists but belongs to another user
 - `404` when the UUID does not exist
 
-`POST /upload-doc` accepts a PDF, DOCX, or PPTX file up to 50MB, uploads it to Supabase Storage, inserts a `course_contents` row, queues preview rendering, and returns the inserted record with preview metadata.
+`POST /upload-doc` accepts a PDF, DOCX, or PPTX file up to 50MB, uploads it to Supabase Storage, inserts a `course_contents` row, queues preview rendering and RAG indexing, and returns the inserted record with preview/RAG metadata. If the same file bytes already exist in the same project, the endpoint returns `409`.
 
 `POST /quiz/generate` now requires JSON body:
 - `project_uuid` (string)
@@ -89,6 +89,9 @@ python3 -m pip install PyMuPDF
 If you already have a repo-root `.env`, keep it and make sure it contains:
 
 ```bash
+GOOGLE_GEMINI_API_KEY=your-gemini-api-key
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+GEMINI_EMBEDDING_DIMENSIONS=768
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SUPABASE_STORAGE_BUCKET=course-contents
@@ -118,6 +121,13 @@ To support quiz persistence payloads and source tracking, apply:
 ```bash
 backend/.venv/bin/python backend/database/apply_migration.py \
   backend/database/migrations/20260525_generated_materials_tool_payload.sql
+```
+
+To support Gemini RAG chat indexing and duplicate upload detection, apply:
+
+```bash
+backend/.venv/bin/python backend/database/apply_migration.py \
+  backend/database/migrations/20260704_rag_chat_gemini_pgvector.sql
 ```
 
 If project creation fails with:
@@ -170,7 +180,9 @@ Expected success response shape:
   "data_size": 12345,
   "source_type": "pdf",
   "preview_status": "pending",
-  "preview_count": 0
+  "preview_count": 0,
+  "rag_status": "pending",
+  "rag_chunk_count": 0
 }
 ```
 

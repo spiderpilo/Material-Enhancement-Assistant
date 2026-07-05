@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -6,7 +9,7 @@ from app.models.document_model import CourseContentRecord
 
 
 class CreateProjectRequest(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=120)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
 
 
 class UpdateProjectRequest(BaseModel):
@@ -16,20 +19,20 @@ class UpdateProjectRequest(BaseModel):
 class ProjectMaterialRecord(CourseContentRecord):
     model_config = ConfigDict(extra="ignore")
 
-    uploaded_at: datetime | None = None
+    uploaded_at: Optional[datetime] = None
 
 
 class ProjectSummary(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    id: int | None = None
+    id: Optional[int] = None
     project_uuid: str
     name: str
     owner_user_id: str
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     material_count: int = 0
-    last_updated: datetime | None = None
+    last_updated: Optional[datetime] = None
 
 
 class ProjectRecord(ProjectSummary):

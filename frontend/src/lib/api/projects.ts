@@ -30,11 +30,13 @@ export type GeneratedQuizHistoryRecord = {
 export type ProjectChatSource = {
   id: number;
   material_name: string;
+  chunk_count?: number | null;
+  top_similarity?: number | null;
 };
 
 export type ProjectChatResponse = {
   answer: string;
-  selection_mode: "selected" | "title_match" | "fallback";
+  selection_mode: "selected" | "title_match" | "fallback" | "rag" | "rag_selected" | "rag_unavailable";
   sources: ProjectChatSource[];
 };
 

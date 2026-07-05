@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,6 +9,8 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT_DIR / ".env")
 
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
+DEFAULT_GEMINI_EMBEDDING_DIMENSIONS = 768
 GEMINI_ENV_VARS = (
     "GOOGLE_GEMINI_API_KEY",
     "GEMINI_API_KEY",
@@ -27,6 +31,24 @@ def get_gemini_api_key() -> str:
         if value:
             return value
     return None
+
+
+def get_gemini_embedding_model() -> str:
+    value = os.getenv("GEMINI_EMBEDDING_MODEL")
+    return value.strip() if value and value.strip() else DEFAULT_GEMINI_EMBEDDING_MODEL
+
+
+def get_gemini_embedding_dimensions() -> int:
+    value = os.getenv("GEMINI_EMBEDDING_DIMENSIONS")
+    if not value or not value.strip():
+        return DEFAULT_GEMINI_EMBEDDING_DIMENSIONS
+
+    try:
+        dimensions = int(value)
+    except ValueError:
+        return DEFAULT_GEMINI_EMBEDDING_DIMENSIONS
+
+    return dimensions if dimensions > 0 else DEFAULT_GEMINI_EMBEDDING_DIMENSIONS
 
 
 def get_supabase_settings() -> SupabaseSettings:

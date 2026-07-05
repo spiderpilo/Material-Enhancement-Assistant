@@ -225,13 +225,14 @@ def _build_project_chat_prompt(*, question: str, materials: list[QuizSourceMater
         remaining_chars -= len(clipped_text)
         source_blocks.append(f"Document: {material.name}\n{clipped_text}")
 
+    joined_sources = "\n\n".join(source_blocks)
     return (
         "You are a curriculum assistant that answers only from the provided course documents.\n"
         "Use the documents as the source of truth. If the documents do not contain enough information, say that clearly and do not guess.\n"
         "Prefer the document titles when referring to sources. Keep the answer concise, direct, and helpful for a student or instructor.\n\n"
         f"Question:\n{question}\n\n"
         "Documents:\n"
-        f"{'\n\n'.join(source_blocks)}"
+        f"{joined_sources}"
     )
 
 
@@ -253,6 +254,7 @@ def _build_quiz_prompt(
             f"Source: {material.name}\n{clipped_text}"
         )
 
+    joined_sources = "\n\n".join(source_blocks)
     return (
         "Create a student practice quiz from the academic source material below.\n"
         f"Return exactly {question_count} multiple-choice questions.\n"
@@ -278,7 +280,7 @@ def _build_quiz_prompt(
         "  ]\n"
         "}\n\n"
         "Source material:\n"
-        f"{'\n\n'.join(source_blocks)}"
+        f"{joined_sources}"
     )
 
 
@@ -298,6 +300,7 @@ def _build_slide_deck_prompt(
         remaining_chars -= len(clipped_text)
         source_blocks.append(f"Source: {material.name}\n{clipped_text}")
 
+    joined_sources = "\n\n".join(source_blocks)
     return (
         "You are creating a lecture slide deck for instructors based only on provided course material.\n"
         f"Return a JSON slide outline with exactly {slide_count} instructional slides.\n"
@@ -321,7 +324,7 @@ def _build_slide_deck_prompt(
         "- prioritize concept explanation, examples, and checkpoints\n"
         "- no unsupported claims\n\n"
         "Source material:\n"
-        f"{'\n\n'.join(source_blocks)}"
+        f"{joined_sources}"
     )
 
 
