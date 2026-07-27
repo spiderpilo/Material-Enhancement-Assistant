@@ -7,6 +7,7 @@ from uuid import uuid4
 from google import genai
 
 from app.config import DEFAULT_GEMINI_MODEL, get_gemini_api_key
+from app.models.chat_model import ProjectChatMessageRecord
 from app.models.quiz_model import GeneratedQuiz, QuizOption, QuizQuestion, QuizSourceMaterial
 from app.models.slide_deck_model import SlideDeckOutline, SlideDeckOutlineSlide
 from app.utils.token_usage import TokenUsage, extract_token_usage
@@ -68,7 +69,12 @@ def improve_clarity(text: str) -> str:
     return response_text.strip()
 
 
-def answer_project_question(*, question: str, materials: list[QuizSourceMaterial]) -> str:
+def answer_project_question(
+    *,
+    question: str,
+    materials: list[QuizSourceMaterial],
+    history: list[ProjectChatMessageRecord] | None = None,
+) -> str:
     api_key = get_gemini_api_key()
     if not api_key:
         raise MissingAPIKeyError(
@@ -78,7 +84,11 @@ def answer_project_question(*, question: str, materials: list[QuizSourceMaterial
     if not materials:
         raise GeminiServiceError("At least one source material is required.")
 
-    prompt = _build_project_chat_prompt(question=question, materials=materials)
+    prompt = _build_project_chat_prompt(
+        question=question,
+        materials=materials,
+        history=history or [],
+    )
     client = genai.Client(api_key=api_key)
 
     try:
@@ -213,7 +223,12 @@ def _build_prompt(text: str) -> str:
     )
 
 
-def _build_project_chat_prompt(*, question: str, materials: list[QuizSourceMaterial]) -> str:
+def _build_project_chat_prompt(
+    *,
+    question: str,
+    materials: list[QuizSourceMaterial],
+    history: list[ProjectChatMessageRecord] | None = None,
+) -> str:
     source_blocks: list[str] = []
     remaining_chars = MAX_CHAT_INPUT_CHARS
 
@@ -232,15 +247,23 @@ def _build_project_chat_prompt(*, question: str, materials: list[QuizSourceMater
         )
 
     joined_sources = "\n\n".join(source_blocks)
+    history_lines = [
+        f"{message.role.upper()}: {message.content}"
+        for message in (history or [])[-10:]
+    ]
+    joined_history = "\n".join(history_lines) if history_lines else "(No previous messages)"
     return (
         "You are a curriculum assistant that answers only from the provided course documents.\n"
         "Use the documents as the source of truth. If the documents do not contain enough information, say that clearly and do not guess.\n"
+        "Conversation history is provided only to understand follow-up references and user intent. "
+        "Do not treat earlier assistant answers as factual evidence; resolve any conflict in favor of the documents.\n"
         "Prefer the source header when referring to sources. "
         "If a source header gives a page range such as pages 5-11, cite that full range exactly. "
         "Do not infer or mention a single exact page from within a page range. "
         "Never mention internal retrieval chunks.\n"
         "Keep the answer concise, direct, and helpful for a student or instructor.\n\n"
-        f"Question:\n{question}\n\n"
+        f"Conversation history (oldest to newest):\n{joined_history}\n\n"
+        f"Current question:\n{question}\n\n"
         "Documents:\n"
         f"{joined_sources}"
     )

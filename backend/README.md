@@ -9,6 +9,9 @@ Minimal FastAPI backend for local testing.
 - `POST /projects` (auth required)
 - `GET /projects/{project_uuid}` (auth required)
 - `GET /projects/{project_uuid}/generated-materials?tool=quiz` (auth required)
+- `GET /projects/{project_uuid}/chat` (auth required)
+- `POST /projects/{project_uuid}/chat` (auth required)
+- `DELETE /projects/{project_uuid}/chat` (auth required)
 - `PATCH /projects/{project_uuid}` (auth required)
 - `DELETE /projects/{project_uuid}` (auth required)
 - `POST /quiz/generate` (auth required)
@@ -128,6 +131,13 @@ To support Gemini RAG chat indexing and duplicate upload detection, apply:
 ```bash
 backend/.venv/bin/python backend/database/apply_migration.py \
   backend/database/migrations/20260704_rag_chat_gemini_pgvector.sql
+```
+
+To persist the latest 10 project chat messages, apply:
+
+```bash
+backend/.venv/bin/python backend/database/apply_migration.py \
+  backend/database/migrations/20260726_project_chat_memory.sql
 ```
 
 If project creation fails with:

@@ -7,6 +7,7 @@ import os
 import re
 import hashlib
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 from urllib import error, parse, request
 from uuid import uuid4
@@ -15,7 +16,12 @@ from pydantic import ValidationError
 
 from app.config import get_supabase_settings
 from app.models.account_model import CreateAccountResponse, LoginAccountResponse, UserProfileRecord
-from app.models.chat_model import ProjectChatResponse, ProjectChatSourceRecord
+from app.models.chat_model import (
+    ProjectChatHistoryResponse,
+    ProjectChatMessageRecord,
+    ProjectChatResponse,
+    ProjectChatSourceRecord,
+)
 from app.models.document_model import (
     CourseContentPreviewItem,
     CourseContentPreviewManifest,
@@ -57,6 +63,7 @@ PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationm
 PDF_CONTENT_TYPE = "application/pdf"
 logger = logging.getLogger(__name__)
 LEGACY_PROJECTS_NOT_NULL_COLUMNS = ("created_by", "owner_auth_user_id")
+CHAT_MEMORY_LIMIT = 10
 
 
 class MissingSupabaseConfigError(Exception):
@@ -1192,6 +1199,12 @@ def answer_project_question_for_user(
     if not project.materials:
         raise ProjectNotFoundError("No course materials were found for this project.")
 
+    history = _fetch_project_chat_messages(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project.id,
+        owner_user_id=project.owner_user_id,
+    )
     normalized_selected_material_ids = _normalize_selected_material_ids(
         selected_material_id=selected_material_id,
         selected_material_ids=selected_material_ids,
@@ -1223,22 +1236,35 @@ def answer_project_question_for_user(
     selection_mode = "rag_selected" if normalized_selected_material_ids else "rag"
 
     if not retrieved_chunks:
-        return ProjectChatResponse(
-            answer=(
-                "I could not find any ready indexed content for that source yet. "
-                "Try again after upload indexing finishes, or upload a readable PDF, DOCX, or PPTX file."
-            ),
+        sources = [
+            ProjectChatSourceRecord(id=material.id, material_name=material.material_name)
+            for material in selected_materials
+        ] if selected_materials else []
+        answer = (
+            "I could not find any ready indexed content for that source yet. "
+            "Try again after upload indexing finishes, or upload a readable PDF, DOCX, or PPTX file."
+        )
+        messages = _append_project_chat_exchange(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            project_id=project.id,
+            owner_user_id=project.owner_user_id,
+            user_content=message,
+            assistant_content=answer,
+            sources=sources,
             selection_mode="rag_unavailable",
-            sources=[
-                ProjectChatSourceRecord(id=material.id, material_name=material.material_name)
-                for material in selected_materials
-            ]
-            if selected_materials
-            else [],
+        )
+        return ProjectChatResponse(
+            answer=answer,
+            selection_mode="rag_unavailable",
+            sources=sources,
+            messages=messages,
         )
 
+    sources = _build_rag_source_records(retrieved_chunks)
     answer = generate_project_chat_answer(
         question=message,
+        history=history,
         materials=[
             QuizSourceMaterial(
                 id=chunk.course_content_id,
@@ -1248,12 +1274,195 @@ def answer_project_question_for_user(
             for chunk in retrieved_chunks
         ],
     )
+    messages = _append_project_chat_exchange(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project.id,
+        owner_user_id=project.owner_user_id,
+        user_content=message,
+        assistant_content=answer,
+        sources=sources,
+        selection_mode=selection_mode,
+    )
 
     return ProjectChatResponse(
         answer=answer,
         selection_mode=selection_mode,
-        sources=_build_rag_source_records(retrieved_chunks),
+        sources=sources,
+        messages=messages,
     )
+
+
+def get_project_chat_history_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+) -> ProjectChatHistoryResponse:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    project = get_project_for_user(access_token=access_token, project_uuid=project_uuid)
+    if project.id is None:
+        raise SupabaseServiceError("Project record is missing a numeric id.")
+
+    return ProjectChatHistoryResponse(
+        messages=_fetch_project_chat_messages(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            project_id=project.id,
+            owner_user_id=project.owner_user_id,
+        )
+    )
+
+
+def clear_project_chat_history_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+) -> None:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    project = get_project_for_user(access_token=access_token, project_uuid=project_uuid)
+    if project.id is None:
+        raise SupabaseServiceError("Project record is missing a numeric id.")
+
+    _delete_project_chat_memory(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project.id,
+        owner_user_id=project.owner_user_id,
+    )
+
+
+def _fetch_project_chat_messages(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    owner_user_id: str,
+) -> list[ProjectChatMessageRecord]:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/project_chat_memory"
+        f"?project_id=eq.{project_id}"
+        f"&owner_user_id=eq.{parse.quote(owner_user_id, safe='')}"
+        "&select=messages"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+    rows = _decode_json_rows(response_body, "project chat memory")
+    if not rows:
+        return []
+
+    raw_messages = rows[0].get("messages")
+    return _validate_project_chat_messages(raw_messages)
+
+
+def _append_project_chat_exchange(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    owner_user_id: str,
+    user_content: str,
+    assistant_content: str,
+    sources: list[ProjectChatSourceRecord],
+    selection_mode: Literal[
+        "selected",
+        "title_match",
+        "fallback",
+        "rag",
+        "rag_selected",
+        "rag_unavailable",
+    ],
+) -> list[ProjectChatMessageRecord]:
+    timestamp = datetime.now(timezone.utc).isoformat()
+    user_message = {
+        "id": str(uuid4()),
+        "role": "user",
+        "content": user_content,
+        "timestamp": timestamp,
+        "sources": [],
+        "selection_mode": None,
+    }
+    assistant_message = {
+        "id": str(uuid4()),
+        "role": "assistant",
+        "content": assistant_content,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "sources": [source.model_dump(mode="json") for source in sources],
+        "selection_mode": selection_mode,
+    }
+    response_body = _send_request(
+        endpoint=f"{url.rstrip('/')}/rest/v1/rpc/append_project_chat_exchange",
+        method="POST",
+        data=json.dumps(
+            {
+                "filter_project_id": project_id,
+                "filter_owner_user_id": owner_user_id,
+                "user_message": user_message,
+                "assistant_message": assistant_message,
+            }
+        ).encode("utf-8"),
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+    return _validate_project_chat_messages(
+        _decode_json_payload(response_body, "project chat exchange")
+    )
+
+
+def _delete_project_chat_memory(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    owner_user_id: str,
+) -> None:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/project_chat_memory"
+        f"?project_id=eq.{project_id}"
+        f"&owner_user_id=eq.{parse.quote(owner_user_id, safe='')}"
+    )
+    _send_request(
+        endpoint=endpoint,
+        method="DELETE",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200, 204},
+    )
+
+
+def _validate_project_chat_messages(raw_messages: Any) -> list[ProjectChatMessageRecord]:
+    if not isinstance(raw_messages, list):
+        raise SupabaseServiceError("Project chat memory returned an invalid message list.")
+
+    try:
+        messages = [
+            ProjectChatMessageRecord.model_validate(message)
+            for message in raw_messages[-CHAT_MEMORY_LIMIT:]
+        ]
+    except ValidationError as exc:
+        raise SupabaseServiceError("Project chat memory contains an invalid message.") from exc
+
+    return messages
 
 
 def list_generated_materials_for_user(

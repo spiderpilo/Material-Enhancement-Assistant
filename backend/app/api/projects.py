@@ -4,7 +4,11 @@ from typing import Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 
-from app.models.chat_model import ProjectChatRequest, ProjectChatResponse
+from app.models.chat_model import (
+    ProjectChatHistoryResponse,
+    ProjectChatRequest,
+    ProjectChatResponse,
+)
 from app.models.generated_material_model import (
     GeneratedMaterialDownloadResponse,
     GeneratedMaterialRecord,
@@ -30,9 +34,11 @@ from app.services.supabase_service import (
     ProjectNotFoundError,
     SupabaseServiceError,
     answer_project_question_for_user,
+    clear_project_chat_history_for_user,
     create_project_for_user,
     delete_project_for_user,
     generate_slide_deck_for_user,
+    get_project_chat_history_for_user,
     get_project_for_user,
     get_generated_material_download_for_user,
     list_generated_quiz_history_for_user,
@@ -146,6 +152,47 @@ def chat_with_project(
     except MissingGeminiAPIKeyError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except (GeminiEmbeddingError, GeminiServiceError, SupabaseServiceError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get("/projects/{project_uuid}/chat", response_model=ProjectChatHistoryResponse)
+def get_project_chat_history(
+    project_uuid: str,
+    authorization: str | None = Header(default=None),
+) -> ProjectChatHistoryResponse:
+    try:
+        return get_project_chat_history_for_user(
+            access_token=_extract_bearer_token(authorization),
+            project_uuid=project_uuid,
+        )
+    except MissingSupabaseConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SupabaseServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.delete("/projects/{project_uuid}/chat", status_code=status.HTTP_204_NO_CONTENT)
+def clear_project_chat_history(
+    project_uuid: str,
+    authorization: str | None = Header(default=None),
+) -> Response:
+    try:
+        clear_project_chat_history_for_user(
+            access_token=_extract_bearer_token(authorization),
+            project_uuid=project_uuid,
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except MissingSupabaseConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SupabaseServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

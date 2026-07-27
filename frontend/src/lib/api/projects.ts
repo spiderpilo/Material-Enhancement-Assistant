@@ -35,10 +35,32 @@ export type ProjectChatSource = {
   locations?: string[];
 };
 
+export type ProjectChatSelectionMode =
+  | "selected"
+  | "title_match"
+  | "fallback"
+  | "rag"
+  | "rag_selected"
+  | "rag_unavailable";
+
+export type ProjectChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+  sources: ProjectChatSource[];
+  selection_mode?: ProjectChatSelectionMode | null;
+};
+
+export type ProjectChatHistoryResponse = {
+  messages: ProjectChatMessage[];
+};
+
 export type ProjectChatResponse = {
   answer: string;
-  selection_mode: "selected" | "title_match" | "fallback" | "rag" | "rag_selected" | "rag_unavailable";
+  selection_mode: ProjectChatSelectionMode;
   sources: ProjectChatSource[];
+  messages: ProjectChatMessage[];
 };
 
 type ListGeneratedQuizHistoryResponse = {
@@ -212,6 +234,57 @@ export async function askProjectQuestion({
   }
 
   return payload as ProjectChatResponse;
+}
+
+export async function getProjectChatHistory({
+  accessToken,
+  projectUuid,
+}: {
+  accessToken: string;
+  projectUuid: string;
+}): Promise<ProjectChatHistoryResponse> {
+  const response = await fetch(
+    `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/chat`,
+    {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Cache-Control": "no-cache",
+      },
+    },
+  );
+
+  return readProjectPayload<ProjectChatHistoryResponse>(
+    response,
+    "Unable to load chat memory.",
+  );
+}
+
+export async function clearProjectChatHistory({
+  accessToken,
+  projectUuid,
+}: {
+  accessToken: string;
+  projectUuid: string;
+}): Promise<void> {
+  const response = await fetch(
+    `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/chat`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  );
+
+  if (response.ok) {
+    return;
+  }
+
+  throw new Error(
+    await readProjectErrorMessage(response, "Unable to start a new conversation."),
+  );
 }
 
 async function readProjectPayload<T>(response: Response, fallbackMessage: string): Promise<T> {

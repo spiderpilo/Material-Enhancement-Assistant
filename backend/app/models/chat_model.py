@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,9 +22,27 @@ class ProjectChatSourceRecord(BaseModel):
     locations: list[str] = Field(default_factory=list)
 
 
+class ProjectChatMessageRecord(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    role: Literal["user", "assistant"]
+    content: str
+    timestamp: datetime
+    sources: list[ProjectChatSourceRecord] = Field(default_factory=list)
+    selection_mode: Optional[
+        Literal["selected", "title_match", "fallback", "rag", "rag_selected", "rag_unavailable"]
+    ] = None
+
+
+class ProjectChatHistoryResponse(BaseModel):
+    messages: list[ProjectChatMessageRecord] = Field(default_factory=list)
+
+
 class ProjectChatResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     answer: str
     selection_mode: Literal["selected", "title_match", "fallback", "rag", "rag_selected", "rag_unavailable"]
     sources: list[ProjectChatSourceRecord] = Field(default_factory=list)
+    messages: list[ProjectChatMessageRecord] = Field(default_factory=list)
