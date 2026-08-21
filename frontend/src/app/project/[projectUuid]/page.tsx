@@ -4,7 +4,7 @@ import { MaterialEnhancementWorkspace } from "@/components/material-enhancement/
 
 export const metadata: Metadata = {
   title: "Project Workspace | Curriculum Updater",
-  description: "Project workspace for materials, previews, recommendations, and AI tools.",
+  description: "Project workspace for materials, previews, chat composition, and AI tools.",
 };
 
 export default async function ProjectWorkspacePage({

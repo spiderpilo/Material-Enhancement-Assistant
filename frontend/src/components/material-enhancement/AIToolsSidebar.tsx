@@ -271,7 +271,7 @@ export function AIToolsSidebar({
   }, [isSlideDeckExpanded, onCloseSlideDeckPreview, visibleSlideDeckDownloadMenuKey]);
 
   return (
-    <aside className="relative flex h-[949px] min-h-0 max-w-full flex-col overflow-hidden rounded-[28px] border border-white/[0.08] bg-[#202328] shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
+    <aside className="relative flex h-full min-w-0 min-h-0 max-w-full flex-col overflow-hidden rounded-[28px] border border-white/[0.08] bg-[#202328] shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
       <div className="pointer-events-none absolute inset-0 rounded-[inherit] bg-[linear-gradient(180deg,rgba(255,255,255,0.05)_0%,rgba(255,255,255,0.015)_22%,rgba(0,0,0,0.08)_100%)]" />
 
       {isQuizExpanded ? (
@@ -314,12 +314,12 @@ export function AIToolsSidebar({
           onCloseDownloadMenu={closeSlideDeckDownloadMenu}
         />
       ) : (
-        <div className="relative flex min-h-0 flex-1 flex-col p-4 animate-studio-panel-content-enter">
+        <div className="relative flex min-h-0 flex-1 flex-col p-3.5 animate-studio-panel-content-enter 2xl:p-4">
           <h2 className="pl-1 text-[15px] font-bold tracking-[-0.04em] text-[color:var(--text-primary)]">
             AI Tools
           </h2>
 
-          <div className="studio-scroll mt-5 min-h-0 flex-1 overflow-y-auto pb-24 pr-1">
+          <div className="studio-scroll mt-4 min-h-0 flex-1 overflow-y-auto pb-20 pr-1 2xl:mt-5 2xl:pb-24">
             <div className="space-y-3">
               {tools.map((tool, index) => (
                 <AIToolCard
@@ -418,7 +418,7 @@ export function AIToolsSidebar({
           </div>
 
           {activeTool !== "slideDeck" ? (
-            <div className="pointer-events-none absolute bottom-4 right-4 z-10 flex justify-end">
+            <div className="pointer-events-none absolute bottom-3 right-3 z-10 flex justify-end 2xl:bottom-4 2xl:right-4">
               <button
                 type="button"
                 onClick={onOpenHelp}
@@ -471,7 +471,7 @@ function AIToolCard({
         animationDelay: `${index * 40}ms`,
       }}
       className={[
-        "animate-studio-tool-enter group relative flex h-[80px] w-full items-center gap-4 overflow-hidden rounded-[22px] border border-white/[0.08] px-[17px] py-4 text-left transition-[transform,background,border-color,box-shadow,opacity] duration-200 ease-out",
+        "animate-studio-tool-enter group relative flex h-[72px] w-full items-center gap-3.5 overflow-hidden rounded-[22px] border border-white/[0.08] px-4 py-3.5 text-left transition-[transform,background,border-color,box-shadow,opacity] duration-200 ease-out 2xl:h-[80px] 2xl:gap-4 2xl:px-[17px] 2xl:py-4",
         "bg-[linear-gradient(140deg,var(--tool-tint)_0%,rgba(255,255,255,0.05)_58%,rgba(255,255,255,0.03)_100%)] shadow-[0_14px_30px_rgba(0,0,0,0.22)]",
         "before:pointer-events-none before:absolute before:inset-0 before:rounded-[inherit] before:bg-[radial-gradient(circle_at_12%_16%,var(--tool-glow)_0%,transparent_52%)] before:opacity-70 before:transition-opacity before:duration-200 before:ease-out",
         "after:pointer-events-none after:absolute after:inset-x-5 after:top-0 after:h-px after:bg-white/14",
@@ -483,7 +483,7 @@ function AIToolCard({
     >
       <div
         className={[
-          "relative flex h-11 w-11 shrink-0 items-center justify-center rounded-[16px] border border-white/[0.1] bg-[linear-gradient(180deg,rgba(255,255,255,0.14)_0%,rgba(255,255,255,0.06)_100%)] text-[color:var(--tool-icon)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_12px_24px_rgba(0,0,0,0.16)] transition-all duration-200 ease-out",
+          "relative flex h-10 w-10 shrink-0 items-center justify-center rounded-[16px] border border-white/[0.1] bg-[linear-gradient(180deg,rgba(255,255,255,0.14)_0%,rgba(255,255,255,0.06)_100%)] text-[color:var(--tool-icon)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_12px_24px_rgba(0,0,0,0.16)] transition-all duration-200 ease-out 2xl:h-11 2xl:w-11",
           "group-hover:scale-[1.03] group-hover:border-white/[0.16] group-hover:bg-[linear-gradient(180deg,rgba(255,255,255,0.18)_0%,rgba(255,255,255,0.08)_100%)] group-hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_0_24px_var(--tool-glow),0_12px_24px_rgba(0,0,0,0.16)]",
           isSelected ? "border-white/[0.16]" : "",
         ].join(" ")}
@@ -493,7 +493,7 @@ function AIToolCard({
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <p className="truncate text-[17px] font-semibold tracking-[-0.03em] text-[color:var(--text-primary)]">
+          <p className="truncate text-[16px] font-semibold tracking-[-0.03em] text-[color:var(--text-primary)] 2xl:text-[17px]">
             {tool.label}
           </p>
           {tool.beta ? (

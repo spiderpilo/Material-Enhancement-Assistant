@@ -6,6 +6,7 @@ export type SupportedCourseContentExtension =
   (typeof SUPPORTED_COURSE_CONTENT_EXTENSIONS)[number];
 
 export type CourseContentPreviewStatus = "pending" | "ready" | "failed";
+export type CourseContentRagStatus = "pending" | "ready" | "failed";
 export type CourseContentSourceType = SupportedCourseContentExtension;
 
 export type CourseContentRecord = {
@@ -13,9 +14,14 @@ export type CourseContentRecord = {
   material_name: string;
   access_url: string;
   data_size: number;
+  project_id?: number | null;
+  content_sha256?: string | null;
   source_type?: CourseContentSourceType | null;
   preview_status?: CourseContentPreviewStatus;
   preview_count?: number;
+  rag_status?: CourseContentRagStatus | null;
+  rag_chunk_count?: number;
+  rag_error?: string | null;
   uploaded_at?: string | null;
 };
 

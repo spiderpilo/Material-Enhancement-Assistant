@@ -136,6 +136,26 @@ export function ArrowRightIcon(props: SvgIconProps) {
   );
 }
 
+export function ArrowUpIcon(props: SvgIconProps) {
+  return (
+    <SvgIcon {...props}>
+      <path
+        d="M12 17V7.5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+      <path
+        d="m8.5 11 3.5-3.5 3.5 3.5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </SvgIcon>
+  );
+}
+
 export function SummaryIcon(props: SvgIconProps) {
   return (
     <SvgIcon {...props}>

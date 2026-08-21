@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 import json
 import logging
 import mimetypes
 import os
+import re
+import hashlib
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 from urllib import error, parse, request
 from uuid import uuid4
@@ -11,6 +16,12 @@ from pydantic import ValidationError
 
 from app.config import get_supabase_settings
 from app.models.account_model import CreateAccountResponse, LoginAccountResponse, UserProfileRecord
+from app.models.chat_model import (
+    ProjectChatHistoryResponse,
+    ProjectChatMessageRecord,
+    ProjectChatResponse,
+    ProjectChatSourceRecord,
+)
 from app.models.document_model import (
     CourseContentPreviewItem,
     CourseContentPreviewManifest,
@@ -22,8 +33,21 @@ from app.models.generated_material_model import GeneratedMaterialRecord
 from app.models.project_model import ProjectMaterialRecord, ProjectRecord, ProjectSummary
 from app.models.quiz_model import GeneratedQuiz, GeneratedQuizHistoryRecord, QuizSourceMaterial
 from app.services.export_service import build_slide_deck_pptx_bytes
-from app.services.llm_service import generate_quiz_with_usage, generate_slide_deck_outline_with_usage
-from app.services.parser_service import DocumentParseError, parse_document
+from app.services.embedding_service import (
+    EmbeddedTextChunk,
+    GeminiEmbeddingError,
+    MissingGeminiAPIKeyError,
+    TextChunk,
+    chunk_text,
+    embed_chunks,
+    embed_text,
+)
+from app.services.llm_service import (
+    answer_project_question as generate_project_chat_answer,
+    generate_quiz_with_usage,
+    generate_slide_deck_outline_with_usage,
+)
+from app.services.parser_service import DocumentParseError, ParsedTextUnit, parse_document, parse_document_units
 from app.services.preview_service import (
     DocumentPreviewError,
     convert_pptx_to_pdf_bytes,
@@ -39,6 +63,7 @@ PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationm
 PDF_CONTENT_TYPE = "application/pdf"
 logger = logging.getLogger(__name__)
 LEGACY_PROJECTS_NOT_NULL_COLUMNS = ("created_by", "owner_auth_user_id")
+CHAT_MEMORY_LIMIT = 10
 
 
 class MissingSupabaseConfigError(Exception):
@@ -73,6 +98,10 @@ class GeneratedMaterialNotFoundError(SupabaseServiceError):
     """Raised when a generated material record cannot be found for a project."""
 
 
+class DuplicateCourseContentError(SupabaseServiceError):
+    """Raised when the same source bytes already exist in a project."""
+
+
 @dataclass(frozen=True)
 class AuthenticatedUser:
     user_id: str
@@ -85,6 +114,18 @@ class AuthenticatedUser:
 class SlideDeckPreviewBuildResult:
     payload: dict[str, Any]
     storage_paths: list[str]
+
+
+@dataclass(frozen=True)
+class RagRetrievedChunk:
+    course_content_id: int
+    material_name: str
+    chunk_index: int
+    text: str
+    similarity: float
+    location_kind: str | None = None
+    location_start: int | None = None
+    location_end: int | None = None
 
 
 def login_account(*, email: str, password: str) -> LoginAccountResponse:
@@ -435,6 +476,17 @@ def upload_course_content(
         project_id=project_id,
         owner_user_id=auth_user.user_id,
     )
+    content_sha256 = _compute_content_sha256(file_bytes)
+    duplicate_record = _fetch_duplicate_course_content_for_project(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project_id,
+        content_sha256=content_sha256,
+    )
+    if duplicate_record:
+        raise DuplicateCourseContentError(
+            f"{duplicate_record.material_name} has already been uploaded to this project."
+        )
 
     storage_path = _build_storage_path(filename)
     content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
@@ -461,6 +513,8 @@ def upload_course_content(
             filename=filename,
             access_url=access_url,
             data_size=len(file_bytes),
+            project_id=project_id,
+            content_sha256=content_sha256,
         )
         _insert_project_material_link(
             url=settings.url,
@@ -474,6 +528,9 @@ def upload_course_content(
                 "source_type": source_type,
                 "preview_status": "pending",
                 "preview_count": 0,
+                "rag_status": "pending",
+                "rag_chunk_count": 0,
+                "rag_error": None,
             }
         )
         _upload_preview_status(
@@ -653,6 +710,143 @@ def generate_course_content_preview_assets(
             preview_count=0,
             preview_error=str(exc),
         )
+
+
+def generate_course_content_rag_index(
+    *,
+    course_content_id: int,
+    project_id: int,
+    filename: str,
+    file_bytes: bytes,
+) -> None:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    source_type = _detect_source_type(filename)
+
+    try:
+        _update_course_content_rag_status(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            course_content_id=course_content_id,
+            rag_status="pending",
+            rag_chunk_count=0,
+            rag_error=None,
+        )
+        parsed_units = parse_document_units(file_bytes=file_bytes, file_type=source_type)
+        chunks = _chunk_parsed_text_units(parsed_units)
+        if not chunks:
+            raise SupabaseServiceError("No text chunks could be created from the uploaded file.")
+
+        embedded_chunks = embed_chunks(chunks)
+        _replace_course_content_chunks(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            project_id=project_id,
+            course_content_id=course_content_id,
+            material_name=filename,
+            embedded_chunks=embedded_chunks,
+        )
+        _update_course_content_rag_status(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            course_content_id=course_content_id,
+            rag_status="ready",
+            rag_chunk_count=len(embedded_chunks),
+            rag_error=None,
+        )
+        logger.info(
+            "Stored RAG chunks for course_content_id=%s chunk_count=%s",
+            course_content_id,
+            len(embedded_chunks),
+        )
+    except (
+        DocumentParseError,
+        MissingGeminiAPIKeyError,
+        GeminiEmbeddingError,
+        SupabaseServiceError,
+        ValueError,
+    ) as exc:
+        logger.error(
+            "RAG indexing failed for course_content_id=%s: %s",
+            course_content_id,
+            exc,
+        )
+        _update_course_content_rag_status(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            course_content_id=course_content_id,
+            rag_status="failed",
+            rag_chunk_count=0,
+            rag_error=str(exc),
+        )
+
+
+def _chunk_parsed_text_units(units: list[ParsedTextUnit]) -> list[TextChunk]:
+    normalized_parts: list[str] = []
+    unit_spans: list[dict[str, int | str]] = []
+    cursor = 0
+
+    for unit in units:
+        normalized_text = " ".join(unit.text.split())
+        if not normalized_text:
+            continue
+
+        if normalized_parts:
+            cursor += 1
+
+        start_char = cursor
+        end_char = start_char + len(normalized_text)
+        normalized_parts.append(normalized_text)
+        unit_spans.append(
+            {
+                "start_char": start_char,
+                "end_char": end_char,
+                "location_kind": unit.location_kind,
+                "location_start": unit.location_start,
+                "location_end": unit.location_end,
+            }
+        )
+        cursor = end_char
+
+    if not normalized_parts:
+        return []
+
+    raw_chunks = chunk_text(" ".join(normalized_parts))
+    chunks: list[TextChunk] = []
+
+    for raw_chunk in raw_chunks:
+        overlapping_spans = [
+            unit_span
+            for unit_span in unit_spans
+            if int(unit_span["start_char"]) < raw_chunk.end_char
+            and int(unit_span["end_char"]) > raw_chunk.start_char
+        ]
+        location_kind = (
+            str(overlapping_spans[0]["location_kind"]) if overlapping_spans else None
+        )
+        location_start = min(
+            int(unit_span["location_start"]) for unit_span in overlapping_spans
+        ) if overlapping_spans else None
+        location_end = max(
+            int(unit_span["location_end"]) for unit_span in overlapping_spans
+        ) if overlapping_spans else None
+
+        chunks.append(
+            TextChunk(
+                index=len(chunks),
+                text=raw_chunk.text,
+                start_char=raw_chunk.start_char,
+                end_char=raw_chunk.end_char,
+                location_kind=location_kind,
+                location_start=location_start,
+                location_end=location_end,
+            )
+        )
+
+    return chunks
 
 
 def get_course_content_preview(*, course_content_id: int) -> CourseContentPreviewManifest:
@@ -856,6 +1050,13 @@ def delete_course_content_for_user(
         bucket=settings.storage_bucket,
         course_content_id=course_content_id,
     )
+    chunk_delete_error = _delete_course_content_chunks(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        course_content_id=course_content_id,
+    )
+    if chunk_delete_error:
+        raise SupabaseServiceError(chunk_delete_error)
 
     source_storage_path = _extract_storage_path_from_access_url(
         access_url=record.access_url,
@@ -979,6 +1180,291 @@ def get_course_content_texts_for_user(
     return source_materials
 
 
+def answer_project_question_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+    message: str,
+    selected_material_id: int | None = None,
+    selected_material_ids: list[int] | None = None,
+) -> ProjectChatResponse:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    project = get_project_for_user(access_token=access_token, project_uuid=project_uuid)
+    if project.id is None:
+        raise SupabaseServiceError("Project record is missing a numeric id.")
+    if not project.materials:
+        raise ProjectNotFoundError("No course materials were found for this project.")
+
+    history = _fetch_project_chat_messages(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project.id,
+        owner_user_id=project.owner_user_id,
+    )
+    normalized_selected_material_ids = _normalize_selected_material_ids(
+        selected_material_id=selected_material_id,
+        selected_material_ids=selected_material_ids,
+    )
+    selected_materials = []
+    if normalized_selected_material_ids:
+        material_by_id = {
+            material.id: material
+            for material in project.materials
+            if material.id is not None
+        }
+        selected_materials = [
+            material_by_id[material_id]
+            for material_id in normalized_selected_material_ids
+            if material_id in material_by_id
+        ]
+        if len(selected_materials) != len(normalized_selected_material_ids):
+            raise ProjectNotFoundError("One or more selected sources were not found in this project.")
+
+    query_embedding = embed_text(message)
+    retrieved_chunks = _match_course_content_chunks_for_selection(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project.id,
+        query_embedding=query_embedding,
+        selected_material_ids=normalized_selected_material_ids,
+        match_count=8,
+    )
+    selection_mode = "rag_selected" if normalized_selected_material_ids else "rag"
+
+    if not retrieved_chunks:
+        sources = [
+            ProjectChatSourceRecord(id=material.id, material_name=material.material_name)
+            for material in selected_materials
+        ] if selected_materials else []
+        answer = (
+            "I could not find any ready indexed content for that source yet. "
+            "Try again after upload indexing finishes, or upload a readable PDF, DOCX, or PPTX file."
+        )
+        messages = _append_project_chat_exchange(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            project_id=project.id,
+            owner_user_id=project.owner_user_id,
+            user_content=message,
+            assistant_content=answer,
+            sources=sources,
+            selection_mode="rag_unavailable",
+        )
+        return ProjectChatResponse(
+            answer=answer,
+            selection_mode="rag_unavailable",
+            sources=sources,
+            messages=messages,
+        )
+
+    sources = _build_rag_source_records(retrieved_chunks)
+    answer = generate_project_chat_answer(
+        question=message,
+        history=history,
+        materials=[
+            QuizSourceMaterial(
+                id=chunk.course_content_id,
+                name=_format_rag_source_name(chunk),
+                text=chunk.text,
+            )
+            for chunk in retrieved_chunks
+        ],
+    )
+    messages = _append_project_chat_exchange(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project.id,
+        owner_user_id=project.owner_user_id,
+        user_content=message,
+        assistant_content=answer,
+        sources=sources,
+        selection_mode=selection_mode,
+    )
+
+    return ProjectChatResponse(
+        answer=answer,
+        selection_mode=selection_mode,
+        sources=sources,
+        messages=messages,
+    )
+
+
+def get_project_chat_history_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+) -> ProjectChatHistoryResponse:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    project = get_project_for_user(access_token=access_token, project_uuid=project_uuid)
+    if project.id is None:
+        raise SupabaseServiceError("Project record is missing a numeric id.")
+
+    return ProjectChatHistoryResponse(
+        messages=_fetch_project_chat_messages(
+            url=settings.url,
+            service_role_key=settings.service_role_key,
+            project_id=project.id,
+            owner_user_id=project.owner_user_id,
+        )
+    )
+
+
+def clear_project_chat_history_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+) -> None:
+    try:
+        settings = get_supabase_settings()
+    except ValueError as exc:
+        raise MissingSupabaseConfigError(str(exc)) from exc
+
+    project = get_project_for_user(access_token=access_token, project_uuid=project_uuid)
+    if project.id is None:
+        raise SupabaseServiceError("Project record is missing a numeric id.")
+
+    _delete_project_chat_memory(
+        url=settings.url,
+        service_role_key=settings.service_role_key,
+        project_id=project.id,
+        owner_user_id=project.owner_user_id,
+    )
+
+
+def _fetch_project_chat_messages(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    owner_user_id: str,
+) -> list[ProjectChatMessageRecord]:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/project_chat_memory"
+        f"?project_id=eq.{project_id}"
+        f"&owner_user_id=eq.{parse.quote(owner_user_id, safe='')}"
+        "&select=messages"
+    )
+    response_body = _send_request(
+        endpoint=endpoint,
+        method="GET",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+    rows = _decode_json_rows(response_body, "project chat memory")
+    if not rows:
+        return []
+
+    raw_messages = rows[0].get("messages")
+    return _validate_project_chat_messages(raw_messages)
+
+
+def _append_project_chat_exchange(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    owner_user_id: str,
+    user_content: str,
+    assistant_content: str,
+    sources: list[ProjectChatSourceRecord],
+    selection_mode: Literal[
+        "selected",
+        "title_match",
+        "fallback",
+        "rag",
+        "rag_selected",
+        "rag_unavailable",
+    ],
+) -> list[ProjectChatMessageRecord]:
+    timestamp = datetime.now(timezone.utc).isoformat()
+    user_message = {
+        "id": str(uuid4()),
+        "role": "user",
+        "content": user_content,
+        "timestamp": timestamp,
+        "sources": [],
+        "selection_mode": None,
+    }
+    assistant_message = {
+        "id": str(uuid4()),
+        "role": "assistant",
+        "content": assistant_content,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "sources": [source.model_dump(mode="json") for source in sources],
+        "selection_mode": selection_mode,
+    }
+    response_body = _send_request(
+        endpoint=f"{url.rstrip('/')}/rest/v1/rpc/append_project_chat_exchange",
+        method="POST",
+        data=json.dumps(
+            {
+                "filter_project_id": project_id,
+                "filter_owner_user_id": owner_user_id,
+                "user_message": user_message,
+                "assistant_message": assistant_message,
+            }
+        ).encode("utf-8"),
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+    return _validate_project_chat_messages(
+        _decode_json_payload(response_body, "project chat exchange")
+    )
+
+
+def _delete_project_chat_memory(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    owner_user_id: str,
+) -> None:
+    endpoint = (
+        f"{url.rstrip('/')}/rest/v1/project_chat_memory"
+        f"?project_id=eq.{project_id}"
+        f"&owner_user_id=eq.{parse.quote(owner_user_id, safe='')}"
+    )
+    _send_request(
+        endpoint=endpoint,
+        method="DELETE",
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Accept": "application/json",
+        },
+        expected_statuses={200, 204},
+    )
+
+
+def _validate_project_chat_messages(raw_messages: Any) -> list[ProjectChatMessageRecord]:
+    if not isinstance(raw_messages, list):
+        raise SupabaseServiceError("Project chat memory returned an invalid message list.")
+
+    try:
+        messages = [
+            ProjectChatMessageRecord.model_validate(message)
+            for message in raw_messages[-CHAT_MEMORY_LIMIT:]
+        ]
+    except ValidationError as exc:
+        raise SupabaseServiceError("Project chat memory contains an invalid message.") from exc
+
+    return messages
+
+
 def list_generated_materials_for_user(
     *,
     access_token: str,
@@ -1007,6 +1493,75 @@ def list_generated_materials_for_user(
         project_uuid=normalized_project_uuid,
     )
     return [GeneratedMaterialRecord.model_validate(row) for row in rows]
+
+
+def _select_chat_source_materials(
+    *,
+    project_materials: list[ProjectMaterialRecord],
+    message: str,
+    selected_material_id: int | None,
+) -> tuple[list[ProjectMaterialRecord], str]:
+    if not project_materials:
+        return [], "fallback"
+
+    if selected_material_id is not None:
+        for material in project_materials:
+            if material.id == selected_material_id:
+                return [material], "selected"
+
+        raise ProjectNotFoundError("Selected source was not found in this project.")
+
+    query_tokens = _tokenize_chat_query(message)
+    scored_materials: list[tuple[int, ProjectMaterialRecord]] = []
+
+    for material in project_materials:
+        score = _score_chat_material_title(material.material_name, query_tokens)
+        if score > 0:
+            scored_materials.append((score, material))
+
+    if scored_materials:
+        scored_materials.sort(key=lambda item: (-item[0], item[1].id))
+        return [material for _, material in scored_materials[:3]], "title_match"
+
+    return [project_materials[0]], "fallback"
+
+
+def _score_chat_material_title(title: str, query_tokens: set[str]) -> int:
+    normalized_title = _normalize_chat_text(title)
+    if not normalized_title:
+        return 0
+
+    score = 0
+    title_tokens = set(_tokenize_chat_query(title))
+
+    if title_tokens & query_tokens:
+        score += len(title_tokens & query_tokens) * 2
+
+    for token in query_tokens:
+        if token in normalized_title:
+            score += 1
+
+    if normalized_title in query_tokens:
+        score += 3
+
+    return score
+
+
+def _tokenize_chat_query(text: str) -> set[str]:
+    normalized_text = _normalize_chat_text(text)
+    if not normalized_text:
+        return set()
+
+    tokens = {
+        token
+        for token in normalized_text.split()
+        if len(token) >= 3 and token not in {"the", "and", "for", "with", "from", "this", "that", "what", "how", "why", "when", "where"}
+    }
+    return tokens
+
+
+def _normalize_chat_text(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
 
 
 def list_generated_quiz_history_for_user(
@@ -1364,6 +1919,14 @@ def get_generated_material_download_for_user(
 def _build_storage_path(filename: str) -> str:
     sanitized_filename = sanitize_filename(filename)
     return f"course-contents/{uuid4()}/{sanitized_filename}"
+
+
+def _compute_content_sha256(file_bytes: bytes) -> str:
+    return hashlib.sha256(file_bytes).hexdigest()
+
+
+def _format_vector(values: list[float]) -> str:
+    return "[" + ",".join(str(float(value)) for value in values) + "]"
 
 
 def _build_generated_material_storage_path(
@@ -2304,6 +2867,43 @@ def _fetch_project_material_links_for_material(
     return _decode_json_rows(response_body, "project_materials")
 
 
+def _fetch_duplicate_course_content_for_project(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    content_sha256: str,
+) -> CourseContentRecord | None:
+    material_links = _fetch_project_material_links(
+        url=url,
+        service_role_key=service_role_key,
+        project_id=project_id,
+    )
+    material_ids = [
+        material_id
+        for material_id in (_read_optional_int(link, "material_id") for link in material_links)
+        if material_id is not None
+    ]
+    if not material_ids:
+        return None
+
+    records_by_id = _fetch_course_content_records_by_id(
+        url=url,
+        service_role_key=service_role_key,
+        material_ids=material_ids,
+    )
+    for material_id in material_ids:
+        record_payload = records_by_id.get(material_id)
+        if not record_payload:
+            continue
+
+        record = CourseContentRecord.model_validate(record_payload)
+        if record.content_sha256 == content_sha256:
+            return record
+
+    return None
+
+
 def _assert_material_ids_linked_to_project(
     *,
     url: str,
@@ -2663,12 +3263,19 @@ def _insert_course_content_record(
     filename: str,
     access_url: str,
     data_size: int,
+    project_id: int,
+    content_sha256: str,
 ) -> CourseContentRecord:
     payload = json.dumps(
         {
             "material_name": filename,
             "access_url": access_url,
             "data_size": data_size,
+            "project_id": project_id,
+            "content_sha256": content_sha256,
+            "rag_status": "pending",
+            "rag_chunk_count": 0,
+            "rag_error": None,
         }
     ).encode("utf-8")
 
@@ -2851,6 +3458,305 @@ def _delete_course_content_record(
         return str(exc)
 
     return None
+
+
+def _update_course_content_rag_status(
+    *,
+    url: str,
+    service_role_key: str,
+    course_content_id: int,
+    rag_status: Literal["pending", "ready", "failed"],
+    rag_chunk_count: int,
+    rag_error: str | None,
+) -> None:
+    payload = json.dumps(
+        {
+            "rag_status": rag_status,
+            "rag_chunk_count": rag_chunk_count,
+            "rag_error": rag_error,
+        }
+    ).encode("utf-8")
+
+    _send_request(
+        endpoint=f"{url.rstrip('/')}/rest/v1/course_contents?id=eq.{course_content_id}",
+        method="PATCH",
+        data=payload,
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        expected_statuses={200, 204},
+    )
+
+
+def _replace_course_content_chunks(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    course_content_id: int,
+    material_name: str,
+    embedded_chunks: list[EmbeddedTextChunk],
+) -> None:
+    delete_error = _delete_course_content_chunks(
+        url=url,
+        service_role_key=service_role_key,
+        course_content_id=course_content_id,
+    )
+    if delete_error:
+        raise SupabaseServiceError(delete_error)
+
+    if not embedded_chunks:
+        return
+
+    rows = [
+        {
+            "project_id": project_id,
+            "course_content_id": course_content_id,
+            "material_name": material_name,
+            "chunk_index": embedded_chunk.chunk.index,
+            "text": embedded_chunk.chunk.text,
+            "start_char": embedded_chunk.chunk.start_char,
+            "end_char": embedded_chunk.chunk.end_char,
+            "location_kind": embedded_chunk.chunk.location_kind,
+            "location_start": embedded_chunk.chunk.location_start,
+            "location_end": embedded_chunk.chunk.location_end,
+            "embedding": _format_vector(embedded_chunk.embedding),
+        }
+        for embedded_chunk in embedded_chunks
+    ]
+
+    _send_request(
+        endpoint=f"{url.rstrip('/')}/rest/v1/course_content_chunks",
+        method="POST",
+        data=json.dumps(rows).encode("utf-8"),
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        expected_statuses={200, 201},
+    )
+
+
+def _delete_course_content_chunks(
+    *,
+    url: str,
+    service_role_key: str,
+    course_content_id: int,
+) -> Optional[str]:
+    endpoint = f"{url.rstrip('/')}/rest/v1/course_content_chunks?course_content_id=eq.{course_content_id}"
+
+    try:
+        _send_request(
+            endpoint=endpoint,
+            method="DELETE",
+            headers={
+                **_build_auth_headers(service_role_key),
+                "Accept": "application/json",
+            },
+            expected_statuses={200, 204},
+        )
+    except SupabaseServiceError as exc:
+        return str(exc)
+
+    return None
+
+
+def _normalize_selected_material_ids(
+    *,
+    selected_material_id: int | None,
+    selected_material_ids: list[int] | None,
+) -> list[int]:
+    normalized_ids: list[int] = []
+
+    for material_id in [selected_material_id, *(selected_material_ids or [])]:
+        if not isinstance(material_id, int) or material_id <= 0:
+            continue
+        if material_id not in normalized_ids:
+            normalized_ids.append(material_id)
+
+    return normalized_ids
+
+
+def _match_course_content_chunks_for_selection(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    query_embedding: list[float],
+    selected_material_ids: list[int],
+    match_count: int,
+) -> list[RagRetrievedChunk]:
+    if not selected_material_ids:
+        return _match_course_content_chunks(
+            url=url,
+            service_role_key=service_role_key,
+            project_id=project_id,
+            query_embedding=query_embedding,
+            selected_material_id=None,
+            match_count=match_count,
+        )
+
+    if len(selected_material_ids) == 1:
+        return _match_course_content_chunks(
+            url=url,
+            service_role_key=service_role_key,
+            project_id=project_id,
+            query_embedding=query_embedding,
+            selected_material_id=selected_material_ids[0],
+            match_count=match_count,
+        )
+
+    chunk_by_key: dict[tuple[int, int], RagRetrievedChunk] = {}
+
+    for material_id in selected_material_ids:
+        material_chunks = _match_course_content_chunks(
+            url=url,
+            service_role_key=service_role_key,
+            project_id=project_id,
+            query_embedding=query_embedding,
+            selected_material_id=material_id,
+            match_count=match_count,
+        )
+
+        for chunk in material_chunks:
+            chunk_key = (chunk.course_content_id, chunk.chunk_index)
+            previous_chunk = chunk_by_key.get(chunk_key)
+            if previous_chunk is None or chunk.similarity > previous_chunk.similarity:
+                chunk_by_key[chunk_key] = chunk
+
+    return sorted(
+        chunk_by_key.values(),
+        key=lambda chunk: chunk.similarity,
+        reverse=True,
+    )[:match_count]
+
+
+def _match_course_content_chunks(
+    *,
+    url: str,
+    service_role_key: str,
+    project_id: int,
+    query_embedding: list[float],
+    selected_material_id: int | None,
+    match_count: int,
+) -> list[RagRetrievedChunk]:
+    payload = {
+        "query_embedding": _format_vector(query_embedding),
+        "filter_project_id": project_id,
+        "match_count": match_count,
+        "filter_material_id": selected_material_id,
+    }
+    response_body = _send_request(
+        endpoint=f"{url.rstrip('/')}/rest/v1/rpc/match_course_content_chunks",
+        method="POST",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            **_build_auth_headers(service_role_key),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        expected_statuses={200},
+    )
+    rows = _decode_json_rows(response_body, "course_content_chunks")
+    chunks: list[RagRetrievedChunk] = []
+
+    for row in rows:
+        course_content_id = _read_optional_int(row, "course_content_id")
+        chunk_index = _read_optional_int(row, "chunk_index")
+        material_name = row.get("material_name")
+        text = row.get("text")
+        similarity = row.get("similarity")
+        location_kind = row.get("location_kind")
+        location_start = _read_optional_int(row, "location_start")
+        location_end = _read_optional_int(row, "location_end")
+
+        if (
+            course_content_id is None
+            or chunk_index is None
+            or not isinstance(material_name, str)
+            or not isinstance(text, str)
+        ):
+            continue
+
+        chunks.append(
+            RagRetrievedChunk(
+                course_content_id=course_content_id,
+                material_name=material_name,
+                chunk_index=chunk_index,
+                text=text,
+                similarity=float(similarity) if isinstance(similarity, (int, float)) else 0.0,
+                location_kind=location_kind if isinstance(location_kind, str) else None,
+                location_start=location_start,
+                location_end=location_end,
+            )
+        )
+
+    return chunks
+
+
+def _build_rag_source_records(chunks: list[RagRetrievedChunk]) -> list[ProjectChatSourceRecord]:
+    source_summaries: dict[int, dict[str, Any]] = {}
+
+    for chunk in chunks:
+        location_label = _format_rag_location_label(chunk)
+        summary = source_summaries.setdefault(
+            chunk.course_content_id,
+            {
+                "material_name": chunk.material_name,
+                "chunk_count": 0,
+                "top_similarity": chunk.similarity,
+                "locations": [],
+            },
+        )
+        summary["chunk_count"] += 1
+        summary["top_similarity"] = max(float(summary["top_similarity"]), chunk.similarity)
+        if location_label and location_label not in summary["locations"]:
+            summary["locations"].append(location_label)
+
+    return [
+        ProjectChatSourceRecord(
+            id=course_content_id,
+            material_name=str(summary["material_name"]),
+            chunk_count=int(summary["chunk_count"]),
+            top_similarity=float(summary["top_similarity"]),
+            locations=[str(location) for location in summary["locations"]],
+        )
+        for course_content_id, summary in source_summaries.items()
+    ]
+
+
+def _format_rag_source_name(chunk: RagRetrievedChunk) -> str:
+    location_label = _format_rag_location_label(chunk)
+    if not location_label:
+        return chunk.material_name
+
+    return f"{chunk.material_name} ({location_label})"
+
+
+def _format_rag_location_label(chunk: RagRetrievedChunk) -> str | None:
+    if not chunk.location_kind or chunk.location_start is None:
+        return None
+
+    location_end = chunk.location_end or chunk.location_start
+    if chunk.location_kind == "page":
+        return f"pages {chunk.location_start}-{location_end}"
+
+    singular_label = {
+        "slide": "slide",
+        "section": "section",
+    }.get(chunk.location_kind, chunk.location_kind)
+    plural_label = {
+        "slide": "slides",
+        "section": "sections",
+    }.get(chunk.location_kind, f"{singular_label}s")
+
+    if location_end != chunk.location_start:
+        return f"{plural_label} {chunk.location_start}-{location_end}"
+
+    return f"{singular_label} {chunk.location_start}"
 
 
 def _upload_preview_manifest(

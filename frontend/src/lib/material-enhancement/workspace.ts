@@ -18,8 +18,6 @@ export type AcceptedExtension = (typeof ACCEPTED_FILE_EXTENSIONS)[number];
 export type MaterialKind = "pdf" | "doc" | "ppt" | "image";
 export type PreviewKind = "page" | "slide" | "section" | "image";
 export type ActiveTool = "summary" | "quiz" | "slideDeck";
-export type RecommendationId = "clarity" | "visuals" | "interaction";
-export type AccentTone = "green" | "pink" | "cream";
 export type PlaceholderLayout = "diagram" | "document" | "outline" | "image";
 
 export type PreviewItem = {
@@ -46,16 +44,6 @@ export type Material = {
   previewError?: string;
   previewStatus: CourseContentPreviewStatus;
   previewItems: PreviewItem[];
-};
-
-export type Recommendation = {
-  id: RecommendationId;
-  title: string;
-  label: string;
-  description: string;
-  accent: AccentTone;
-  applied: boolean;
-  disabled: boolean;
 };
 
 type DetectedFileType = {
@@ -97,52 +85,6 @@ const PENDING_PREVIEW_COPY: Record<
     title: "Rendering preview",
     subtitle: "Preparing document pages for the preview workspace.",
     placeholderLayout: "document",
-  },
-};
-
-const RECOMMENDATION_TEXT: Record<
-  MaterialKind | "empty",
-  Record<RecommendationId, string>
-> = {
-  empty: {
-    clarity:
-      "Upload a slide deck or document to unlock clarity suggestions.",
-    visuals:
-      "Visual refinement prompts will appear here once we have material to inspect.",
-    interaction:
-      "Interaction ideas activate after a material is uploaded and selected.",
-  },
-  pdf: {
-    clarity:
-      "Surface the main takeaway earlier and shorten dense blocks so readers can scan each page more confidently.",
-    visuals:
-      "Introduce clearer hierarchy between heading, body text, and supporting callouts to reduce page fatigue.",
-    interaction:
-      "Add one reflective prompt per page to encourage pause-and-respond moments during review or class discussion.",
-  },
-  doc: {
-    clarity:
-      "Break longer passages into smaller sections and pull key definitions into more visible supporting lines.",
-    visuals:
-      "Increase contrast between section headings and body copy so the document structure is easier to follow at a glance.",
-    interaction:
-      "Turn one core concept into a check-in question or short recap prompt to support active reading.",
-  },
-  ppt: {
-    clarity:
-      "Tighten slide headings and replace speaker-facing phrasing with learner-facing language where possible.",
-    visuals:
-      "Strengthen slide rhythm by giving titles, diagrams, and supporting labels more obvious visual separation.",
-    interaction:
-      "Pair one slide with a brief audience prompt so the deck invites reflection instead of only passive viewing.",
-  },
-  image: {
-    clarity:
-      "Add a concise framing caption so the instructional takeaway of the image is unmistakable before discussion begins.",
-    visuals:
-      "Consider guiding attention with surrounding labels or callouts if the image contains multiple competing focal points.",
-    interaction:
-      "Use the image as a launch point for a compare-or-predict prompt so viewers actively interpret what they see.",
   },
 };
 
@@ -366,41 +308,6 @@ export function applyPreviewManifestToMaterial(
     previewStatus: manifest.preview_status,
     previewItems,
   };
-}
-
-export function generateRecommendations(material: Material | null): Recommendation[] {
-  const kind = material?.kind ?? "empty";
-  const descriptions = RECOMMENDATION_TEXT[kind];
-
-  return [
-    {
-      id: "clarity",
-      title: "Clarity",
-      label: "Content",
-      description: descriptions.clarity,
-      accent: "green",
-      applied: false,
-      disabled: !material,
-    },
-    {
-      id: "visuals",
-      title: "Visuals",
-      label: "Design",
-      description: descriptions.visuals,
-      accent: "pink",
-      applied: false,
-      disabled: !material,
-    },
-    {
-      id: "interaction",
-      title: "Interaction",
-      label: "Engagement",
-      description: descriptions.interaction,
-      accent: "cream",
-      applied: false,
-      disabled: !material,
-    },
-  ];
 }
 
 export function getSelectedMaterial(

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, Response, UploadFile, status
@@ -9,12 +11,14 @@ from app.models.document_model import (
 )
 from app.services.supabase_service import (
     AuthenticationError,
+    DuplicateCourseContentError,
     MissingSupabaseConfigError,
     PreviewNotFoundError,
     ProjectAccessDeniedError,
     ProjectNotFoundError,
     SupabaseServiceError,
     delete_course_content_for_user,
+    generate_course_content_rag_index,
     generate_course_content_preview_assets,
     get_course_content_preview_for_user,
     update_course_content_name_for_user,
@@ -82,6 +86,13 @@ async def upload_doc(
             access_url=record.access_url,
             file_bytes=file_bytes,
         )
+        background_tasks.add_task(
+            generate_course_content_rag_index,
+            course_content_id=record.id,
+            project_id=project_id,
+            filename=filename,
+            file_bytes=file_bytes,
+        )
         return record
     except MissingSupabaseConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -89,6 +100,8 @@ async def upload_doc(
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DuplicateCourseContentError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except SupabaseServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

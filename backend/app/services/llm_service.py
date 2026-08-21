@@ -7,12 +7,14 @@ from uuid import uuid4
 from google import genai
 
 from app.config import DEFAULT_GEMINI_MODEL, get_gemini_api_key
+from app.models.chat_model import ProjectChatMessageRecord
 from app.models.quiz_model import GeneratedQuiz, QuizOption, QuizQuestion, QuizSourceMaterial
 from app.models.slide_deck_model import SlideDeckOutline, SlideDeckOutlineSlide
 from app.utils.token_usage import TokenUsage, extract_token_usage
 
 
 MAX_INPUT_CHARS = 12000
+MAX_CHAT_INPUT_CHARS = 24000
 MAX_QUIZ_INPUT_CHARS = 24000
 MAX_SLIDE_INPUT_CHARS = 28000
 QUIZ_OPTION_LABELS = ("A", "B", "C", "D")
@@ -46,6 +48,47 @@ def improve_clarity(text: str) -> str:
         )
 
     prompt = _build_prompt(text[:MAX_INPUT_CHARS])
+    client = genai.Client(api_key=api_key)
+
+    try:
+        response = client.models.generate_content(
+            model=DEFAULT_GEMINI_MODEL,
+            contents=prompt,
+        )
+    except Exception as exc:
+        raise GeminiServiceError(f"Gemini request failed: {exc}") from exc
+
+    try:
+        response_text = response.text
+    except Exception as exc:
+        raise GeminiServiceError(f"Gemini returned an unreadable response: {exc}") from exc
+
+    if not response_text or not response_text.strip():
+        raise GeminiServiceError("Gemini returned an empty response.")
+
+    return response_text.strip()
+
+
+def answer_project_question(
+    *,
+    question: str,
+    materials: list[QuizSourceMaterial],
+    history: list[ProjectChatMessageRecord] | None = None,
+) -> str:
+    api_key = get_gemini_api_key()
+    if not api_key:
+        raise MissingAPIKeyError(
+            "Gemini API key not found. Set GOOGLE_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY."
+        )
+
+    if not materials:
+        raise GeminiServiceError("At least one source material is required.")
+
+    prompt = _build_project_chat_prompt(
+        question=question,
+        materials=materials,
+        history=history or [],
+    )
     client = genai.Client(api_key=api_key)
 
     try:
@@ -180,6 +223,52 @@ def _build_prompt(text: str) -> str:
     )
 
 
+def _build_project_chat_prompt(
+    *,
+    question: str,
+    materials: list[QuizSourceMaterial],
+    history: list[ProjectChatMessageRecord] | None = None,
+) -> str:
+    source_blocks: list[str] = []
+    remaining_chars = MAX_CHAT_INPUT_CHARS
+
+    for material in materials:
+        if remaining_chars <= 0:
+            break
+
+        clipped_text = material.text[:remaining_chars]
+        remaining_chars -= len(clipped_text)
+        source_blocks.append(
+            "Source header: "
+            f"{material.name}\n"
+            "Citation rule: cite the source header location exactly as written; "
+            "do not narrow a page range to a single page.\n"
+            f"Text:\n{clipped_text}"
+        )
+
+    joined_sources = "\n\n".join(source_blocks)
+    history_lines = [
+        f"{message.role.upper()}: {message.content}"
+        for message in (history or [])[-10:]
+    ]
+    joined_history = "\n".join(history_lines) if history_lines else "(No previous messages)"
+    return (
+        "You are a curriculum assistant that answers only from the provided course documents.\n"
+        "Use the documents as the source of truth. If the documents do not contain enough information, say that clearly and do not guess.\n"
+        "Conversation history is provided only to understand follow-up references and user intent. "
+        "Do not treat earlier assistant answers as factual evidence; resolve any conflict in favor of the documents.\n"
+        "Prefer the source header when referring to sources. "
+        "If a source header gives a page range such as pages 5-11, cite that full range exactly. "
+        "Do not infer or mention a single exact page from within a page range. "
+        "Never mention internal retrieval chunks.\n"
+        "Keep the answer concise, direct, and helpful for a student or instructor.\n\n"
+        f"Conversation history (oldest to newest):\n{joined_history}\n\n"
+        f"Current question:\n{question}\n\n"
+        "Documents:\n"
+        f"{joined_sources}"
+    )
+
+
 def _build_quiz_prompt(
     *,
     materials: list[QuizSourceMaterial],
@@ -198,6 +287,7 @@ def _build_quiz_prompt(
             f"Source: {material.name}\n{clipped_text}"
         )
 
+    joined_sources = "\n\n".join(source_blocks)
     return (
         "Create a student practice quiz from the academic source material below.\n"
         f"Return exactly {question_count} multiple-choice questions.\n"
@@ -223,7 +313,7 @@ def _build_quiz_prompt(
         "  ]\n"
         "}\n\n"
         "Source material:\n"
-        f"{'\n\n'.join(source_blocks)}"
+        f"{joined_sources}"
     )
 
 
@@ -243,6 +333,7 @@ def _build_slide_deck_prompt(
         remaining_chars -= len(clipped_text)
         source_blocks.append(f"Source: {material.name}\n{clipped_text}")
 
+    joined_sources = "\n\n".join(source_blocks)
     return (
         "You are creating a lecture slide deck for instructors based only on provided course material.\n"
         f"Return a JSON slide outline with exactly {slide_count} instructional slides.\n"
@@ -266,7 +357,7 @@ def _build_slide_deck_prompt(
         "- prioritize concept explanation, examples, and checkpoints\n"
         "- no unsupported claims\n\n"
         "Source material:\n"
-        f"{'\n\n'.join(source_blocks)}"
+        f"{joined_sources}"
     )
 
 
