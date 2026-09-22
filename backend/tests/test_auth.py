@@ -15,6 +15,7 @@ PUBLIC_OPERATIONS = {
     ("post", "/refresh-token"),
     ("get", "/"),
     ("get", "/health"),
+    ("get", "/health/db"),
 }
 
 

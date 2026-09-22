@@ -58,3 +58,24 @@ def test_pooled_neon_host_is_refused(monkeypatch: pytest.MonkeyPatch):
 
     with pytest.raises(migrate.MigrationError, match="pooled"):
         migrate._get_dsn()
+
+
+def test_dry_run_does_not_create_tracking_table(fresh_tracking: str):
+    pending = migrate.run(fresh_tracking, migrate.load_migrations(), dry_run=True)
+
+    assert pending == [m.filename for m in migrate.load_migrations()]
+    connection = psycopg2.connect(fresh_tracking)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.schema_migrations')")
+        assert cursor.fetchone()[0] is None
+    connection.close()
+
+
+def test_check_exits_nonzero_while_migrations_are_pending(fresh_tracking: str, monkeypatch: pytest.MonkeyPatch):
+    # Never let main() pick up the developer's Neon DIRECT_URL from the repo .env.
+    monkeypatch.setattr(migrate, "_load_env_file", lambda path: None)
+    monkeypatch.setenv("DIRECT_URL", fresh_tracking)
+
+    assert migrate.main(["--check"]) == 2
+    assert migrate.main([]) == 0
+    assert migrate.main(["--check"]) == 0

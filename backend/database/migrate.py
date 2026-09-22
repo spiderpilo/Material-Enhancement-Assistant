@@ -12,6 +12,7 @@ does not survive PgBouncer transaction pooling.
 
 Usage:
   backend/.venv/bin/python backend/database/migrate.py --dry-run
+  backend/.venv/bin/python backend/database/migrate.py --check   # exit 2 if any are pending
   backend/.venv/bin/python backend/database/migrate.py
 """
 
@@ -65,17 +66,22 @@ def run(dsn: str, migrations: list[Migration], *, dry_run: bool = False) -> list
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_lock(%s)", (ADVISORY_LOCK_ID,))
             try:
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS public.schema_migrations (
-                        filename text PRIMARY KEY,
-                        checksum text NOT NULL,
-                        applied_at timestamptz NOT NULL DEFAULT now()
+                cursor.execute("SELECT to_regclass('public.schema_migrations')")
+                tracked = cursor.fetchone()[0] is not None
+                if not tracked and not dry_run:
+                    cursor.execute(
+                        """
+                        CREATE TABLE public.schema_migrations (
+                            filename text PRIMARY KEY,
+                            checksum text NOT NULL,
+                            applied_at timestamptz NOT NULL DEFAULT now()
+                        )
+                        """
                     )
-                    """
-                )
-                cursor.execute("SELECT filename, checksum FROM public.schema_migrations")
-                applied = dict(cursor.fetchall())
+                applied: dict[str, str] = {}
+                if tracked:
+                    cursor.execute("SELECT filename, checksum FROM public.schema_migrations")
+                    applied = dict(cursor.fetchall())
 
                 changed = [m.filename for m in migrations if m.filename in applied and applied[m.filename] != m.checksum]
                 if changed:
@@ -127,20 +133,26 @@ def _get_dsn() -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--dry-run", action="store_true", help="List pending migrations without applying them")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="List pending migrations without applying them")
+    mode.add_argument("--check", action="store_true", help="Like --dry-run, but exit 2 when any are pending")
     args = parser.parse_args(argv)
+    dry_run = args.dry_run or args.check
 
     _load_env_file(BACKEND_DIR.parent / ".env")
     try:
-        filenames = run(_get_dsn(), load_migrations(), dry_run=args.dry_run)
+        filenames = run(_get_dsn(), load_migrations(), dry_run=dry_run)
     except (MigrationError, psycopg2.Error) as exc:
         print(f"Migration failed: {exc}", file=sys.stderr)
         return 1
 
     if not filenames:
         print("No pending migrations.")
-    elif args.dry_run:
+    elif dry_run:
         print("Pending migrations:\n" + "\n".join(f"  {name}" for name in filenames))
+        if args.check:
+            print("Run the Migrate database workflow before deploying.", file=sys.stderr)
+            return 2
     else:
         print(f"Applied {len(filenames)} migration(s).")
     return 0

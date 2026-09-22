@@ -41,3 +41,25 @@ def test_cors_preflight_allows_configured_local_origin():
     )
 
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+def test_db_health_is_ok_when_database_answers(client: TestClient):
+    response = client.get("/health/db")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_db_health_hides_error_details_when_database_is_down(monkeypatch: pytest.MonkeyPatch):
+    from app.services import db
+    from app.services.errors import DataServiceError
+
+    def failing_fetch(*args, **kwargs):
+        raise DataServiceError("could not connect to server at secret-host.neon.tech")
+
+    monkeypatch.setattr(db, "fetch_one", failing_fetch)
+
+    response = TestClient(app).get("/health/db")
+
+    assert response.status_code == 503
+    assert response.json() == {"status": "unavailable"}
