@@ -23,6 +23,8 @@ dist/
 .eslintcache
 
 # Project files
+# Generated Neon restore SQL contains user data and password hashes
+backend/database/neon/out/
 *.log
 .vscode/
 .idea/

@@ -26,13 +26,13 @@ from app.models.project_model import (
 from app.services.export_service import SlideDeckExportError
 from app.services.embedding_service import GeminiEmbeddingError, MissingGeminiAPIKeyError
 from app.services.llm_service import GeminiServiceError, MissingAPIKeyError
-from app.services.supabase_service import (
+from app.services.data_service import (
     AuthenticationError,
     GeneratedMaterialNotFoundError,
-    MissingSupabaseConfigError,
+    MissingConfigError,
     ProjectAccessDeniedError,
     ProjectNotFoundError,
-    SupabaseServiceError,
+    DataServiceError,
     answer_project_question_for_user,
     clear_project_chat_history_for_user,
     create_project_for_user,
@@ -74,11 +74,11 @@ def list_projects(
                 limit=limit,
             )
         )
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -93,11 +93,11 @@ def create_project(
             access_token=_extract_bearer_token(authorization),
             name=project_name.strip(),
         )
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -111,13 +111,13 @@ def get_project(
             access_token=_extract_bearer_token(authorization),
             project_uuid=project_uuid,
         )
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -139,7 +139,7 @@ def chat_with_project(
             selected_material_id=payload.selected_material_id,
             selected_material_ids=payload.selected_material_ids,
         )
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
@@ -151,7 +151,7 @@ def chat_with_project(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except MissingGeminiAPIKeyError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except (GeminiEmbeddingError, GeminiServiceError, SupabaseServiceError) as exc:
+    except (GeminiEmbeddingError, GeminiServiceError, DataServiceError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -165,13 +165,13 @@ def get_project_chat_history(
             access_token=_extract_bearer_token(authorization),
             project_uuid=project_uuid,
         )
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -186,13 +186,13 @@ def clear_project_chat_history(
             project_uuid=project_uuid,
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -212,7 +212,7 @@ def update_project(
             project_uuid=project_uuid,
             name=normalized_name,
         )
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
@@ -220,7 +220,7 @@ def update_project(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -235,7 +235,7 @@ def delete_project(
             project_uuid=project_uuid,
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
@@ -243,7 +243,7 @@ def delete_project(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -271,13 +271,13 @@ def list_generated_materials(
                 project_uuid=project_uuid,
             )
         )
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -298,7 +298,7 @@ def generate_slide_deck(
             material_ids=payload.material_ids,
             slide_count=payload.slide_count,
         )
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
@@ -306,7 +306,7 @@ def generate_slide_deck(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except MissingAPIKeyError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except (GeminiServiceError, SlideDeckExportError, SupabaseServiceError) as exc:
+    except (GeminiServiceError, SlideDeckExportError, DataServiceError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -331,7 +331,7 @@ def get_generated_material_download(
             download_url=download_url,
             file_name=file_name,
         )
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
@@ -339,7 +339,7 @@ def get_generated_material_download(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except GeneratedMaterialNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         normalized_message = str(exc).lower()
         if "downloadable file" in normalized_message or "pdf download is only available" in normalized_message:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -19,8 +19,9 @@ Minimal FastAPI backend for local testing.
 - `GET /course-contents/{id}/preview`
 - `POST /create-account`
 - `POST /login-account`
+- `POST /refresh-token`
 
-Project routes use `Authorization: Bearer <mea_access_token>`. The backend resolves the caller from Supabase `GET /auth/v1/user` and always enforces ownership server-side.
+Project routes use `Authorization: Bearer <mea_access_token>`. The backend verifies its own HS256 JWT (signed with `JWT_SECRET`), loads the caller from `public.auth_users`, and always enforces ownership server-side.
 
 `POST /projects` accepts optional JSON body `{ "name"?: string }`. If omitted, the backend creates `Untitled Project`. `owner_user_id` always comes from the bearer token, never from client payload.
 
@@ -43,7 +44,7 @@ Project routes use `Authorization: Bearer <mea_access_token>`. The backend resol
 - `403` when the project exists but belongs to another user
 - `404` when the UUID does not exist
 
-`POST /upload-doc` accepts a PDF, DOCX, or PPTX file up to 50MB, uploads it to Supabase Storage, inserts a `course_contents` row, queues preview rendering and RAG indexing, and returns the inserted record with preview/RAG metadata. If the same file bytes already exist in the same project, the endpoint returns `409`.
+`POST /upload-doc` accepts a PDF, DOCX, or PPTX file up to 50MB, uploads it to the S3-compatible bucket, inserts a `course_contents` row, queues preview rendering and RAG indexing, and returns the inserted record with preview/RAG metadata. If the same file bytes already exist in the same project, the endpoint returns `409`.
 
 `POST /quiz/generate` now requires JSON body:
 - `project_uuid` (string)
@@ -54,7 +55,9 @@ The endpoint generates a quiz and persists it to `generated_materials` with `too
 
 `GET /course-contents/{id}/preview` returns the current preview manifest for a source. While rendering is still running it returns `preview_status: "pending"`. When ready it returns ordered page or slide image URLs.
 
-`POST /create-account` creates a Supabase auth user and inserts the matching `users` profile row on the backend.
+`POST /create-account` inserts a bcrypt-hashed `auth_users` row and the matching `users` profile row in one transaction.
+
+`POST /login-account` returns an access token (`JWT_ACCESS_TOKEN_TTL_SECONDS`, default 1h) and a refresh token (`JWT_REFRESH_TOKEN_TTL_SECONDS`, default 30d). `POST /refresh-token` with `{ "refresh_token": "..." }` returns a new pair.
 
 ## Local Run
 
@@ -95,17 +98,58 @@ If you already have a repo-root `.env`, keep it and make sure it contains:
 GOOGLE_GEMINI_API_KEY=your-gemini-api-key
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 GEMINI_EMBEDDING_DIMENSIONS=768
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-SUPABASE_STORAGE_BUCKET=course-contents
-SUPABASE_ANON_KEY=your-anon-key
+DATABASE_URL=postgresql://user:password@ep-xxxx-pooler.region.aws.neon.tech/neondb?sslmode=require
+DIRECT_URL=postgresql://user:password@ep-xxxx.region.aws.neon.tech/neondb?sslmode=require
+JWT_SECRET=at-least-32-random-characters
+S3_ENDPOINT_URL=https://<branch-id>.storage.<cell>.<region>.aws.neon.tech
+S3_REGION=us-east-2
+S3_BUCKET=course-contents
+S3_ACCESS_KEY_ID=your-neon-storage-key-id
+S3_SECRET_ACCESS_KEY=your-neon-storage-secret
+STORAGE_PUBLIC_URL=https://<branch-id>.storage.<cell>.<region>.aws.neon.tech/course-contents
 ```
 
-`access_url` stores the stable Supabase object URL written to `course_contents`. It is not a signed URL.
+Files live in Neon object storage (S3-compatible, path-style). Create the bucket with **Visibility: Public** in the Neon console (Object storage -> Create bucket); visibility cannot be changed after creation. Credentials come from Connect -> Storage -> `.env` (`AWS_*` names there map to the `S3_*` names here).
+
+`access_url` stores the stable public object URL (`STORAGE_PUBLIC_URL/<key>`) written to `course_contents`. It is not a signed URL, so the bucket must allow public reads.
+
+## Database Setup (Neon)
+
+Fresh database:
+
+```bash
+psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f backend/database/neon/schema.sql
+```
+
+`schema.sql` is the Neon baseline (pgvector, all `public` tables/functions, and `auth_users`). The dated files in `backend/database/migrations/` are the history that produced it on Supabase and do not need to be replayed.
+
+## Migrating From Supabase
+
+1. Build the restore SQL from a Supabase cluster backup (keeps all `public` rows, copies `auth.users` into `auth_users` with their bcrypt hashes, rewrites stored Supabase object URLs):
+
+   ```bash
+   python backend/database/neon/build_neon_migration.py ~/Downloads/db_cluster-<date>.backup.gz \
+     --storage-public-url "$STORAGE_PUBLIC_URL"
+   ```
+
+2. Restore into an empty Neon database with the direct (non-pooled) connection:
+
+   ```bash
+   psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f backend/database/neon/out/neon_restore.sql
+   ```
+
+3. Copy files out of Supabase Storage (needs `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET` plus the S3 settings):
+
+   ```bash
+   backend/.venv/bin/python backend/scripts/migrate_supabase_storage.py --dry-run
+   backend/.venv/bin/python backend/scripts/migrate_supabase_storage.py
+   ```
+
+Existing users keep their passwords but must sign in again: Supabase-issued tokens are not accepted. `backend/database/neon/out/` is gitignored because it contains user data and password hashes.
 
 ## Project Schema Migration (UUID Contract + Legacy Constraint Relax)
 
-If your Supabase `projects` table still uses legacy columns (`owner_auth_user_id`, `created_on`, `created_by`),
+If an older database's `projects` table still uses legacy columns (`owner_auth_user_id`, `created_on`, `created_by`),
 apply the migrations below to add and backfill UUID-contract columns used by the current app
 (`project_uuid`, `owner_user_id`, `created_at`, `updated_at`):
 
@@ -161,7 +205,7 @@ To run the backend in watch mode:
 docker compose watch backend
 ```
 
-Compose passes Gemini and Supabase settings through from your shell or repo-root `.env`. The backend container also installs LibreOffice so DOCX and PPTX uploads can be converted into rendered preview images.
+Compose passes Gemini, Neon, JWT, and S3 settings through from your shell or repo-root `.env`. The backend container also installs LibreOffice so DOCX and PPTX uploads can be converted into rendered preview images.
 
 ## curl Examples
 
@@ -186,7 +230,7 @@ Expected success response shape:
 {
   "id": 1,
   "material_name": "lecture1.pdf",
-  "access_url": "https://your-project.supabase.co/storage/v1/object/course-contents/course-contents/uuid/lecture1.pdf",
+  "access_url": "https://files.your-domain.com/course-contents/uuid/lecture1.pdf",
   "data_size": 12345,
   "source_type": "pdf",
   "preview_status": "pending",

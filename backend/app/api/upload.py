@@ -9,14 +9,14 @@ from app.models.document_model import (
     CourseContentRecord,
     UpdateCourseContentRequest,
 )
-from app.services.supabase_service import (
+from app.services.data_service import (
     AuthenticationError,
     DuplicateCourseContentError,
-    MissingSupabaseConfigError,
+    MissingConfigError,
     PreviewNotFoundError,
     ProjectAccessDeniedError,
     ProjectNotFoundError,
-    SupabaseServiceError,
+    DataServiceError,
     delete_course_content_for_user,
     generate_course_content_rag_index,
     generate_course_content_preview_assets,
@@ -94,7 +94,7 @@ async def upload_doc(
             file_bytes=file_bytes,
         )
         return record
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
@@ -102,7 +102,7 @@ async def upload_doc(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except DuplicateCourseContentError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -119,7 +119,7 @@ async def get_course_content_preview_manifest(
             access_token=_extract_bearer_token(authorization),
             course_content_id=course_content_id,
         )
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
@@ -127,7 +127,7 @@ async def get_course_content_preview_manifest(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -143,7 +143,7 @@ def rename_course_content(
             course_content_id=course_content_id,
             material_name=payload.material_name,
         )
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
@@ -151,7 +151,7 @@ def rename_course_content(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -166,7 +166,7 @@ def delete_course_content(
             course_content_id=course_content_id,
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
@@ -174,5 +174,5 @@ def delete_course_content(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

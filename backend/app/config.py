@@ -18,11 +18,31 @@ GEMINI_ENV_VARS = (
 )
 
 
+DEFAULT_JWT_ACCESS_TOKEN_TTL_SECONDS = 3600
+DEFAULT_JWT_REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30
+MIN_JWT_SECRET_LENGTH = 32
+
+
 @dataclass(frozen=True)
-class SupabaseSettings:
+class DatabaseSettings:
     url: str
-    service_role_key: str
-    storage_bucket: str
+
+
+@dataclass(frozen=True)
+class StorageSettings:
+    bucket: str
+    public_url: str
+    endpoint_url: str | None
+    region: str
+    access_key_id: str
+    secret_access_key: str
+
+
+@dataclass(frozen=True)
+class AuthSettings:
+    jwt_secret: str
+    access_token_ttl_seconds: int
+    refresh_token_ttl_seconds: int
 
 
 def get_gemini_api_key() -> str:
@@ -51,12 +71,51 @@ def get_gemini_embedding_dimensions() -> int:
     return dimensions if dimensions > 0 else DEFAULT_GEMINI_EMBEDDING_DIMENSIONS
 
 
-def get_supabase_settings() -> SupabaseSettings:
-    return SupabaseSettings(
-        url=_get_required_env("SUPABASE_URL"),
-        service_role_key=_get_required_env("SUPABASE_SERVICE_ROLE_KEY"),
-        storage_bucket=_get_required_env("SUPABASE_STORAGE_BUCKET"),
+def get_database_settings() -> DatabaseSettings:
+    return DatabaseSettings(url=_get_required_env("DATABASE_URL"))
+
+
+def get_storage_settings() -> StorageSettings:
+    endpoint_url = os.getenv("S3_ENDPOINT_URL")
+    return StorageSettings(
+        bucket=_get_required_env("S3_BUCKET"),
+        public_url=_get_required_env("STORAGE_PUBLIC_URL").rstrip("/"),
+        endpoint_url=endpoint_url.strip() if endpoint_url and endpoint_url.strip() else None,
+        region=(os.getenv("S3_REGION") or "auto").strip() or "auto",
+        access_key_id=_get_required_env("S3_ACCESS_KEY_ID"),
+        secret_access_key=_get_required_env("S3_SECRET_ACCESS_KEY"),
     )
+
+
+def get_auth_settings() -> AuthSettings:
+    jwt_secret = _get_required_env("JWT_SECRET")
+    if len(jwt_secret) < MIN_JWT_SECRET_LENGTH:
+        raise ValueError(f"JWT_SECRET must be at least {MIN_JWT_SECRET_LENGTH} characters.")
+
+    return AuthSettings(
+        jwt_secret=jwt_secret,
+        access_token_ttl_seconds=_get_positive_int_env(
+            "JWT_ACCESS_TOKEN_TTL_SECONDS",
+            DEFAULT_JWT_ACCESS_TOKEN_TTL_SECONDS,
+        ),
+        refresh_token_ttl_seconds=_get_positive_int_env(
+            "JWT_REFRESH_TOKEN_TTL_SECONDS",
+            DEFAULT_JWT_REFRESH_TOKEN_TTL_SECONDS,
+        ),
+    )
+
+
+def _get_positive_int_env(env_var: str, default: int) -> int:
+    value = os.getenv(env_var)
+    if not value or not value.strip():
+        return default
+
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+
+    return parsed if parsed > 0 else default
 
 
 def _get_required_env(env_var: str) -> str:
