@@ -1,8 +1,9 @@
 # Render Blueprint. Both services pull images that GitHub Actions builds and pushes
 # to GHCR (.github/workflows/deploy.yml); Render never builds from source.
 # Deploys happen only when that workflow calls each service's deploy hook with
-# the commit-SHA image tag. The `:main` tag below is just the default image, and
-# every deployed tag must use the same repository.
+# the commit-SHA image tag. `:main` always points at the last image verified live
+# (moved by deploy.yml/rollback.yml), and every deployed tag must use the same
+# repository as the URL below or Render rejects the hook.
 #
 # Secrets use `sync: false`: Render asks for them when the Blueprint is first
 # applied, and they are never stored in this file.

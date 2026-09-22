@@ -1,0 +1,277 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+    inputs:
+      all:
+        description: Run every job regardless of which paths changed
+        type: boolean
+        default: false
+      push:
+        description: Push tested images to GHCR (production deploys only)
+        type: boolean
+        default: false
+    outputs:
+      backend-image:
+        description: Pushed backend image reference (empty if not built)
+        value: ${{ jobs.image-backend.outputs.image }}
+      frontend-image:
+        description: Pushed frontend image reference (empty if not built)
+        value: ${{ jobs.image-frontend.outputs.image }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      backend: ${{ (inputs.all && 'true') || steps.filter.outputs.backend }}
+      frontend: ${{ (inputs.all && 'true') || steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            shared: &shared
+              - '.dockerignore'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/deploy.yml'
+            backend:
+              - *shared
+              - 'backend/**'
+            frontend:
+              - *shared
+              - 'frontend/**'
+
+  config:
+    name: Config and workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check env/compose/Render config consistency
+        run: python3 .github/scripts/check_config.py
+      - name: Validate compose.yaml
+        run: docker compose config --quiet
+      - name: Lint GitHub workflows
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+          ./actionlint -color
+      - name: Check shell scripts
+        run: shellcheck .github/scripts/*.sh backend/scripts/*.sh
+
+  backend:
+    name: Backend tests
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: mea_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # Throwaway service container, not a real credential.
+      TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/mea_test
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements-dev.txt
+          python -m pip check
+      - name: Compile all modules
+        run: python -m compileall -q app database scripts
+      - name: Run tests
+        # Skipped tests usually mean TEST_DATABASE_URL was not picked up; treat that as a failure.
+        run: |
+          set -o pipefail
+          python -m pytest -q -ra | tee pytest.log
+          if grep -Eq '[0-9]+ skipped' pytest.log; then
+            echo "::error::Tests were skipped; integration tests must run in CI."
+            exit 1
+          fi
+      - name: Audit dependencies (advisory)
+        continue-on-error: true
+        run: |
+          python -m pip install --disable-pip-version-check pip-audit
+          pip-audit -r requirements.txt
+
+  frontend:
+    name: Frontend lint and types
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - name: Audit production dependencies (advisory)
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high
+
+  image-backend:
+    name: Backend image
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.push.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: backend/Dockerfile
+          build-args: APP_VERSION=${{ github.sha }}
+          tags: mea-backend:ci
+          load: true
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+      - name: Smoke test container on Render's port
+        run: |
+          docker run -d --name backend -p 8000:10000 -e PORT=10000 mea-backend:ci
+          for _ in $(seq 1 30); do
+            if version="$(curl -fsS localhost:8000/health | jq -r .version)"; then break; fi
+            sleep 2
+          done
+          test "${version:-}" = "$GITHUB_SHA" || { echo "::error::/health returned '${version:-nothing}', expected $GITHUB_SHA"; exit 1; }
+          test "$(docker exec backend id -un)" = app
+          docker exec backend soffice --version
+      - name: Container logs
+        if: failure()
+        run: docker logs backend || true
+      - name: Push to GHCR
+        id: push
+        if: inputs.push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/mea-backend"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          # Only the SHA tag here; deploy.yml moves :main after the deploy is verified live.
+          docker tag mea-backend:ci "$repo:$GITHUB_SHA"
+          docker push --quiet "$repo:$GITHUB_SHA"
+          echo "image=$repo:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+  image-frontend:
+    name: Frontend image
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.push.outputs.image }}
+    env:
+      # Production builds must point at the real API; PR builds use a placeholder.
+      API_BASE_URL: ${{ inputs.push && vars.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000' }}
+    steps:
+      - name: Require production API URL
+        if: inputs.push && vars.NEXT_PUBLIC_API_BASE_URL == ''
+        run: |
+          echo "::error::Set the NEXT_PUBLIC_API_BASE_URL repository variable (the Render backend URL) before deploying."
+          exit 1
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: frontend/Dockerfile
+          target: runner
+          build-args: |
+            NEXT_PUBLIC_API_BASE_URL=${{ env.API_BASE_URL }}
+            APP_VERSION=${{ github.sha }}
+          tags: mea-frontend:ci
+          load: true
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+      - name: Smoke test container on Render's port
+        run: |
+          docker run -d --name frontend -p 3000:10000 -e PORT=10000 mea-frontend:ci
+          for _ in $(seq 1 30); do
+            if version="$(curl -fsS localhost:3000/api/health | jq -r .version)"; then break; fi
+            sleep 2
+          done
+          test "${version:-}" = "$GITHUB_SHA" || { echo "::error::/api/health returned '${version:-nothing}', expected $GITHUB_SHA"; exit 1; }
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:3000/login)" = 200
+          docker exec frontend sh -c 'grep -rqF "$0" .next/static' "$API_BASE_URL" \
+            || { echo "::error::API URL was not inlined into the client bundle"; exit 1; }
+      - name: Container logs
+        if: failure()
+        run: docker logs frontend || true
+      - name: Push to GHCR
+        id: push
+        if: inputs.push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/mea-frontend"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          # Only the SHA tag here; deploy.yml moves :main after the deploy is verified live.
+          docker tag mea-frontend:ci "$repo:$GITHUB_SHA"
+          docker push --quiet "$repo:$GITHUB_SHA"
+          echo "image=$repo:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+  ci-ok:
+    # Single required status check for branch protection; skipped jobs count as passing.
+    name: CI result
+    if: always()
+    needs: [changes, config, backend, frontend, image-backend, image-frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Fail if any job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "::error::One or more CI jobs failed: ${{ join(needs.*.result, ', ') }}"
+          exit 1
+      - run: echo "All required jobs passed or were not needed."
