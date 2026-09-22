@@ -283,14 +283,11 @@ def get_project_for_user(*, access_token: str, project_uuid: str) -> ProjectReco
     auth_user = _resolve_authenticated_user(
         access_token=access_token,
     )
-    project_row = _fetch_owned_project_row_by_uuid(
-        project_uuid=project_uuid,
-        owner_user_id=auth_user.user_id,
-    )
-
     return _build_project_record(
-        project_row=project_row,
-        include_materials=True,
+        project_row=_fetch_owned_project_detail_row(
+            project_uuid=project_uuid,
+            owner_user_id=auth_user.user_id,
+        ),
     )
 
 
@@ -308,14 +305,16 @@ def update_project_for_user(*, access_token: str, project_uuid: str, name: str) 
         raise ProjectAccessDeniedError("You do not have permission to update this project.")
 
     project_id = _read_int(project_row, "id")
-    updated_row = _update_project_record(
+    _update_project_record(
         project_id=project_id,
         name=name,
     )
 
     return _build_project_record(
-        project_row=updated_row,
-        include_materials=True,
+        project_row=_fetch_owned_project_detail_row(
+            project_uuid=project_uuid,
+            owner_user_id=auth_user.user_id,
+        ),
     )
 
 
@@ -702,34 +701,22 @@ def get_course_content_preview(*, course_content_id: int) -> CourseContentPrevie
         )
         return manifest.model_copy(update={"preview_count": len(manifest.items)})
 
-    preview_status_payload = _download_preview_status(
-        course_content_id=course_content_id,
-    )
-    preview_manifest = _build_preview_manifest_from_status_payload(preview_status_payload)
-    if preview_manifest:
+    row = db.fetch_one("SELECT * FROM public.course_contents WHERE id = %s", (course_content_id,))
+    if row:
         logger.info(
-            "Preview GET source=status course_content_id=%s",
+            "Preview GET source=db course_content_id=%s",
             course_content_id,
         )
-        return preview_manifest
-
-    record = _fetch_course_content_record_optional(
-        course_content_id=course_content_id,
-    )
-    if record:
-        logger.info(
-            "Preview GET source=db-fallback course_content_id=%s",
-            course_content_id,
-        )
-        source_type = record.source_type or _detect_source_type(record.material_name)
+        record = CourseContentRecord.model_validate(row)
+        preview_error = row.get("preview_error")
         return CourseContentPreviewManifest(
             course_content_id=record.id,
             material_name=record.material_name,
-            source_type=source_type,
-            preview_status="pending",
-            preview_count=0,
+            source_type=record.source_type or _detect_source_type(record.material_name),
+            preview_status=record.preview_status,
+            preview_count=record.preview_count,
             access_url=record.access_url,
-            preview_error=None,
+            preview_error=preview_error if isinstance(preview_error, str) else None,
             items=[],
         )
 
@@ -1043,15 +1030,26 @@ def get_project_chat_history_for_user(
     access_token: str,
     project_uuid: str,
 ) -> ProjectChatHistoryResponse:
-    project = get_project_for_user(access_token=access_token, project_uuid=project_uuid)
-    if project.id is None:
-        raise DataServiceError("Project record is missing a numeric id.")
+    auth_user = _resolve_authenticated_user(access_token=access_token)
+    if not _is_uuid(project_uuid):
+        raise ProjectNotFoundError("Project was not found.")
 
+    row = db.fetch_one(
+        """
+        SELECT memory.messages
+        FROM public.projects AS project
+        LEFT JOIN public.project_chat_memory AS memory
+            ON memory.project_id = project.id AND memory.owner_user_id = project.owner_user_id
+        WHERE project.project_uuid = %s::uuid AND project.owner_user_id = %s
+        """,
+        (project_uuid, auth_user.user_id),
+    )
+    if row is None:
+        raise ProjectNotFoundError("Project was not found.")
+
+    messages = row.get("messages")
     return ProjectChatHistoryResponse(
-        messages=_fetch_project_chat_messages(
-            project_id=project.id,
-            owner_user_id=project.owner_user_id,
-        )
+        messages=_validate_project_chat_messages(messages) if messages is not None else [],
     )
 
 
@@ -1060,13 +1058,15 @@ def clear_project_chat_history_for_user(
     access_token: str,
     project_uuid: str,
 ) -> None:
-    project = get_project_for_user(access_token=access_token, project_uuid=project_uuid)
-    if project.id is None:
-        raise DataServiceError("Project record is missing a numeric id.")
+    auth_user = _resolve_authenticated_user(access_token=access_token)
+    project_row = _fetch_owned_project_row_by_uuid(
+        project_uuid=project_uuid,
+        owner_user_id=auth_user.user_id,
+    )
 
     _delete_project_chat_memory(
-        project_id=project.id,
-        owner_user_id=project.owner_user_id,
+        project_id=_read_int(project_row, "id"),
+        owner_user_id=auth_user.user_id,
     )
 
 
@@ -1163,13 +1163,9 @@ def list_generated_materials_for_user(
     auth_user = _resolve_authenticated_user(
         access_token=access_token,
     )
-    owned_project = _fetch_owned_project_row_by_uuid(
+    rows = _fetch_owned_generated_material_rows(
         project_uuid=project_uuid,
         owner_user_id=auth_user.user_id,
-    )
-    normalized_project_uuid = _normalize_project_row(owned_project)["project_uuid"]
-    rows = _fetch_generated_material_rows_for_project_uuid(
-        project_uuid=normalized_project_uuid,
     )
     return [GeneratedMaterialRecord.model_validate(row) for row in rows]
 
@@ -1251,13 +1247,10 @@ def list_generated_quiz_history_for_user(
     auth_user = _resolve_authenticated_user(
         access_token=access_token,
     )
-    owned_project = _fetch_owned_project_row_by_uuid(
+    normalized_project_uuid = project_uuid
+    rows = _fetch_owned_generated_material_rows(
         project_uuid=project_uuid,
         owner_user_id=auth_user.user_id,
-    )
-    normalized_project_uuid = _normalize_project_row(owned_project)["project_uuid"]
-    rows = _fetch_generated_material_rows_for_project_uuid(
-        project_uuid=normalized_project_uuid,
         tool_type="quiz",
     )
 
@@ -1842,14 +1835,58 @@ def _fetch_project_rows_for_owner(
 ) -> list[dict[str, Any]]:
     return db.fetch_all(
         """
-        SELECT *
-        FROM public.projects
-        WHERE owner_user_id = %s
-        ORDER BY created_at DESC NULLS LAST, id DESC
+        SELECT project.*, links.material_count, links.last_updated
+        FROM public.projects AS project
+        CROSS JOIN LATERAL (
+            SELECT count(*)::int AS material_count, max(link.created_at) AS last_updated
+            FROM public.project_materials AS link
+            WHERE link.project_id = project.id
+        ) AS links
+        WHERE project.owner_user_id = %s
+        ORDER BY project.created_at DESC NULLS LAST, project.id DESC
         LIMIT %s
         """,
         (owner_user_id, limit if isinstance(limit, int) and limit > 0 else None),
     )
+
+
+def _fetch_owned_project_detail_row(
+    *,
+    project_uuid: str,
+    owner_user_id: str,
+) -> dict[str, Any]:
+    """Project row plus its materials (newest link first) in one round trip."""
+    if not _is_uuid(project_uuid):
+        raise ProjectNotFoundError("Project was not found.")
+
+    row = db.fetch_one(
+        """
+        SELECT
+            project.*,
+            coalesce(links.materials, '[]'::jsonb) AS materials,
+            coalesce(links.material_count, 0) AS material_count,
+            links.last_updated
+        FROM public.projects AS project
+        CROSS JOIN LATERAL (
+            SELECT
+                jsonb_agg(
+                    to_jsonb(material) || jsonb_build_object('uploaded_at', link.created_at)
+                    ORDER BY link.created_at DESC
+                ) AS materials,
+                count(*)::int AS material_count,
+                max(link.created_at) AS last_updated
+            FROM public.project_materials AS link
+            JOIN public.course_contents AS material ON material.id = link.material_id
+            WHERE link.project_id = project.id
+        ) AS links
+        WHERE project.project_uuid = %s::uuid AND project.owner_user_id = %s
+        """,
+        (project_uuid, owner_user_id),
+    )
+    if row is None:
+        raise ProjectNotFoundError("Project was not found.")
+
+    return row
 
 
 def _fetch_owned_project_row(
@@ -2029,18 +2066,17 @@ def _build_project_summary(
     *,
     project_row: dict[str, Any],
 ) -> ProjectSummary:
-    project_id = _read_int(project_row, "id")
-    material_links = _fetch_project_material_links(
-        project_id=project_id,
-    )
-    normalized_row = _normalize_project_row(project_row)
-    last_updated = _read_latest_project_material_timestamp(material_links)
+    """Build a summary from a projects row that may carry precomputed link aggregates.
 
+    Rows from ``_fetch_project_rows_for_owner``/``_fetch_owned_project_detail_row`` include
+    ``material_count``/``last_updated``; a freshly inserted project has no links yet.
+    """
+    material_count = project_row.get("material_count")
     return ProjectSummary.model_validate(
         {
-            **normalized_row,
-            "material_count": len(material_links),
-            "last_updated": last_updated,
+            **_normalize_project_row(project_row),
+            "material_count": material_count if isinstance(material_count, int) else 0,
+            "last_updated": project_row.get("last_updated"),
         }
     )
 
@@ -2048,26 +2084,16 @@ def _build_project_summary(
 def _build_project_record(
     *,
     project_row: dict[str, Any],
-    include_materials: bool,
 ) -> ProjectRecord:
-    summary = _build_project_summary(
-        project_row=project_row,
-    )
-    project_id = summary.id
-    if project_id is None:
+    summary = _build_project_summary(project_row=project_row)
+    if summary.id is None:
         raise DataServiceError("Project record is missing a numeric id.")
 
-    material_links = _fetch_project_material_links(
-        project_id=project_id,
-    )
-
-    materials = (
-        _fetch_project_material_records(
-            material_links=material_links,
-        )
-        if include_materials
-        else []
-    )
+    raw_materials = project_row.get("materials")
+    materials = [
+        _build_project_material_record(material)
+        for material in (raw_materials if isinstance(raw_materials, list) else [])
+    ]
 
     return ProjectRecord.model_validate(
         {
@@ -2075,6 +2101,18 @@ def _build_project_record(
             "materials": materials,
         }
     )
+
+
+def _build_project_material_record(material: dict[str, Any]) -> ProjectMaterialRecord:
+    record = ProjectMaterialRecord.model_validate(material)
+    if record.source_type is None:
+        # Rows created before source_type was stored; derive it from the file name.
+        try:
+            record = record.model_copy(update={"source_type": _detect_source_type(record.material_name)})
+        except DataServiceError:
+            pass
+
+    return record
 
 
 def _normalize_project_row(project_row: dict[str, Any]) -> dict[str, Any]:
@@ -2177,55 +2215,6 @@ def _assert_material_ids_linked_to_project(
         raise ProjectNotFoundError("One or more selected sources are not part of this project.")
 
 
-def _fetch_project_material_records(
-    *,
-    material_links: list[dict[str, Any]],
-) -> list[ProjectMaterialRecord]:
-    material_ids = [
-        material_id
-        for material_id in (_read_optional_int(link, "material_id") for link in material_links)
-        if material_id is not None
-    ]
-    if not material_ids:
-        return []
-
-    records_by_id = _fetch_course_content_records_by_id(
-        material_ids=material_ids,
-    )
-    materials: list[ProjectMaterialRecord] = []
-
-    for link in material_links:
-        material_id = _read_optional_int(link, "material_id")
-        if material_id is None or material_id not in records_by_id:
-            continue
-
-        base_record = CourseContentRecord.model_validate(records_by_id[material_id])
-        preview_status_payload = _download_preview_status(
-            course_content_id=base_record.id,
-        )
-        source_type = base_record.source_type or _detect_source_type(base_record.material_name)
-        preview_status = preview_status_payload.get("preview_status", base_record.preview_status)
-        preview_count = preview_status_payload.get("preview_count", base_record.preview_count)
-        if preview_status not in {"pending", "ready", "failed"}:
-            preview_status = base_record.preview_status
-        if not isinstance(preview_count, int):
-            preview_count = base_record.preview_count
-
-        materials.append(
-            ProjectMaterialRecord.model_validate(
-                {
-                    **base_record.model_dump(),
-                    "source_type": source_type,
-                    "preview_status": preview_status,
-                    "preview_count": preview_count,
-                    "uploaded_at": link.get("created_at"),
-                }
-            )
-        )
-
-    return materials
-
-
 def _assert_course_content_owned_by_username(
     *,
     course_content_id: int,
@@ -2291,24 +2280,33 @@ def _fetch_course_content_records_by_id(
     return records_by_id
 
 
-def _fetch_generated_material_rows_for_project_uuid(
+def _fetch_owned_generated_material_rows(
     *,
     project_uuid: str,
+    owner_user_id: str,
     tool_type: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Generated materials of a project, checking ownership in the same round trip."""
     if not _is_uuid(project_uuid):
-        return []
+        raise ProjectNotFoundError("Project was not found.")
 
-    return db.fetch_all(
+    rows = db.fetch_all(
         """
-        SELECT *
-        FROM public.generated_materials
-        WHERE project_uuid = %s::uuid
-          AND (%s::text IS NULL OR tool_type = %s::text)
-        ORDER BY created_at DESC, id DESC
+        SELECT project.id AS owned_project_id, material.*
+        FROM public.projects AS project
+        LEFT JOIN public.generated_materials AS material
+            ON material.project_uuid = project.project_uuid
+           AND (%(tool_type)s::text IS NULL OR material.tool_type = %(tool_type)s::text)
+        WHERE project.project_uuid = %(project_uuid)s::uuid AND project.owner_user_id = %(owner)s
+        ORDER BY material.created_at DESC, material.id DESC
         """,
-        (project_uuid, tool_type, tool_type),
+        {"tool_type": tool_type, "project_uuid": project_uuid, "owner": owner_user_id},
     )
+    if not rows:
+        raise ProjectNotFoundError("Project was not found.")
+
+    # A project without generated materials comes back as one row of NULL material columns.
+    return [row for row in rows if row.get("id") is not None]
 
 
 def _fetch_generated_material_row_by_uuid_for_project(
@@ -2791,6 +2789,15 @@ def _upload_preview_status(
         "preview_count": preview_count,
         "preview_error": preview_error,
     }
+    # The row is what reads use; status.json is kept for older deployments and tools.
+    db.execute(
+        """
+        UPDATE public.course_contents
+        SET source_type = %s, preview_status = %s, preview_count = %s, preview_error = %s
+        WHERE id = %s
+        """,
+        (source_type, preview_status, preview_count, preview_error, course_content_id),
+    )
     _upload_or_replace_storage_object(
         storage_path=_build_preview_status_storage_path(course_content_id=course_content_id),
         file_bytes=json.dumps(payload).encode("utf-8"),
@@ -2832,42 +2839,6 @@ def _download_preview_status(
         raise DataServiceError("Stored preview status is unreadable.") from exc
 
     return payload if isinstance(payload, dict) else {}
-
-
-def _build_preview_manifest_from_status_payload(
-    preview_status_payload: dict[str, Any],
-) -> CourseContentPreviewManifest | None:
-    course_content_id = preview_status_payload.get("course_content_id")
-    material_name = preview_status_payload.get("material_name")
-    access_url = preview_status_payload.get("access_url")
-    source_type = preview_status_payload.get("source_type")
-    preview_status = preview_status_payload.get("preview_status", "pending")
-    preview_count = preview_status_payload.get("preview_count", 0)
-    preview_error = preview_status_payload.get("preview_error")
-
-    if not isinstance(course_content_id, int):
-        return None
-    if not isinstance(material_name, str) or not material_name.strip():
-        return None
-    if not isinstance(access_url, str) or not access_url.strip():
-        return None
-    if source_type not in {"pdf", "docx", "pptx"}:
-        return None
-    if preview_status not in {"pending", "ready", "failed"}:
-        return None
-    if not isinstance(preview_count, int):
-        preview_count = 0
-
-    return CourseContentPreviewManifest(
-        course_content_id=course_content_id,
-        material_name=material_name,
-        source_type=source_type,
-        preview_status=preview_status,
-        preview_count=preview_count,
-        access_url=access_url,
-        preview_error=preview_error if isinstance(preview_error, str) else None,
-        items=[],
-    )
 
 
 def _build_object_url(*, storage_path: str) -> str:

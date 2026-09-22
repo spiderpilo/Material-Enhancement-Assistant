@@ -30,12 +30,14 @@ CREATE INDEX IF NOT EXISTS idx_project_materials_material_id
     ON public.project_materials USING btree (material_id);
 
 -- ---------------------------------------------------------------------------
--- 2. GET /projects: WHERE owner_user_id = $1 ORDER BY created_at DESC, id DESC LIMIT n
+-- 2. GET /projects: WHERE owner_user_id = $1 ORDER BY created_at DESC NULLS LAST, id DESC LIMIT n
 --    A composite index returns rows pre-sorted, so LIMIT stops early instead of
 --    sorting every project the user owns. Supersedes the single-column index.
+--    NULLS LAST must match the query: a plain DESC index sorts NULLs first and
+--    the planner falls back to an explicit Sort (verified with EXPLAIN).
 -- ---------------------------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_projects_owner_user_id_created_at
-    ON public.projects USING btree (owner_user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_projects_owner_user_id_created_at_nulls_last
+    ON public.projects USING btree (owner_user_id, created_at DESC NULLS LAST, id DESC);
 
 DROP INDEX IF EXISTS public.idx_projects_owner_user_id;
 

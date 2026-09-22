@@ -35,6 +35,9 @@ os.environ["S3_REGION"] = "auto"
 os.environ["S3_ACCESS_KEY_ID"] = "test"
 os.environ["S3_SECRET_ACCESS_KEY"] = "test"
 os.environ["STORAGE_PUBLIC_URL"] = TEST_PUBLIC_URL
+# Empty values win over .env and read as "not configured", so no test can call Gemini.
+for gemini_env_var in ("GOOGLE_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+    os.environ[gemini_env_var] = ""
 
 import psycopg2  # noqa: E402
 import psycopg2.extras  # noqa: E402

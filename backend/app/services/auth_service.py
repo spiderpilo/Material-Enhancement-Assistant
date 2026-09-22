@@ -30,7 +30,6 @@ from app.services import db
 from app.services.errors import (
     AccountConflictError,
     AuthenticationError,
-    DataServiceError,
     InvalidCredentialsError,
     MissingConfigError,
 )

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from starlette.concurrency import run_in_threadpool
+
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile, status
 
 from app.api.deps import (
@@ -80,7 +82,9 @@ async def upload_doc(
         )
 
     try:
-        record = upload_course_content(
+        # Storage and database calls block; keep them off the event loop.
+        record = await run_in_threadpool(
+            upload_course_content,
             filename=filename,
             file_bytes=file_bytes,
             project_id=project_id,
@@ -121,7 +125,7 @@ async def upload_doc(
     description='Preview status and page images for an uploaded material.',
     responses={**MATERIAL_ERRORS, **UPSTREAM_ERRORS},
 )
-async def get_course_content_preview_manifest(
+def get_course_content_preview_manifest(
     course_content_id: int,
     access_token: str = Depends(require_access_token),
 ) -> CourseContentPreviewManifest:
