@@ -63,7 +63,7 @@ Set `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000` in the repo-root `.env` so 
 
 This repository now includes a Docker Compose setup for local development.
 
-Create a repo-root `.env` file with Supabase settings before testing uploads:
+Create a repo-root `.env` file with Neon, JWT, and S3 storage settings before testing uploads:
 
 ```bash
 cp .env.example .env
@@ -100,8 +100,8 @@ Notes:
 - The Compose setup is geared toward development, not production deployment.
 - `docker compose watch` syncs source changes into the running containers.
 - Changing `backend/requirements.txt`, `frontend/package.json`, or `frontend/package-lock.json` triggers a rebuild.
-- Gemini and Supabase settings are passed through from your shell or repo-root `.env` via Compose variable expansion.
-- Uploads accept PDF, DOCX, and PPTX files up to 50MB and create a `course_contents` row after Supabase Storage upload succeeds.
+- Gemini, Neon, JWT, and S3 storage settings are passed through from your shell or repo-root `.env` via Compose variable expansion.
+- Uploads accept PDF, DOCX, and PPTX files up to 50MB and create a `course_contents` row after the S3 storage upload succeeds.
 - Uploaded files are indexed for RAG chat in the background. The original file remains stored for previews, quizzes, and slide deck generation.
 
 ## Example Workflow

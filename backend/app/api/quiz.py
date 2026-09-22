@@ -4,12 +4,12 @@ from fastapi import APIRouter, Header, HTTPException
 
 from app.models.quiz_model import GeneratedQuiz, QuizGenerateRequest
 from app.services.llm_service import GeminiServiceError, MissingAPIKeyError
-from app.services.supabase_service import (
+from app.services.data_service import (
     AuthenticationError,
-    MissingSupabaseConfigError,
+    MissingConfigError,
     ProjectAccessDeniedError,
     ProjectNotFoundError,
-    SupabaseServiceError,
+    DataServiceError,
     generate_quiz_for_user,
 )
 
@@ -41,7 +41,7 @@ def generate_quiz_from_materials(
             material_ids=payload.material_ids,
             question_count=payload.question_count,
         )
-    except MissingSupabaseConfigError as exc:
+    except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
@@ -51,6 +51,6 @@ def generate_quiz_from_materials(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except MissingAPIKeyError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except (GeminiServiceError, SupabaseServiceError) as exc:
+    except (GeminiServiceError, DataServiceError) as exc:
         logger.warning("Quiz generation failed: %s", exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc

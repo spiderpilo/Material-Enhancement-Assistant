@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -30,6 +30,10 @@ class CreateAccountResponse(BaseModel):
 class LoginAccountRequest(BaseModel):
     email: str = Field(min_length=3)
     password: str = Field(min_length=8)
+
+
+class RefreshSessionRequest(BaseModel):
+    refresh_token: str = Field(min_length=1)
 
 
 class LoginAccountResponse(BaseModel):

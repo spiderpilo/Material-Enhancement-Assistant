@@ -9,12 +9,18 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
-from urllib import error, parse, request
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import psycopg2.extras
 from pydantic import ValidationError
 
-from app.config import get_supabase_settings
+from app.services import auth_service, db, storage_service
+from app.services.errors import (  # noqa: F401 - AuthenticationError/InvalidCredentialsError re-exported for API routes
+    AuthenticationError,
+    DataServiceError,
+    InvalidCredentialsError,
+    MissingConfigError,
+)
 from app.models.account_model import CreateAccountResponse, LoginAccountResponse, UserProfileRecord
 from app.models.chat_model import (
     ProjectChatHistoryResponse,
@@ -56,7 +62,6 @@ from app.services.preview_service import (
 from app.utils.file_utils import sanitize_filename
 
 
-REQUEST_TIMEOUT_SECONDS = 30
 PREVIEW_STORAGE_PREFIX = "course-content-previews"
 GENERATED_MATERIALS_STORAGE_PREFIX = "generated-materials"
 PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -66,39 +71,23 @@ LEGACY_PROJECTS_NOT_NULL_COLUMNS = ("created_by", "owner_auth_user_id")
 CHAT_MEMORY_LIMIT = 10
 
 
-class MissingSupabaseConfigError(Exception):
-    """Raised when the backend is missing required Supabase settings."""
-
-
-class SupabaseServiceError(Exception):
-    """Raised when Supabase storage or database operations fail."""
-
-
-class PreviewNotFoundError(SupabaseServiceError):
+class PreviewNotFoundError(DataServiceError):
     """Raised when no preview bootstrap or manifest exists for a source id."""
 
 
-class InvalidCredentialsError(SupabaseServiceError):
-    """Raised when login credentials are invalid."""
-
-
-class AuthenticationError(SupabaseServiceError):
-    """Raised when a request is missing valid user authentication."""
-
-
-class ProjectNotFoundError(SupabaseServiceError):
+class ProjectNotFoundError(DataServiceError):
     """Raised when a project does not exist or is not owned by the current user."""
 
 
-class ProjectAccessDeniedError(SupabaseServiceError):
+class ProjectAccessDeniedError(DataServiceError):
     """Raised when a project exists but is not owned by the current user."""
 
 
-class GeneratedMaterialNotFoundError(SupabaseServiceError):
+class GeneratedMaterialNotFoundError(DataServiceError):
     """Raised when a generated material record cannot be found for a project."""
 
 
-class DuplicateCourseContentError(SupabaseServiceError):
+class DuplicateCourseContentError(DataServiceError):
     """Raised when the same source bytes already exist in a project."""
 
 
@@ -129,135 +118,78 @@ class RagRetrievedChunk:
 
 
 def login_account(*, email: str, password: str) -> LoginAccountResponse:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
+    user = auth_service.authenticate(email=email, password=password)
+    tokens = auth_service.issue_tokens(user)
+    return _build_login_response(user=user, tokens=tokens)
 
-    auth_api_key = (
-        os.getenv("SUPABASE_ANON_KEY")
-        or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
-        or settings.service_role_key
-    )
 
-    payload = json.dumps({"email": email, "password": password}).encode("utf-8")
+def refresh_session(*, refresh_token: str) -> LoginAccountResponse:
+    user = auth_service.resolve_token(refresh_token, expected_type="refresh")
+    tokens = auth_service.issue_tokens(user)
+    return _build_login_response(user=user, tokens=tokens)
 
-    try:
-        response_body = _send_request(
-            endpoint=f"{settings.url.rstrip('/')}/auth/v1/token?grant_type=password",
-            method="POST",
-            data=payload,
-            headers={
-                "apikey": auth_api_key,
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            expected_statuses={200},
-        )
-    except SupabaseServiceError as exc:
-        error_message = str(exc).lower()
-        if "invalid login credentials" in error_message or "invalid_grant" in error_message:
-            raise InvalidCredentialsError("Incorrect email or password") from exc
-        raise
 
-    try:
-        auth_response = json.loads(response_body.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise SupabaseServiceError("Supabase returned an unreadable login response.") from exc
-
-    if not isinstance(auth_response, dict):
-        raise SupabaseServiceError("Supabase did not return a valid login payload.")
-
-    access_token = auth_response.get("access_token")
-    refresh_token = auth_response.get("refresh_token")
-    token_type = auth_response.get("token_type")
-    user = auth_response.get("user")
-
-    if (
-        not isinstance(access_token, str)
-        or not isinstance(refresh_token, str)
-        or not isinstance(token_type, str)
-        or not isinstance(user, dict)
-    ):
-        raise SupabaseServiceError("Supabase login response is missing required fields.")
-
-    user_id = user.get("id")
-    user_email = user.get("email")
-    user_metadata = user.get("user_metadata") if isinstance(user.get("user_metadata"), dict) else {}
-    username = user_metadata.get("username") if isinstance(user_metadata.get("username"), str) else ""
-    profession = user_metadata.get("profession") if isinstance(user_metadata.get("profession"), str) else ""
-
-    if not isinstance(user_id, str) or not isinstance(user_email, str):
-        raise SupabaseServiceError("Supabase login response is missing user identity data.")
+def _build_login_response(
+    *,
+    user: auth_service.AuthUser,
+    tokens: auth_service.IssuedTokens,
+) -> LoginAccountResponse:
+    username = user.user_metadata.get("username")
+    profession = user.user_metadata.get("profession")
 
     return LoginAccountResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_type=token_type,
-        user_id=user_id,
-        email=user_email,
-        username=username,
-        profession=profession,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        token_type=tokens.token_type,
+        user_id=user.id,
+        email=user.email,
+        username=username if isinstance(username, str) else "",
+        profession=profession if isinstance(profession, str) else "",
     )
 
 
 def create_account(*, email: str, password: str, username: str, profession: str) -> CreateAccountResponse:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
+    with db.transaction() as cursor:
+        auth_user = auth_service.insert_auth_user(
+            cursor,
+            email=email,
+            password=password,
+            user_metadata={
+                "username": username,
+                "profession": profession,
+                "email_verified": True,
+            },
+        )
+        cursor.execute(
+            """
+            INSERT INTO public.users (username, profession, user_uuid)
+            VALUES (%s, %s, %s::uuid)
+            ON CONFLICT (username) DO NOTHING
+            RETURNING *
+            """,
+            (username, profession, auth_user.id),
+        )
+        profile_row = cursor.fetchone()
+        if profile_row is None:
+            raise DataServiceError(f"Username {username} is already taken.")
 
-    auth_user = _create_supabase_auth_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
-        email=email,
-        password=password,
-        username=username,
-        profession=profession,
+    return CreateAccountResponse(
+        auth_user_id=auth_user.id,
+        profile=UserProfileRecord.model_validate(db.normalize_rows([profile_row])[0]),
     )
-
-    try:
-        profile = _insert_user_profile(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
-            username=username,
-            profession=profession,
-        )
-    except SupabaseServiceError as exc:
-        cleanup_error = _delete_supabase_auth_user(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
-            user_id=auth_user["id"],
-        )
-        if cleanup_error:
-            raise SupabaseServiceError(f"{exc} Cleanup failed: {cleanup_error}") from exc
-        raise
-
-    return CreateAccountResponse(auth_user_id=auth_user["id"], profile=profile)
 
 
 def list_projects_for_user(*, access_token: str, limit: int | None = None) -> list[ProjectSummary]:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
 
     projects = _fetch_project_rows_for_owner(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         owner_user_id=auth_user.user_id,
         limit=limit,
     )
 
     return [_build_project_summary(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             project_row=project,
         )
         for project in projects
@@ -265,30 +197,19 @@ def list_projects_for_user(*, access_token: str, limit: int | None = None) -> li
 
 
 def create_project_for_user(*, access_token: str, name: str) -> ProjectSummary:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     profile = _get_user_profile_optional(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         auth_user=auth_user,
     )
 
     try:
         project_row = _insert_project_record(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             name=name,
             owner_user_id=auth_user.user_id,
         )
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         if not _is_legacy_projects_not_null_error(exc):
             raise
 
@@ -299,16 +220,14 @@ def create_project_for_user(*, access_token: str, name: str) -> ProjectSummary:
         )
         try:
             project_row = _insert_project_record(
-                url=settings.url,
-                service_role_key=settings.service_role_key,
                 name=name,
                 owner_user_id=auth_user.user_id,
                 owner_auth_user_id=auth_user.user_id,
                 created_by=legacy_created_by,
             )
-        except SupabaseServiceError as retry_exc:
+        except DataServiceError as retry_exc:
             if _is_legacy_projects_not_null_error(retry_exc):
-                raise SupabaseServiceError(
+                raise DataServiceError(
                     _build_legacy_projects_migration_hint_message(str(retry_exc))
                 ) from retry_exc
             raise
@@ -316,111 +235,72 @@ def create_project_for_user(*, access_token: str, name: str) -> ProjectSummary:
     if profile:
         try:
             _insert_user_project_link(
-                url=settings.url,
-                service_role_key=settings.service_role_key,
                 user_id=profile.id,
                 project_id=_read_int(project_row, "id"),
             )
-        except SupabaseServiceError as exc:
+        except DataServiceError as exc:
             logger.warning("Skipping user_projects link for project_id=%s: %s", project_row.get("id"), exc)
 
     return _build_project_summary(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_row=project_row,
     )
 
 
 def get_project_for_user(*, access_token: str, project_uuid: str) -> ProjectRecord:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     project_row = _fetch_owned_project_row_by_uuid(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_uuid=project_uuid,
         owner_user_id=auth_user.user_id,
     )
 
     return _build_project_record(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_row=project_row,
         include_materials=True,
     )
 
 
 def update_project_for_user(*, access_token: str, project_uuid: str, name: str) -> ProjectRecord:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     project_row = _fetch_project_row_by_uuid(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_uuid=project_uuid,
     )
     project_owner_user_id = project_row.get("owner_user_id")
     if not isinstance(project_owner_user_id, str) or not project_owner_user_id.strip():
-        raise SupabaseServiceError("Project row is missing an owner_user_id.")
+        raise DataServiceError("Project row is missing an owner_user_id.")
     if project_owner_user_id != auth_user.user_id:
         raise ProjectAccessDeniedError("You do not have permission to update this project.")
 
     project_id = _read_int(project_row, "id")
     updated_row = _update_project_record(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_id=project_id,
         name=name,
     )
 
     return _build_project_record(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_row=updated_row,
         include_materials=True,
     )
 
 
 def delete_project_for_user(*, access_token: str, project_uuid: str) -> None:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     project_row = _fetch_project_row_by_uuid(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_uuid=project_uuid,
     )
     project_owner_user_id = project_row.get("owner_user_id")
     if not isinstance(project_owner_user_id, str) or not project_owner_user_id.strip():
-        raise SupabaseServiceError("Project row is missing an owner_user_id.")
+        raise DataServiceError("Project row is missing an owner_user_id.")
     if project_owner_user_id != auth_user.user_id:
         raise ProjectAccessDeniedError("You do not have permission to delete this project.")
 
     project_id = _read_int(project_row, "id")
     material_links = _fetch_project_material_links(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_id=project_id,
     )
     for link in material_links:
@@ -428,29 +308,23 @@ def delete_project_for_user(*, access_token: str, project_uuid: str) -> None:
         if material_id is None:
             continue
         cleanup_error = _delete_project_material_link(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             project_id=project_id,
             material_id=material_id,
         )
         if cleanup_error:
-            raise SupabaseServiceError(cleanup_error)
+            raise DataServiceError(cleanup_error)
 
     user_project_cleanup_error = _delete_user_project_links_for_project(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_id=project_id,
     )
     if user_project_cleanup_error:
-        raise SupabaseServiceError(user_project_cleanup_error)
+        raise DataServiceError(user_project_cleanup_error)
 
     delete_error = _delete_project_record(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_id=project_id,
     )
     if delete_error:
-        raise SupabaseServiceError(delete_error)
+        raise DataServiceError(delete_error)
 
 
 def upload_course_content(
@@ -460,26 +334,15 @@ def upload_course_content(
     project_id: int,
     access_token: str,
 ) -> CourseContentRecord:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     _fetch_owned_project_row(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_id=project_id,
         owner_user_id=auth_user.user_id,
     )
     content_sha256 = _compute_content_sha256(file_bytes)
     duplicate_record = _fetch_duplicate_course_content_for_project(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_id=project_id,
         content_sha256=content_sha256,
     )
@@ -492,24 +355,17 @@ def upload_course_content(
     content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
     _upload_storage_object(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
-        bucket=settings.storage_bucket,
         storage_path=storage_path,
         file_bytes=file_bytes,
         content_type=content_type,
     )
 
     access_url = _build_object_url(
-        url=settings.url,
-        bucket=settings.storage_bucket,
         storage_path=storage_path,
     )
 
     try:
         inserted_record = _insert_course_content_record(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             filename=filename,
             access_url=access_url,
             data_size=len(file_bytes),
@@ -517,8 +373,6 @@ def upload_course_content(
             content_sha256=content_sha256,
         )
         _insert_project_material_link(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             project_id=project_id,
             material_id=inserted_record.id,
         )
@@ -534,9 +388,6 @@ def upload_course_content(
             }
         )
         _upload_preview_status(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
-            bucket=settings.storage_bucket,
             course_content_id=preview_record.id,
             material_name=preview_record.material_name,
             access_url=preview_record.access_url,
@@ -550,7 +401,7 @@ def upload_course_content(
             preview_record.id,
         )
         return preview_record
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         logger.error(
             "Preview bootstrap write failed for filename=%s: %s",
             filename,
@@ -561,8 +412,6 @@ def upload_course_content(
 
         if "inserted_record" in locals():
             cleanup_link_error = _delete_project_material_link(
-                url=settings.url,
-                service_role_key=settings.service_role_key,
                 project_id=project_id,
                 material_id=inserted_record.id,
             )
@@ -570,24 +419,19 @@ def upload_course_content(
                 cleanup_messages.append(cleanup_link_error)
 
             cleanup_record_error = _delete_course_content_record(
-                url=settings.url,
-                service_role_key=settings.service_role_key,
                 course_content_id=inserted_record.id,
             )
             if cleanup_record_error:
                 cleanup_messages.append(cleanup_record_error)
 
         cleanup_error = _delete_storage_object(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
-            bucket=settings.storage_bucket,
             storage_path=storage_path,
         )
         if cleanup_error:
             cleanup_messages.append(cleanup_error)
 
         if cleanup_messages:
-            raise SupabaseServiceError(
+            raise DataServiceError(
                 f"{exc} Cleanup failed: {' | '.join(cleanup_messages)}"
             ) from exc
         raise
@@ -600,18 +444,10 @@ def generate_course_content_preview_assets(
     access_url: str,
     file_bytes: bytes,
 ) -> None:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     source_type = _detect_source_type(filename)
 
     try:
         _upload_preview_status(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
-            bucket=settings.storage_bucket,
             course_content_id=course_content_id,
             material_name=filename,
             access_url=access_url,
@@ -632,9 +468,6 @@ def generate_course_content_preview_assets(
                 image_name=item.image_name,
             )
             _upload_or_replace_storage_object(
-                url=settings.url,
-                service_role_key=settings.service_role_key,
-                bucket=settings.storage_bucket,
                 storage_path=storage_path,
                 file_bytes=item.image_bytes,
                 content_type="image/png",
@@ -648,8 +481,6 @@ def generate_course_content_preview_assets(
                     title=item.title,
                     subtitle=item.subtitle,
                     image_url=_build_object_url(
-                        url=settings.url,
-                        bucket=settings.storage_bucket,
                         storage_path=storage_path,
                     ),
                     width=item.width,
@@ -669,16 +500,10 @@ def generate_course_content_preview_assets(
         )
 
         _upload_preview_manifest(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
-            bucket=settings.storage_bucket,
             course_content_id=course_content_id,
             manifest=manifest,
         )
         _upload_preview_status(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
-            bucket=settings.storage_bucket,
             course_content_id=course_content_id,
             material_name=filename,
             access_url=access_url,
@@ -692,16 +517,13 @@ def generate_course_content_preview_assets(
             course_content_id,
             len(manifest_items),
         )
-    except (DocumentPreviewError, SupabaseServiceError, MissingSupabaseConfigError) as exc:
+    except (DocumentPreviewError, DataServiceError, MissingConfigError) as exc:
         logger.error(
             "Preview render failed for course_content_id=%s: %s",
             course_content_id,
             exc,
         )
         _upload_preview_status(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
-            bucket=settings.storage_bucket,
             course_content_id=course_content_id,
             material_name=filename,
             access_url=access_url,
@@ -719,17 +541,10 @@ def generate_course_content_rag_index(
     filename: str,
     file_bytes: bytes,
 ) -> None:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     source_type = _detect_source_type(filename)
 
     try:
         _update_course_content_rag_status(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             course_content_id=course_content_id,
             rag_status="pending",
             rag_chunk_count=0,
@@ -738,20 +553,16 @@ def generate_course_content_rag_index(
         parsed_units = parse_document_units(file_bytes=file_bytes, file_type=source_type)
         chunks = _chunk_parsed_text_units(parsed_units)
         if not chunks:
-            raise SupabaseServiceError("No text chunks could be created from the uploaded file.")
+            raise DataServiceError("No text chunks could be created from the uploaded file.")
 
         embedded_chunks = embed_chunks(chunks)
         _replace_course_content_chunks(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             project_id=project_id,
             course_content_id=course_content_id,
             material_name=filename,
             embedded_chunks=embedded_chunks,
         )
         _update_course_content_rag_status(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             course_content_id=course_content_id,
             rag_status="ready",
             rag_chunk_count=len(embedded_chunks),
@@ -766,7 +577,7 @@ def generate_course_content_rag_index(
         DocumentParseError,
         MissingGeminiAPIKeyError,
         GeminiEmbeddingError,
-        SupabaseServiceError,
+        DataServiceError,
         ValueError,
     ) as exc:
         logger.error(
@@ -775,8 +586,6 @@ def generate_course_content_rag_index(
             exc,
         )
         _update_course_content_rag_status(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             course_content_id=course_content_id,
             rag_status="failed",
             rag_chunk_count=0,
@@ -850,15 +659,7 @@ def _chunk_parsed_text_units(units: list[ParsedTextUnit]) -> list[TextChunk]:
 
 
 def get_course_content_preview(*, course_content_id: int) -> CourseContentPreviewManifest:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     manifest = _download_preview_manifest(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
-        bucket=settings.storage_bucket,
         course_content_id=course_content_id,
     )
     if manifest:
@@ -869,9 +670,6 @@ def get_course_content_preview(*, course_content_id: int) -> CourseContentPrevie
         return manifest.model_copy(update={"preview_count": len(manifest.items)})
 
     preview_status_payload = _download_preview_status(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
-        bucket=settings.storage_bucket,
         course_content_id=course_content_id,
     )
     preview_manifest = _build_preview_manifest_from_status_payload(preview_status_payload)
@@ -883,8 +681,6 @@ def get_course_content_preview(*, course_content_id: int) -> CourseContentPrevie
         return preview_manifest
 
     record = _fetch_course_content_record_optional(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         course_content_id=course_content_id,
     )
     if record:
@@ -918,19 +714,10 @@ def get_course_content_preview_for_user(
     access_token: str,
     course_content_id: int,
 ) -> CourseContentPreviewManifest:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     _assert_course_content_owned_by_username(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         course_content_id=course_content_id,
         owner_user_id=auth_user.user_id,
     )
@@ -944,26 +731,15 @@ def update_course_content_name_for_user(
     course_content_id: int,
     material_name: str,
 ) -> CourseContentRecord:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     _assert_course_content_owned_by_username(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         course_content_id=course_content_id,
         owner_user_id=auth_user.user_id,
     )
 
     record = _fetch_course_content_record(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         course_content_id=course_content_id,
     )
     next_material_name = _normalize_locked_material_name(
@@ -973,17 +749,12 @@ def update_course_content_name_for_user(
 
     if next_material_name != record.material_name:
         record = _update_course_content_record_name(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             course_content_id=course_content_id,
             material_name=next_material_name,
         )
 
     source_type = record.source_type or _detect_source_type(record.material_name)
     preview_metadata = _refresh_course_content_preview_metadata(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
-        bucket=settings.storage_bucket,
         course_content_id=record.id,
         material_name=record.material_name,
         access_url=record.access_url,
@@ -1000,34 +771,21 @@ def delete_course_content_for_user(
     access_token: str,
     course_content_id: int,
 ) -> None:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     _assert_course_content_owned_by_username(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         course_content_id=course_content_id,
         owner_user_id=auth_user.user_id,
     )
 
     record = _fetch_course_content_record_optional(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         course_content_id=course_content_id,
     )
     if record is None:
         raise ProjectNotFoundError("Course content was not found.")
 
     material_links = _fetch_project_material_links_for_material(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         material_id=course_content_id,
     )
     for link in material_links:
@@ -1036,49 +794,36 @@ def delete_course_content_for_user(
             continue
 
         cleanup_error = _delete_project_material_link(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             project_id=project_id,
             material_id=course_content_id,
         )
         if cleanup_error:
-            raise SupabaseServiceError(cleanup_error)
+            raise DataServiceError(cleanup_error)
 
     _delete_course_content_preview_assets(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
-        bucket=settings.storage_bucket,
         course_content_id=course_content_id,
     )
     chunk_delete_error = _delete_course_content_chunks(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         course_content_id=course_content_id,
     )
     if chunk_delete_error:
-        raise SupabaseServiceError(chunk_delete_error)
+        raise DataServiceError(chunk_delete_error)
 
     source_storage_path = _extract_storage_path_from_access_url(
         access_url=record.access_url,
-        bucket=settings.storage_bucket,
     )
     if source_storage_path:
         source_delete_error = _delete_storage_object_if_exists(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
-            bucket=settings.storage_bucket,
             storage_path=source_storage_path,
         )
         if source_delete_error:
-            raise SupabaseServiceError(source_delete_error)
+            raise DataServiceError(source_delete_error)
 
     delete_error = _delete_course_content_record(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         course_content_id=course_content_id,
     )
     if delete_error:
-        raise SupabaseServiceError(delete_error)
+        raise DataServiceError(delete_error)
 
 
 def get_course_content_texts_for_user(
@@ -1087,14 +832,7 @@ def get_course_content_texts_for_user(
     project_uuid: str | None = None,
     material_ids: list[int],
 ) -> list[QuizSourceMaterial]:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     unique_material_ids = list(dict.fromkeys(material_ids))
@@ -1102,30 +840,22 @@ def get_course_content_texts_for_user(
 
     if normalized_project_uuid:
         project_row = _fetch_owned_project_row_by_uuid(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             project_uuid=normalized_project_uuid,
             owner_user_id=auth_user.user_id,
         )
         project_id = _read_int(project_row, "id")
         _assert_materials_linked_to_project(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             project_id=project_id,
             material_ids=unique_material_ids,
         )
 
     for material_id in unique_material_ids:
         _assert_course_content_owned_by_username(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             course_content_id=material_id,
             owner_user_id=auth_user.user_id,
         )
 
     records_by_id = _fetch_course_content_records_by_id(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         material_ids=unique_material_ids,
     )
     source_materials: list[QuizSourceMaterial] = []
@@ -1138,12 +868,7 @@ def get_course_content_texts_for_user(
 
         record = CourseContentRecord.model_validate(record_payload)
         source_type = record.source_type or _detect_source_type(record.material_name)
-        file_bytes = _send_request(
-            endpoint=record.access_url,
-            method="GET",
-            headers=_build_auth_headers(settings.service_role_key),
-            expected_statuses={200},
-        )
+        file_bytes = _download_object_by_url(record.access_url)
 
         try:
             text = parse_document(file_bytes=file_bytes, file_type=source_type)
@@ -1175,7 +900,7 @@ def get_course_content_texts_for_user(
 
     if not source_materials:
         detail = " | ".join(parse_errors) if parse_errors else "No source text could be extracted."
-        raise SupabaseServiceError(f"Unable to read selected sources for quiz generation: {detail}")
+        raise DataServiceError(f"Unable to read selected sources for quiz generation: {detail}")
 
     return source_materials
 
@@ -1188,20 +913,13 @@ def answer_project_question_for_user(
     selected_material_id: int | None = None,
     selected_material_ids: list[int] | None = None,
 ) -> ProjectChatResponse:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     project = get_project_for_user(access_token=access_token, project_uuid=project_uuid)
     if project.id is None:
-        raise SupabaseServiceError("Project record is missing a numeric id.")
+        raise DataServiceError("Project record is missing a numeric id.")
     if not project.materials:
         raise ProjectNotFoundError("No course materials were found for this project.")
 
     history = _fetch_project_chat_messages(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_id=project.id,
         owner_user_id=project.owner_user_id,
     )
@@ -1226,8 +944,6 @@ def answer_project_question_for_user(
 
     query_embedding = embed_text(message)
     retrieved_chunks = _match_course_content_chunks_for_selection(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_id=project.id,
         query_embedding=query_embedding,
         selected_material_ids=normalized_selected_material_ids,
@@ -1245,8 +961,6 @@ def answer_project_question_for_user(
             "Try again after upload indexing finishes, or upload a readable PDF, DOCX, or PPTX file."
         )
         messages = _append_project_chat_exchange(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             project_id=project.id,
             owner_user_id=project.owner_user_id,
             user_content=message,
@@ -1275,8 +989,6 @@ def answer_project_question_for_user(
         ],
     )
     messages = _append_project_chat_exchange(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_id=project.id,
         owner_user_id=project.owner_user_id,
         user_content=message,
@@ -1298,19 +1010,12 @@ def get_project_chat_history_for_user(
     access_token: str,
     project_uuid: str,
 ) -> ProjectChatHistoryResponse:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     project = get_project_for_user(access_token=access_token, project_uuid=project_uuid)
     if project.id is None:
-        raise SupabaseServiceError("Project record is missing a numeric id.")
+        raise DataServiceError("Project record is missing a numeric id.")
 
     return ProjectChatHistoryResponse(
         messages=_fetch_project_chat_messages(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             project_id=project.id,
             owner_user_id=project.owner_user_id,
         )
@@ -1322,18 +1027,11 @@ def clear_project_chat_history_for_user(
     access_token: str,
     project_uuid: str,
 ) -> None:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     project = get_project_for_user(access_token=access_token, project_uuid=project_uuid)
     if project.id is None:
-        raise SupabaseServiceError("Project record is missing a numeric id.")
+        raise DataServiceError("Project record is missing a numeric id.")
 
     _delete_project_chat_memory(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_id=project.id,
         owner_user_id=project.owner_user_id,
     )
@@ -1341,38 +1039,25 @@ def clear_project_chat_history_for_user(
 
 def _fetch_project_chat_messages(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
     owner_user_id: str,
 ) -> list[ProjectChatMessageRecord]:
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/project_chat_memory"
-        f"?project_id=eq.{project_id}"
-        f"&owner_user_id=eq.{parse.quote(owner_user_id, safe='')}"
-        "&select=messages"
+    row = db.fetch_one(
+        """
+        SELECT messages
+        FROM public.project_chat_memory
+        WHERE project_id = %s AND owner_user_id = %s
+        """,
+        (project_id, owner_user_id),
     )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
-    rows = _decode_json_rows(response_body, "project chat memory")
-    if not rows:
+    if row is None:
         return []
 
-    raw_messages = rows[0].get("messages")
-    return _validate_project_chat_messages(raw_messages)
+    return _validate_project_chat_messages(row.get("messages"))
 
 
 def _append_project_chat_exchange(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
     owner_user_id: str,
     user_content: str,
@@ -1404,55 +1089,27 @@ def _append_project_chat_exchange(
         "sources": [source.model_dump(mode="json") for source in sources],
         "selection_mode": selection_mode,
     }
-    response_body = _send_request(
-        endpoint=f"{url.rstrip('/')}/rest/v1/rpc/append_project_chat_exchange",
-        method="POST",
-        data=json.dumps(
-            {
-                "filter_project_id": project_id,
-                "filter_owner_user_id": owner_user_id,
-                "user_message": user_message,
-                "assistant_message": assistant_message,
-            }
-        ).encode("utf-8"),
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
+    row = db.fetch_one(
+        "SELECT public.append_project_chat_exchange(%s, %s, %s::jsonb, %s::jsonb) AS messages",
+        (project_id, owner_user_id, db.json_param(user_message), db.json_param(assistant_message)),
     )
-    return _validate_project_chat_messages(
-        _decode_json_payload(response_body, "project chat exchange")
-    )
+    return _validate_project_chat_messages(row.get("messages") if row else None)
 
 
 def _delete_project_chat_memory(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
     owner_user_id: str,
 ) -> None:
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/project_chat_memory"
-        f"?project_id=eq.{project_id}"
-        f"&owner_user_id=eq.{parse.quote(owner_user_id, safe='')}"
-    )
-    _send_request(
-        endpoint=endpoint,
-        method="DELETE",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200, 204},
+    db.execute(
+        "DELETE FROM public.project_chat_memory WHERE project_id = %s AND owner_user_id = %s",
+        (project_id, owner_user_id),
     )
 
 
 def _validate_project_chat_messages(raw_messages: Any) -> list[ProjectChatMessageRecord]:
     if not isinstance(raw_messages, list):
-        raise SupabaseServiceError("Project chat memory returned an invalid message list.")
+        raise DataServiceError("Project chat memory returned an invalid message list.")
 
     try:
         messages = [
@@ -1460,7 +1117,7 @@ def _validate_project_chat_messages(raw_messages: Any) -> list[ProjectChatMessag
             for message in raw_messages[-CHAT_MEMORY_LIMIT:]
         ]
     except ValidationError as exc:
-        raise SupabaseServiceError("Project chat memory contains an invalid message.") from exc
+        raise DataServiceError("Project chat memory contains an invalid message.") from exc
 
     return messages
 
@@ -1470,26 +1127,15 @@ def list_generated_materials_for_user(
     access_token: str,
     project_uuid: str,
 ) -> list[GeneratedMaterialRecord]:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     owned_project = _fetch_owned_project_row_by_uuid(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_uuid=project_uuid,
         owner_user_id=auth_user.user_id,
     )
     normalized_project_uuid = _normalize_project_row(owned_project)["project_uuid"]
     rows = _fetch_generated_material_rows_for_project_uuid(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_uuid=normalized_project_uuid,
     )
     return [GeneratedMaterialRecord.model_validate(row) for row in rows]
@@ -1569,26 +1215,15 @@ def list_generated_quiz_history_for_user(
     access_token: str,
     project_uuid: str,
 ) -> list[GeneratedQuizHistoryRecord]:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     owned_project = _fetch_owned_project_row_by_uuid(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_uuid=project_uuid,
         owner_user_id=auth_user.user_id,
     )
     normalized_project_uuid = _normalize_project_row(owned_project)["project_uuid"]
     rows = _fetch_generated_material_rows_for_project_uuid(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_uuid=normalized_project_uuid,
         tool_type="quiz",
     )
@@ -1637,19 +1272,10 @@ def generate_quiz_for_user(
     material_ids: list[int],
     question_count: int,
 ) -> GeneratedQuiz:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     owned_project = _fetch_owned_project_row_by_uuid(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_uuid=project_uuid,
         owner_user_id=auth_user.user_id,
     )
@@ -1657,16 +1283,12 @@ def generate_quiz_for_user(
     project_id = _read_int(owned_project, "id")
     unique_material_ids = list(dict.fromkeys(material_ids))
     _assert_material_ids_linked_to_project(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_id=project_id,
         material_ids=unique_material_ids,
     )
 
     for material_id in unique_material_ids:
         _assert_course_content_owned_by_username(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             course_content_id=material_id,
             owner_user_id=auth_user.user_id,
         )
@@ -1680,8 +1302,6 @@ def generate_quiz_for_user(
     )
 
     _insert_generated_material_record(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_uuid=normalized_project["project_uuid"],
         name=generation_result.quiz.title,
         file_location="inline://payload",
@@ -1704,19 +1324,10 @@ def generate_slide_deck_for_user(
     material_ids: list[int],
     slide_count: int,
 ) -> GeneratedMaterialRecord:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     owned_project = _fetch_owned_project_row_by_uuid(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_uuid=project_uuid,
         owner_user_id=auth_user.user_id,
     )
@@ -1724,8 +1335,6 @@ def generate_slide_deck_for_user(
     project_id = _read_int(owned_project, "id")
     unique_material_ids = list(dict.fromkeys(material_ids))
     _assert_material_ids_linked_to_project(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_id=project_id,
         material_ids=unique_material_ids,
     )
@@ -1753,22 +1362,14 @@ def generate_slide_deck_for_user(
         filename=storage_filename,
     )
     _upload_or_replace_storage_object(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
-        bucket=settings.storage_bucket,
         storage_path=storage_path,
         file_bytes=deck_bytes,
         content_type=PPTX_CONTENT_TYPE,
     )
     file_location = _build_object_url(
-        url=settings.url,
-        bucket=settings.storage_bucket,
         storage_path=storage_path,
     )
     preview_result = _build_generated_slide_deck_preview(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
-        bucket=settings.storage_bucket,
         project_uuid=normalized_project["project_uuid"],
         generated_material_uuid=generated_uuid,
         deck_filename=storage_filename,
@@ -1777,8 +1378,6 @@ def generate_slide_deck_for_user(
 
     try:
         return _insert_generated_material_record(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
             uuid=generated_uuid,
             project_uuid=normalized_project["project_uuid"],
             name=generation_result.outline.title,
@@ -1793,20 +1392,17 @@ def generate_slide_deck_for_user(
             input_token=generation_result.token_usage.input_token,
             output_token=generation_result.token_usage.output_token,
         )
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         cleanup_errors: list[str] = []
         cleanup_paths = [storage_path, *preview_result.storage_paths]
         for cleanup_path in cleanup_paths:
             cleanup_error = _delete_storage_object_if_exists(
-                url=settings.url,
-                service_role_key=settings.service_role_key,
-                bucket=settings.storage_bucket,
                 storage_path=cleanup_path,
             )
             if cleanup_error:
                 cleanup_errors.append(cleanup_error)
         if cleanup_errors:
-            raise SupabaseServiceError(f"{exc} Cleanup failed: {' | '.join(cleanup_errors)}") from exc
+            raise DataServiceError(f"{exc} Cleanup failed: {' | '.join(cleanup_errors)}") from exc
         raise
 
 
@@ -1817,34 +1413,23 @@ def get_generated_material_download_for_user(
     generated_material_uuid: str,
     download_format: Literal["pptx", "pdf"] = "pptx",
 ) -> tuple[str, str]:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     auth_user = _resolve_authenticated_user(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         access_token=access_token,
     )
     owned_project = _fetch_owned_project_row_by_uuid(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_uuid=project_uuid,
         owner_user_id=auth_user.user_id,
     )
     normalized_project = _normalize_project_row(owned_project)
 
     row = _fetch_generated_material_row_by_uuid_for_project(
-        url=settings.url,
-        service_role_key=settings.service_role_key,
         project_uuid=normalized_project["project_uuid"],
         generated_material_uuid=generated_material_uuid,
     )
     record = GeneratedMaterialRecord.model_validate(row)
 
     if record.file_location.startswith("inline://"):
-        raise SupabaseServiceError("This generated material does not include a downloadable file.")
+        raise DataServiceError("This generated material does not include a downloadable file.")
 
     base_filename = sanitize_filename(
         (record.name or f"generated-{record.tool_type}").strip(),
@@ -1853,7 +1438,7 @@ def get_generated_material_download_for_user(
 
     if download_format == "pdf":
         if record.tool_type != "slide_deck":
-            raise SupabaseServiceError("PDF download is only available for generated slide decks.")
+            raise DataServiceError("PDF download is only available for generated slide decks.")
 
         pdf_filename = _ensure_file_extension(base_filename=base_filename, extension="pdf")
         pdf_storage_path = _build_generated_material_storage_path(
@@ -1862,34 +1447,22 @@ def get_generated_material_download_for_user(
             filename=pdf_filename,
         )
         cached_pdf = _download_storage_object_optional(
-            url=settings.url,
-            service_role_key=settings.service_role_key,
-            bucket=settings.storage_bucket,
             storage_path=pdf_storage_path,
         )
 
         if cached_pdf is None:
             source_pptx_storage_path = _extract_storage_path_from_access_url(
                 access_url=record.file_location,
-                bucket=settings.storage_bucket,
             )
             source_pptx_bytes: bytes | None = None
 
             if source_pptx_storage_path:
                 source_pptx_bytes = _download_storage_object_optional(
-                    url=settings.url,
-                    service_role_key=settings.service_role_key,
-                    bucket=settings.storage_bucket,
                     storage_path=source_pptx_storage_path,
                 )
 
             if source_pptx_bytes is None:
-                source_pptx_bytes = _send_request(
-                    endpoint=record.file_location,
-                    method="GET",
-                    headers=_build_auth_headers(settings.service_role_key),
-                    expected_statuses={200},
-                )
+                source_pptx_bytes = _download_object_by_url(record.file_location)
 
             source_pptx_name = _ensure_file_extension(base_filename=base_filename, extension="pptx")
             converted_pdf = convert_pptx_to_pdf_bytes(
@@ -1897,17 +1470,12 @@ def get_generated_material_download_for_user(
                 file_bytes=source_pptx_bytes,
             )
             _upload_or_replace_storage_object(
-                url=settings.url,
-                service_role_key=settings.service_role_key,
-                bucket=settings.storage_bucket,
                 storage_path=pdf_storage_path,
                 file_bytes=converted_pdf,
                 content_type=PDF_CONTENT_TYPE,
             )
 
         return _build_object_url(
-            url=settings.url,
-            bucket=settings.storage_bucket,
             storage_path=pdf_storage_path,
         ), pdf_filename
 
@@ -1967,9 +1535,6 @@ def _ensure_file_extension(*, base_filename: str, extension: str) -> str:
 
 def _build_generated_slide_deck_preview(
     *,
-    url: str,
-    service_role_key: str,
-    bucket: str,
     project_uuid: str,
     generated_material_uuid: str,
     deck_filename: str,
@@ -1991,9 +1556,6 @@ def _build_generated_slide_deck_preview(
                 image_name=item.image_name,
             )
             _upload_or_replace_storage_object(
-                url=url,
-                service_role_key=service_role_key,
-                bucket=bucket,
                 storage_path=preview_storage_path,
                 file_bytes=item.image_bytes,
                 content_type="image/png",
@@ -2007,21 +1569,16 @@ def _build_generated_slide_deck_preview(
                     "title": item.title,
                     "subtitle": item.subtitle,
                     "image_url": _build_object_url(
-                        url=url,
-                        bucket=bucket,
                         storage_path=preview_storage_path,
                     ),
                     "width": item.width,
                     "height": item.height,
                 }
             )
-    except (DocumentPreviewError, SupabaseServiceError) as exc:
+    except (DocumentPreviewError, DataServiceError) as exc:
         cleanup_errors: list[str] = []
         for uploaded_path in uploaded_preview_paths:
             cleanup_error = _delete_storage_object_if_exists(
-                url=url,
-                service_role_key=service_role_key,
-                bucket=bucket,
                 storage_path=uploaded_path,
             )
             if cleanup_error:
@@ -2073,11 +1630,11 @@ def _normalize_locked_material_name(*, requested_name: str, current_name: str) -
     normalized_requested_name = requested_name.strip()
     requested_base_name = os.path.splitext(normalized_requested_name)[0].strip()
     if not requested_base_name:
-        raise SupabaseServiceError("Source name cannot be empty.")
+        raise DataServiceError("Source name cannot be empty.")
 
     current_suffix = os.path.splitext(current_name)[1].lower()
     if not current_suffix:
-        raise SupabaseServiceError("Source filename is missing an extension.")
+        raise DataServiceError("Source filename is missing an extension.")
     _detect_source_type(f"placeholder{current_suffix}")
 
     sanitized_base_name = sanitize_filename(requested_base_name, fallback_name="material")
@@ -2090,9 +1647,6 @@ def _normalize_locked_material_name(*, requested_name: str, current_name: str) -
 
 def _refresh_course_content_preview_metadata(
     *,
-    url: str,
-    service_role_key: str,
-    bucket: str,
     course_content_id: int,
     material_name: str,
     access_url: str,
@@ -2101,15 +1655,9 @@ def _refresh_course_content_preview_metadata(
     fallback_preview_count: int,
 ) -> dict[str, Any]:
     preview_status_payload = _download_preview_status(
-        url=url,
-        service_role_key=service_role_key,
-        bucket=bucket,
         course_content_id=course_content_id,
     )
     preview_manifest = _download_preview_manifest(
-        url=url,
-        service_role_key=service_role_key,
-        bucket=bucket,
         course_content_id=course_content_id,
     )
 
@@ -2133,9 +1681,6 @@ def _refresh_course_content_preview_metadata(
             current_access_url = access_url
 
         _upload_preview_status(
-            url=url,
-            service_role_key=service_role_key,
-            bucket=bucket,
             course_content_id=course_content_id,
             material_name=material_name,
             access_url=current_access_url,
@@ -2147,9 +1692,6 @@ def _refresh_course_content_preview_metadata(
 
     if preview_manifest:
         _upload_preview_manifest(
-            url=url,
-            service_role_key=service_role_key,
-            bucket=bucket,
             course_content_id=course_content_id,
             manifest=preview_manifest.model_copy(update={"material_name": material_name}),
         )
@@ -2162,15 +1704,9 @@ def _refresh_course_content_preview_metadata(
 
 def _delete_course_content_preview_assets(
     *,
-    url: str,
-    service_role_key: str,
-    bucket: str,
     course_content_id: int,
 ) -> None:
     preview_manifest = _download_preview_manifest(
-        url=url,
-        service_role_key=service_role_key,
-        bucket=bucket,
         course_content_id=course_content_id,
     )
 
@@ -2183,187 +1719,62 @@ def _delete_course_content_preview_assets(
         for item in preview_manifest.items:
             preview_item_storage_path = _extract_storage_path_from_access_url(
                 access_url=item.image_url,
-                bucket=bucket,
             )
             if preview_item_storage_path:
                 preview_storage_paths.add(preview_item_storage_path)
 
     for storage_path in sorted(preview_storage_paths):
         cleanup_error = _delete_storage_object_if_exists(
-            url=url,
-            service_role_key=service_role_key,
-            bucket=bucket,
             storage_path=storage_path,
         )
         if cleanup_error:
-            raise SupabaseServiceError(cleanup_error)
-
-
-def _create_supabase_auth_user(
-    *,
-    url: str,
-    service_role_key: str,
-    email: str,
-    password: str,
-    username: str,
-    profession: str,
-) -> dict[str, Any]:
-    payload = json.dumps(
-        {
-            "email": email,
-            "password": password,
-            "email_confirm": True,
-            "user_metadata": {
-                "username": username,
-                "profession": profession,
-            },
-        }
-    ).encode("utf-8")
-
-    response_body = _send_request(
-        endpoint=f"{url.rstrip('/')}/auth/v1/admin/users",
-        method="POST",
-        data=payload,
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        expected_statuses={200, 201},
-    )
-
-    try:
-        created_user = json.loads(response_body.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise SupabaseServiceError("Supabase returned an unreadable auth response.") from exc
-
-    if not isinstance(created_user, dict) or "id" not in created_user:
-        raise SupabaseServiceError("Supabase did not return the created auth user.")
-
-    return created_user
+            raise DataServiceError(cleanup_error)
 
 
 def _insert_user_profile(
     *,
-    url: str,
-    service_role_key: str,
     username: str,
     profession: str,
+    user_uuid: str,
 ) -> UserProfileRecord:
-    payload = json.dumps(
-        {
-            "username": username,
-            "profession": profession,
-        }
-    ).encode("utf-8")
-
-    response_body = _send_request(
-        endpoint=f"{url.rstrip('/')}/rest/v1/users",
-        method="POST",
-        data=payload,
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Prefer": "return=representation",
-        },
-        expected_statuses={200, 201},
+    row = db.fetch_one(
+        """
+        INSERT INTO public.users (username, profession, user_uuid)
+        VALUES (%s, %s, %s::uuid)
+        RETURNING *
+        """,
+        (username, profession, user_uuid),
     )
+    if row is None:
+        raise DataServiceError("Database did not return the inserted users row.")
 
-    try:
-        inserted_rows = json.loads(response_body.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise SupabaseServiceError("Supabase returned an unreadable users response.") from exc
-
-    if not isinstance(inserted_rows, list) or not inserted_rows:
-        raise SupabaseServiceError("Supabase did not return the inserted users row.")
-
-    return UserProfileRecord.model_validate(inserted_rows[0])
-
-
-def _delete_supabase_auth_user(*, url: str, service_role_key: str, user_id: str) -> Optional[str]:
-    endpoint = f"{url.rstrip('/')}/auth/v1/admin/users/{parse.quote(user_id, safe='')}"
-
-    try:
-        _send_request(
-            endpoint=endpoint,
-            method="DELETE",
-            headers=_build_auth_headers(service_role_key),
-            expected_statuses={200, 204},
-        )
-    except SupabaseServiceError as exc:
-        return str(exc)
-
-    return None
+    return UserProfileRecord.model_validate(row)
 
 
 def _resolve_authenticated_user(
     *,
-    url: str,
-    service_role_key: str,
     access_token: str,
 ) -> AuthenticatedUser:
-    if not access_token.strip():
-        raise AuthenticationError("Sign in required.")
-
-    auth_api_key = (
-        os.getenv("SUPABASE_ANON_KEY")
-        or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
-        or service_role_key
-    )
-
-    try:
-        response_body = _send_request(
-            endpoint=f"{url.rstrip('/')}/auth/v1/user",
-            method="GET",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "apikey": auth_api_key,
-                "Accept": "application/json",
-            },
-            expected_statuses={200},
-        )
-    except SupabaseServiceError as exc:
-        raise AuthenticationError("Sign in required.") from exc
-
-    payload = _decode_json_payload(response_body, "Supabase auth user")
-    if not isinstance(payload, dict):
-        raise AuthenticationError("Supabase did not return a valid auth user.")
-
-    user_id = payload.get("id")
-    email = payload.get("email")
-    metadata = payload.get("user_metadata") if isinstance(payload.get("user_metadata"), dict) else {}
-    metadata_username = metadata.get("username")
-    profession = metadata.get("profession")
-
-    if not isinstance(user_id, str) or not user_id.strip():
-        raise AuthenticationError("Supabase auth user is missing an id.")
-    if not isinstance(email, str):
-        email = ""
-    username = metadata_username if isinstance(metadata_username, str) else ""
-    if not isinstance(profession, str):
-        profession = ""
+    auth_user = auth_service.resolve_token(access_token, expected_type="access")
+    metadata_username = auth_user.user_metadata.get("username")
+    profession = auth_user.user_metadata.get("profession")
 
     return AuthenticatedUser(
-        user_id=user_id,
-        email=email,
-        username=username.strip(),
-        profession=profession.strip(),
+        user_id=auth_user.id,
+        email=auth_user.email,
+        username=metadata_username.strip() if isinstance(metadata_username, str) else "",
+        profession=profession.strip() if isinstance(profession, str) else "",
     )
 
 
 def _get_user_profile_optional(
     *,
-    url: str,
-    service_role_key: str,
     auth_user: AuthenticatedUser,
 ) -> UserProfileRecord | None:
     if not auth_user.username:
         return None
 
     profile = _fetch_user_profile_by_username(
-        url=url,
-        service_role_key=service_role_key,
         username=auth_user.username,
     )
     if profile:
@@ -2373,189 +1784,115 @@ def _get_user_profile_optional(
         return None
 
     return _insert_user_profile(
-        url=url,
-        service_role_key=service_role_key,
         username=auth_user.username,
         profession=auth_user.profession,
+        user_uuid=auth_user.user_id,
     )
 
 
 def _fetch_user_profile_by_username(
     *,
-    url: str,
-    service_role_key: str,
     username: str,
 ) -> UserProfileRecord | None:
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/users"
-        f"?username=eq.{parse.quote(username, safe='')}&select=*"
-    )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
-    rows = _decode_json_rows(response_body, "users")
-
-    if not rows:
+    row = db.fetch_one("SELECT * FROM public.users WHERE username = %s", (username,))
+    if row is None:
         return None
 
-    return UserProfileRecord.model_validate(rows[0])
+    return UserProfileRecord.model_validate(row)
 
 
 def _fetch_project_rows_for_owner(
     *,
-    url: str,
-    service_role_key: str,
     owner_user_id: str,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    limit_clause = f"&limit={limit}" if isinstance(limit, int) and limit > 0 else ""
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/projects"
-        f"?owner_user_id=eq.{parse.quote(owner_user_id, safe='')}"
-        "&select=*&order=created_at.desc.nullslast,id.desc"
-        f"{limit_clause}"
+    return db.fetch_all(
+        """
+        SELECT *
+        FROM public.projects
+        WHERE owner_user_id = %s
+        ORDER BY created_at DESC NULLS LAST, id DESC
+        LIMIT %s
+        """,
+        (owner_user_id, limit if isinstance(limit, int) and limit > 0 else None),
     )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
-
-    return _decode_json_rows(response_body, "projects")
 
 
 def _fetch_owned_project_row(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
     owner_user_id: str,
 ) -> dict[str, Any]:
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/projects"
-        f"?id=eq.{project_id}&owner_user_id=eq.{parse.quote(owner_user_id, safe='')}&select=*"
+    row = db.fetch_one(
+        "SELECT * FROM public.projects WHERE id = %s AND owner_user_id = %s",
+        (project_id, owner_user_id),
     )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
-    rows = _decode_json_rows(response_body, "projects")
-
-    if not rows:
+    if row is None:
         raise ProjectNotFoundError("Project was not found.")
 
-    return rows[0]
+    return row
 
 
 def _fetch_owned_project_row_by_uuid(
     *,
-    url: str,
-    service_role_key: str,
     project_uuid: str,
     owner_user_id: str,
 ) -> dict[str, Any]:
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/projects"
-        f"?project_uuid=eq.{parse.quote(project_uuid, safe='')}"
-        f"&owner_user_id=eq.{parse.quote(owner_user_id, safe='')}&select=*"
-    )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
-    rows = _decode_json_rows(response_body, "projects")
-
-    if not rows:
+    if not _is_uuid(project_uuid):
         raise ProjectNotFoundError("Project was not found.")
 
-    return rows[0]
+    row = db.fetch_one(
+        "SELECT * FROM public.projects WHERE project_uuid = %s::uuid AND owner_user_id = %s",
+        (project_uuid, owner_user_id),
+    )
+    if row is None:
+        raise ProjectNotFoundError("Project was not found.")
+
+    return row
 
 
 def _fetch_project_row_by_uuid(
     *,
-    url: str,
-    service_role_key: str,
     project_uuid: str,
 ) -> dict[str, Any]:
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/projects"
-        f"?project_uuid=eq.{parse.quote(project_uuid, safe='')}&select=*"
-    )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
-    rows = _decode_json_rows(response_body, "projects")
-
-    if not rows:
+    if not _is_uuid(project_uuid):
         raise ProjectNotFoundError("Project was not found.")
 
-    return rows[0]
+    row = db.fetch_one(
+        "SELECT * FROM public.projects WHERE project_uuid = %s::uuid",
+        (project_uuid,),
+    )
+    if row is None:
+        raise ProjectNotFoundError("Project was not found.")
+
+    return row
 
 
 def _insert_project_record(
     *,
-    url: str,
-    service_role_key: str,
     name: str,
     owner_user_id: str,
     owner_auth_user_id: str | None = None,
     created_by: str | int | None = None,
 ) -> dict[str, Any]:
-    payload_map: dict[str, Any] = {
-        "name": name,
-        "owner_user_id": owner_user_id,
-    }
+    columns = ["name", "owner_user_id"]
+    values: list[Any] = [name, owner_user_id]
     if owner_auth_user_id:
-        payload_map["owner_auth_user_id"] = owner_auth_user_id
+        columns.append("owner_auth_user_id")
+        values.append(owner_auth_user_id)
     if created_by is not None:
-        payload_map["created_by"] = created_by
+        columns.append("created_by")
+        values.append(str(created_by))
 
-    payload = json.dumps(payload_map).encode("utf-8")
-
-    response_body = _send_request(
-        endpoint=f"{url.rstrip('/')}/rest/v1/projects",
-        method="POST",
-        data=payload,
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Prefer": "return=representation",
-        },
-        expected_statuses={200, 201},
+    placeholders = ", ".join(["%s"] * len(values))
+    row = db.fetch_one(
+        f"INSERT INTO public.projects ({', '.join(columns)}) VALUES ({placeholders}) RETURNING *",
+        values,
     )
-    rows = _decode_json_rows(response_body, "projects")
+    if row is None:
+        raise DataServiceError("Database did not return the inserted projects row.")
 
-    if not rows:
-        raise SupabaseServiceError("Supabase did not return the inserted projects row.")
-
-    return rows[0]
+    return row
 
 
 def _is_legacy_projects_not_null_error(error: Exception) -> bool:
@@ -2579,52 +1916,26 @@ def _build_legacy_projects_migration_hint_message(error_message: str) -> str:
 
 def _update_project_record(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
     name: str,
 ) -> dict[str, Any]:
-    payload = json.dumps({"name": name}).encode("utf-8")
-
-    response_body = _send_request(
-        endpoint=f"{url.rstrip('/')}/rest/v1/projects?id=eq.{project_id}",
-        method="PATCH",
-        data=payload,
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Prefer": "return=representation",
-        },
-        expected_statuses={200, 204},
+    row = db.fetch_one(
+        "UPDATE public.projects SET name = %s WHERE id = %s RETURNING *",
+        (name, project_id),
     )
-    rows = _decode_json_rows(response_body, "projects") if response_body else []
-
-    if not rows:
+    if row is None:
         raise ProjectNotFoundError("Project was not found.")
 
-    return rows[0]
+    return row
 
 
 def _delete_project_record(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
 ) -> Optional[str]:
-    endpoint = f"{url.rstrip('/')}/rest/v1/projects?id=eq.{project_id}"
-
     try:
-        _send_request(
-            endpoint=endpoint,
-            method="DELETE",
-            headers={
-                **_build_auth_headers(service_role_key),
-                "Accept": "application/json",
-            },
-            expected_statuses={200, 204},
-        )
-    except SupabaseServiceError as exc:
+        db.execute("DELETE FROM public.projects WHERE id = %s", (project_id,))
+    except DataServiceError as exc:
         return str(exc)
 
     return None
@@ -2632,23 +1943,11 @@ def _delete_project_record(
 
 def _delete_user_project_links_for_project(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
 ) -> Optional[str]:
-    endpoint = f"{url.rstrip('/')}/rest/v1/user_projects?project_id=eq.{project_id}"
-
     try:
-        _send_request(
-            endpoint=endpoint,
-            method="DELETE",
-            headers={
-                **_build_auth_headers(service_role_key),
-                "Accept": "application/json",
-            },
-            expected_statuses={200, 204},
-        )
-    except SupabaseServiceError as exc:
+        db.execute("DELETE FROM public.user_projects WHERE project_id = %s", (project_id,))
+    except DataServiceError as exc:
         return str(exc)
 
     return None
@@ -2656,81 +1955,37 @@ def _delete_user_project_links_for_project(
 
 def _insert_user_project_link(
     *,
-    url: str,
-    service_role_key: str,
     user_id: int,
     project_id: int,
 ) -> None:
-    payload = json.dumps(
-        {
-            "user_id": user_id,
-            "project_id": project_id,
-        }
-    ).encode("utf-8")
-
-    _send_request(
-        endpoint=f"{url.rstrip('/')}/rest/v1/user_projects",
-        method="POST",
-        data=payload,
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        expected_statuses={200, 201},
+    db.execute(
+        "INSERT INTO public.user_projects (user_id, project_id) VALUES (%s, %s)",
+        (user_id, project_id),
     )
 
 
 def _insert_project_material_link(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
     material_id: int,
 ) -> None:
-    payload = json.dumps(
-        {
-            "project_id": project_id,
-            "material_id": material_id,
-        }
-    ).encode("utf-8")
-
-    _send_request(
-        endpoint=f"{url.rstrip('/')}/rest/v1/project_materials",
-        method="POST",
-        data=payload,
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        expected_statuses={200, 201},
+    db.execute(
+        "INSERT INTO public.project_materials (project_id, material_id) VALUES (%s, %s)",
+        (project_id, material_id),
     )
 
 
 def _delete_project_material_link(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
     material_id: int,
 ) -> Optional[str]:
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/project_materials"
-        f"?project_id=eq.{project_id}&material_id=eq.{material_id}"
-    )
-
     try:
-        _send_request(
-            endpoint=endpoint,
-            method="DELETE",
-            headers={
-                **_build_auth_headers(service_role_key),
-                "Accept": "application/json",
-            },
-            expected_statuses={200, 204},
+        db.execute(
+            "DELETE FROM public.project_materials WHERE project_id = %s AND material_id = %s",
+            (project_id, material_id),
         )
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         return str(exc)
 
     return None
@@ -2738,14 +1993,10 @@ def _delete_project_material_link(
 
 def _build_project_summary(
     *,
-    url: str,
-    service_role_key: str,
     project_row: dict[str, Any],
 ) -> ProjectSummary:
     project_id = _read_int(project_row, "id")
     material_links = _fetch_project_material_links(
-        url=url,
-        service_role_key=service_role_key,
         project_id=project_id,
     )
     normalized_row = _normalize_project_row(project_row)
@@ -2762,30 +2013,22 @@ def _build_project_summary(
 
 def _build_project_record(
     *,
-    url: str,
-    service_role_key: str,
     project_row: dict[str, Any],
     include_materials: bool,
 ) -> ProjectRecord:
     summary = _build_project_summary(
-        url=url,
-        service_role_key=service_role_key,
         project_row=project_row,
     )
     project_id = summary.id
     if project_id is None:
-        raise SupabaseServiceError("Project record is missing a numeric id.")
+        raise DataServiceError("Project record is missing a numeric id.")
 
     material_links = _fetch_project_material_links(
-        url=url,
-        service_role_key=service_role_key,
         project_id=project_id,
     )
 
     materials = (
         _fetch_project_material_records(
-            url=url,
-            service_role_key=service_role_key,
             material_links=material_links,
         )
         if include_materials
@@ -2807,9 +2050,9 @@ def _normalize_project_row(project_row: dict[str, Any]) -> dict[str, Any]:
     updated_at = project_row.get("updated_at")
 
     if not isinstance(project_uuid, str) or not project_uuid.strip():
-        raise SupabaseServiceError("Project row is missing a project_uuid.")
+        raise DataServiceError("Project row is missing a project_uuid.")
     if not isinstance(owner_user_id, str) or not owner_user_id.strip():
-        raise SupabaseServiceError("Project row is missing an owner_user_id.")
+        raise DataServiceError("Project row is missing an owner_user_id.")
 
     return {
         "id": _read_optional_int(project_row, "id"),
@@ -2823,60 +2066,35 @@ def _normalize_project_row(project_row: dict[str, Any]) -> dict[str, Any]:
 
 def _fetch_project_material_links(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
 ) -> list[dict[str, Any]]:
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/project_materials"
-        f"?project_id=eq.{project_id}&select=created_at,material_id&order=created_at.desc"
+    return db.fetch_all(
+        """
+        SELECT created_at, material_id
+        FROM public.project_materials
+        WHERE project_id = %s
+        ORDER BY created_at DESC
+        """,
+        (project_id,),
     )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
-
-    return _decode_json_rows(response_body, "project_materials")
 
 
 def _fetch_project_material_links_for_material(
     *,
-    url: str,
-    service_role_key: str,
     material_id: int,
 ) -> list[dict[str, Any]]:
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/project_materials"
-        f"?material_id=eq.{material_id}&select=project_id,material_id"
+    return db.fetch_all(
+        "SELECT project_id, material_id FROM public.project_materials WHERE material_id = %s",
+        (material_id,),
     )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
-
-    return _decode_json_rows(response_body, "project_materials")
 
 
 def _fetch_duplicate_course_content_for_project(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
     content_sha256: str,
 ) -> CourseContentRecord | None:
     material_links = _fetch_project_material_links(
-        url=url,
-        service_role_key=service_role_key,
         project_id=project_id,
     )
     material_ids = [
@@ -2888,8 +2106,6 @@ def _fetch_duplicate_course_content_for_project(
         return None
 
     records_by_id = _fetch_course_content_records_by_id(
-        url=url,
-        service_role_key=service_role_key,
         material_ids=material_ids,
     )
     for material_id in material_ids:
@@ -2906,14 +2122,10 @@ def _fetch_duplicate_course_content_for_project(
 
 def _assert_material_ids_linked_to_project(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
     material_ids: list[int],
 ) -> None:
     project_material_links = _fetch_project_material_links(
-        url=url,
-        service_role_key=service_role_key,
         project_id=project_id,
     )
     linked_material_ids = {
@@ -2933,15 +2145,8 @@ def _assert_material_ids_linked_to_project(
 
 def _fetch_project_material_records(
     *,
-    url: str,
-    service_role_key: str,
     material_links: list[dict[str, Any]],
 ) -> list[ProjectMaterialRecord]:
-    try:
-        settings = get_supabase_settings()
-    except ValueError as exc:
-        raise MissingSupabaseConfigError(str(exc)) from exc
-
     material_ids = [
         material_id
         for material_id in (_read_optional_int(link, "material_id") for link in material_links)
@@ -2951,8 +2156,6 @@ def _fetch_project_material_records(
         return []
 
     records_by_id = _fetch_course_content_records_by_id(
-        url=url,
-        service_role_key=service_role_key,
         material_ids=material_ids,
     )
     materials: list[ProjectMaterialRecord] = []
@@ -2964,9 +2167,6 @@ def _fetch_project_material_records(
 
         base_record = CourseContentRecord.model_validate(records_by_id[material_id])
         preview_status_payload = _download_preview_status(
-            url=url,
-            service_role_key=service_role_key,
-            bucket=settings.storage_bucket,
             course_content_id=base_record.id,
         )
         source_type = base_record.source_type or _detect_source_type(base_record.material_name)
@@ -2994,54 +2194,29 @@ def _fetch_project_material_records(
 
 def _assert_course_content_owned_by_username(
     *,
-    url: str,
-    service_role_key: str,
     course_content_id: int,
     owner_user_id: str,
 ) -> None:
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/project_materials"
-        f"?material_id=eq.{course_content_id}&select=project_id"
+    row = db.fetch_one(
+        """
+        SELECT 1
+        FROM public.project_materials AS link
+        JOIN public.projects AS project ON project.id = link.project_id
+        WHERE link.material_id = %s AND project.owner_user_id = %s
+        LIMIT 1
+        """,
+        (course_content_id, owner_user_id),
     )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
-    rows = _decode_json_rows(response_body, "project_materials")
-
-    for row in rows:
-        project_id = _read_optional_int(row, "project_id")
-        if project_id is None:
-            continue
-        try:
-            _fetch_owned_project_row(
-                url=url,
-                service_role_key=service_role_key,
-                project_id=project_id,
-                owner_user_id=owner_user_id,
-            )
-            return
-        except ProjectNotFoundError:
-            continue
-
-    raise ProjectNotFoundError("Course content was not found.")
+    if row is None:
+        raise ProjectNotFoundError("Course content was not found.")
 
 
 def _assert_materials_linked_to_project(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
     material_ids: list[int],
 ) -> None:
     project_material_links = _fetch_project_material_links(
-        url=url,
-        service_role_key=service_role_key,
         project_id=project_id,
     )
     project_material_ids = {
@@ -3063,25 +2238,15 @@ def _assert_materials_linked_to_project(
 
 def _fetch_course_content_records_by_id(
     *,
-    url: str,
-    service_role_key: str,
     material_ids: list[int],
 ) -> dict[int, dict[str, Any]]:
-    encoded_ids = ",".join(str(material_id) for material_id in material_ids)
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/course_contents"
-        f"?id=in.({encoded_ids})&select=*"
+    if not material_ids:
+        return {}
+
+    rows = db.fetch_all(
+        "SELECT * FROM public.course_contents WHERE id = ANY(%s)",
+        (list(material_ids),),
     )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
-    rows = _decode_json_rows(response_body, "course_contents")
     records_by_id: dict[int, dict[str, Any]] = {}
 
     for row in rows:
@@ -3094,73 +2259,49 @@ def _fetch_course_content_records_by_id(
 
 def _fetch_generated_material_rows_for_project_uuid(
     *,
-    url: str,
-    service_role_key: str,
     project_uuid: str,
     tool_type: str | None = None,
 ) -> list[dict[str, Any]]:
-    filters = [f"project_uuid=eq.{parse.quote(project_uuid, safe='')}"]
-    if tool_type:
-        filters.append(f"tool_type=eq.{parse.quote(tool_type, safe='')}")
+    if not _is_uuid(project_uuid):
+        return []
 
-    query = "&".join(
-        [
-            *filters,
-            "select=*",
-            "order=created_at.desc,id.desc",
-        ]
+    return db.fetch_all(
+        """
+        SELECT *
+        FROM public.generated_materials
+        WHERE project_uuid = %s::uuid
+          AND (%s::text IS NULL OR tool_type = %s::text)
+        ORDER BY created_at DESC, id DESC
+        """,
+        (project_uuid, tool_type, tool_type),
     )
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/generated_materials"
-        f"?{query}"
-    )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
-
-    return _decode_json_rows(response_body, "generated_materials")
 
 
 def _fetch_generated_material_row_by_uuid_for_project(
     *,
-    url: str,
-    service_role_key: str,
     project_uuid: str,
     generated_material_uuid: str,
 ) -> dict[str, Any]:
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/generated_materials"
-        f"?project_uuid=eq.{parse.quote(project_uuid, safe='')}"
-        f"&uuid=eq.{parse.quote(generated_material_uuid, safe='')}"
-        "&select=*"
-        "&limit=1"
-    )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
-    rows = _decode_json_rows(response_body, "generated_materials")
-    if not rows:
+    if not _is_uuid(project_uuid) or not _is_uuid(generated_material_uuid):
         raise GeneratedMaterialNotFoundError("Generated material was not found.")
 
-    return rows[0]
+    row = db.fetch_one(
+        """
+        SELECT *
+        FROM public.generated_materials
+        WHERE project_uuid = %s::uuid AND uuid = %s::uuid
+        LIMIT 1
+        """,
+        (project_uuid, generated_material_uuid),
+    )
+    if row is None:
+        raise GeneratedMaterialNotFoundError("Generated material was not found.")
+
+    return row
 
 
 def _insert_generated_material_record(
     *,
-    url: str,
-    service_role_key: str,
     project_uuid: str,
     name: str | None,
     file_location: str,
@@ -3171,36 +2312,38 @@ def _insert_generated_material_record(
     output_token: int | None,
     uuid: str | None = None,
 ) -> GeneratedMaterialRecord:
-    payload_map: dict[str, Any] = {
-        "project_uuid": project_uuid,
-        "name": name,
-        "file_location": file_location,
-        "tool_type": tool_type,
-        "source_material_ids": source_material_ids,
-        "payload": payload,
-        "input_token": input_token,
-        "output_token": output_token,
-    }
-    if uuid:
-        payload_map["uuid"] = uuid
-
-    response_body = _send_request(
-        endpoint=f"{url.rstrip('/')}/rest/v1/generated_materials",
-        method="POST",
-        data=json.dumps(payload_map).encode("utf-8"),
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Prefer": "return=representation",
-        },
-        expected_statuses={200, 201},
+    row = db.fetch_one(
+        """
+        INSERT INTO public.generated_materials (
+            uuid,
+            project_uuid,
+            name,
+            file_location,
+            tool_type,
+            source_material_ids,
+            payload,
+            input_token,
+            output_token
+        )
+        VALUES (COALESCE(%s::uuid, gen_random_uuid()), %s::uuid, %s, %s, %s, %s::bigint[], %s::jsonb, %s, %s)
+        RETURNING *
+        """,
+        (
+            uuid,
+            project_uuid,
+            name,
+            file_location,
+            tool_type,
+            list(source_material_ids),
+            db.json_param(payload),
+            input_token,
+            output_token,
+        ),
     )
-    rows = _decode_json_rows(response_body, "generated_materials")
-    if not rows:
-        raise SupabaseServiceError("Supabase did not return the inserted generated_materials row.")
+    if row is None:
+        raise DataServiceError("Database did not return the inserted generated_materials row.")
 
-    return GeneratedMaterialRecord.model_validate(rows[0])
+    return GeneratedMaterialRecord.model_validate(row)
 
 
 def _read_latest_project_material_timestamp(material_links: list[dict[str, Any]]) -> Any:
@@ -3212,203 +2355,97 @@ def _read_latest_project_material_timestamp(material_links: list[dict[str, Any]]
 
 def _upload_storage_object(
     *,
-    url: str,
-    service_role_key: str,
-    bucket: str,
     storage_path: str,
     file_bytes: bytes,
     content_type: str,
 ) -> None:
-    endpoint = _build_storage_endpoint(url=url, bucket=bucket, storage_path=storage_path)
-    _send_request(
-        endpoint=endpoint,
-        method="POST",
-        data=file_bytes,
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": content_type,
-            "x-upsert": "false",
-        },
-        expected_statuses={200, 201},
-    )
+    storage_service.put_object(key=storage_path, body=file_bytes, content_type=content_type)
 
 
 def _upload_or_replace_storage_object(
     *,
-    url: str,
-    service_role_key: str,
-    bucket: str,
     storage_path: str,
     file_bytes: bytes,
     content_type: str,
 ) -> None:
-    endpoint = _build_storage_endpoint(url=url, bucket=bucket, storage_path=storage_path)
-    _send_request(
-        endpoint=endpoint,
-        method="POST",
-        data=file_bytes,
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": content_type,
-            "x-upsert": "true",
-        },
-        expected_statuses={200, 201},
-    )
+    storage_service.put_object(key=storage_path, body=file_bytes, content_type=content_type)
 
 
 def _insert_course_content_record(
     *,
-    url: str,
-    service_role_key: str,
     filename: str,
     access_url: str,
     data_size: int,
     project_id: int,
     content_sha256: str,
 ) -> CourseContentRecord:
-    payload = json.dumps(
-        {
-            "material_name": filename,
-            "access_url": access_url,
-            "data_size": data_size,
-            "project_id": project_id,
-            "content_sha256": content_sha256,
-            "rag_status": "pending",
-            "rag_chunk_count": 0,
-            "rag_error": None,
-        }
-    ).encode("utf-8")
-
-    response_body = _send_request(
-        endpoint=f"{url.rstrip('/')}/rest/v1/course_contents",
-        method="POST",
-        data=payload,
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Prefer": "return=representation",
-        },
-        expected_statuses={200, 201},
+    row = db.fetch_one(
+        """
+        INSERT INTO public.course_contents (
+            material_name,
+            access_url,
+            data_size,
+            project_id,
+            content_sha256,
+            rag_status,
+            rag_chunk_count,
+            rag_error
+        )
+        VALUES (%s, %s, %s, %s, %s, 'pending', 0, NULL)
+        RETURNING *
+        """,
+        (filename, access_url, data_size, project_id, content_sha256),
     )
+    if row is None:
+        raise DataServiceError("Database did not return the inserted course_contents row.")
 
-    try:
-        inserted_rows = json.loads(response_body.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise SupabaseServiceError("Supabase returned an unreadable course_contents response.") from exc
-
-    if not isinstance(inserted_rows, list) or not inserted_rows:
-        raise SupabaseServiceError("Supabase did not return the inserted course_contents row.")
-
-    return CourseContentRecord.model_validate(inserted_rows[0])
+    return CourseContentRecord.model_validate(row)
 
 
 def _fetch_course_content_record(
     *,
-    url: str,
-    service_role_key: str,
     course_content_id: int,
 ) -> CourseContentRecord:
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/course_contents"
-        f"?id=eq.{course_content_id}&select=*"
-    )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
+    record = _fetch_course_content_record_optional(course_content_id=course_content_id)
+    if record is None:
+        raise DataServiceError(f"Course content {course_content_id} was not found.")
 
-    try:
-        rows = json.loads(response_body.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise SupabaseServiceError("Supabase returned an unreadable course content response.") from exc
-
-    if not isinstance(rows, list) or not rows:
-        raise SupabaseServiceError(f"Course content {course_content_id} was not found.")
-
-    return CourseContentRecord.model_validate(rows[0])
+    return record
 
 
 def _update_course_content_record_name(
     *,
-    url: str,
-    service_role_key: str,
     course_content_id: int,
     material_name: str,
 ) -> CourseContentRecord:
-    payload = json.dumps({"material_name": material_name}).encode("utf-8")
-    response_body = _send_request(
-        endpoint=f"{url.rstrip('/')}/rest/v1/course_contents?id=eq.{course_content_id}",
-        method="PATCH",
-        data=payload,
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Prefer": "return=representation",
-        },
-        expected_statuses={200, 204},
+    row = db.fetch_one(
+        "UPDATE public.course_contents SET material_name = %s WHERE id = %s RETURNING *",
+        (material_name, course_content_id),
     )
-    rows = _decode_json_rows(response_body, "course_contents") if response_body else []
-    if not rows:
+    if row is None:
         raise ProjectNotFoundError("Course content was not found.")
 
-    return CourseContentRecord.model_validate(rows[0])
+    return CourseContentRecord.model_validate(row)
 
 
 def _fetch_course_content_record_optional(
     *,
-    url: str,
-    service_role_key: str,
     course_content_id: int,
 ) -> CourseContentRecord | None:
-    endpoint = (
-        f"{url.rstrip('/')}/rest/v1/course_contents"
-        f"?id=eq.{course_content_id}&select=*"
-    )
-    response_body = _send_request(
-        endpoint=endpoint,
-        method="GET",
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
-    )
-
-    try:
-        rows = json.loads(response_body.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise SupabaseServiceError("Supabase returned an unreadable course content response.") from exc
-
-    if not isinstance(rows, list) or not rows:
+    row = db.fetch_one("SELECT * FROM public.course_contents WHERE id = %s", (course_content_id,))
+    if row is None:
         return None
 
-    return CourseContentRecord.model_validate(rows[0])
+    return CourseContentRecord.model_validate(row)
 
 
 def _delete_storage_object(
     *,
-    url: str,
-    service_role_key: str,
-    bucket: str,
     storage_path: str,
 ) -> Optional[str]:
-    endpoint = _build_storage_endpoint(url=url, bucket=bucket, storage_path=storage_path)
-
     try:
-        _send_request(
-            endpoint=endpoint,
-            method="DELETE",
-            headers=_build_auth_headers(service_role_key),
-            expected_statuses={200, 204},
-        )
-    except SupabaseServiceError as exc:
+        storage_service.delete_object(key=storage_path)
+    except DataServiceError as exc:
         return str(exc)
 
     return None
@@ -3416,45 +2453,18 @@ def _delete_storage_object(
 
 def _delete_storage_object_if_exists(
     *,
-    url: str,
-    service_role_key: str,
-    bucket: str,
     storage_path: str,
 ) -> Optional[str]:
-    endpoint = _build_storage_endpoint(url=url, bucket=bucket, storage_path=storage_path)
-
-    try:
-        _send_request_optional(
-            endpoint=endpoint,
-            method="DELETE",
-            headers=_build_auth_headers(service_role_key),
-            expected_statuses={200, 204},
-        )
-    except SupabaseServiceError as exc:
-        return str(exc)
-
-    return None
+    return _delete_storage_object(storage_path=storage_path)
 
 
 def _delete_course_content_record(
     *,
-    url: str,
-    service_role_key: str,
     course_content_id: int,
 ) -> Optional[str]:
-    endpoint = f"{url.rstrip('/')}/rest/v1/course_contents?id=eq.{course_content_id}"
-
     try:
-        _send_request(
-            endpoint=endpoint,
-            method="DELETE",
-            headers={
-                **_build_auth_headers(service_role_key),
-                "Accept": "application/json",
-            },
-            expected_statuses={200, 204},
-        )
-    except SupabaseServiceError as exc:
+        db.execute("DELETE FROM public.course_contents WHERE id = %s", (course_content_id,))
+    except DataServiceError as exc:
         return str(exc)
 
     return None
@@ -3462,103 +2472,84 @@ def _delete_course_content_record(
 
 def _update_course_content_rag_status(
     *,
-    url: str,
-    service_role_key: str,
     course_content_id: int,
     rag_status: Literal["pending", "ready", "failed"],
     rag_chunk_count: int,
     rag_error: str | None,
 ) -> None:
-    payload = json.dumps(
-        {
-            "rag_status": rag_status,
-            "rag_chunk_count": rag_chunk_count,
-            "rag_error": rag_error,
-        }
-    ).encode("utf-8")
-
-    _send_request(
-        endpoint=f"{url.rstrip('/')}/rest/v1/course_contents?id=eq.{course_content_id}",
-        method="PATCH",
-        data=payload,
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        expected_statuses={200, 204},
+    db.execute(
+        """
+        UPDATE public.course_contents
+        SET rag_status = %s, rag_chunk_count = %s, rag_error = %s
+        WHERE id = %s
+        """,
+        (rag_status, rag_chunk_count, rag_error, course_content_id),
     )
 
 
 def _replace_course_content_chunks(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
     course_content_id: int,
     material_name: str,
     embedded_chunks: list[EmbeddedTextChunk],
 ) -> None:
-    delete_error = _delete_course_content_chunks(
-        url=url,
-        service_role_key=service_role_key,
-        course_content_id=course_content_id,
-    )
-    if delete_error:
-        raise SupabaseServiceError(delete_error)
-
-    if not embedded_chunks:
-        return
-
     rows = [
-        {
-            "project_id": project_id,
-            "course_content_id": course_content_id,
-            "material_name": material_name,
-            "chunk_index": embedded_chunk.chunk.index,
-            "text": embedded_chunk.chunk.text,
-            "start_char": embedded_chunk.chunk.start_char,
-            "end_char": embedded_chunk.chunk.end_char,
-            "location_kind": embedded_chunk.chunk.location_kind,
-            "location_start": embedded_chunk.chunk.location_start,
-            "location_end": embedded_chunk.chunk.location_end,
-            "embedding": _format_vector(embedded_chunk.embedding),
-        }
+        (
+            project_id,
+            course_content_id,
+            material_name,
+            embedded_chunk.chunk.index,
+            embedded_chunk.chunk.text,
+            embedded_chunk.chunk.start_char,
+            embedded_chunk.chunk.end_char,
+            embedded_chunk.chunk.location_kind,
+            embedded_chunk.chunk.location_start,
+            embedded_chunk.chunk.location_end,
+            _format_vector(embedded_chunk.embedding),
+        )
         for embedded_chunk in embedded_chunks
     ]
 
-    _send_request(
-        endpoint=f"{url.rstrip('/')}/rest/v1/course_content_chunks",
-        method="POST",
-        data=json.dumps(rows).encode("utf-8"),
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        expected_statuses={200, 201},
-    )
+    with db.transaction() as cursor:
+        cursor.execute(
+            "DELETE FROM public.course_content_chunks WHERE course_content_id = %s",
+            (course_content_id,),
+        )
+        if rows:
+            psycopg2.extras.execute_values(
+                cursor,
+                """
+                INSERT INTO public.course_content_chunks (
+                    project_id,
+                    course_content_id,
+                    material_name,
+                    chunk_index,
+                    text,
+                    start_char,
+                    end_char,
+                    location_kind,
+                    location_start,
+                    location_end,
+                    embedding
+                )
+                VALUES %s
+                """,
+                rows,
+                template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::public.vector)",
+            )
 
 
 def _delete_course_content_chunks(
     *,
-    url: str,
-    service_role_key: str,
     course_content_id: int,
 ) -> Optional[str]:
-    endpoint = f"{url.rstrip('/')}/rest/v1/course_content_chunks?course_content_id=eq.{course_content_id}"
-
     try:
-        _send_request(
-            endpoint=endpoint,
-            method="DELETE",
-            headers={
-                **_build_auth_headers(service_role_key),
-                "Accept": "application/json",
-            },
-            expected_statuses={200, 204},
+        db.execute(
+            "DELETE FROM public.course_content_chunks WHERE course_content_id = %s",
+            (course_content_id,),
         )
-    except SupabaseServiceError as exc:
+    except DataServiceError as exc:
         return str(exc)
 
     return None
@@ -3582,8 +2573,6 @@ def _normalize_selected_material_ids(
 
 def _match_course_content_chunks_for_selection(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
     query_embedding: list[float],
     selected_material_ids: list[int],
@@ -3591,8 +2580,6 @@ def _match_course_content_chunks_for_selection(
 ) -> list[RagRetrievedChunk]:
     if not selected_material_ids:
         return _match_course_content_chunks(
-            url=url,
-            service_role_key=service_role_key,
             project_id=project_id,
             query_embedding=query_embedding,
             selected_material_id=None,
@@ -3601,8 +2588,6 @@ def _match_course_content_chunks_for_selection(
 
     if len(selected_material_ids) == 1:
         return _match_course_content_chunks(
-            url=url,
-            service_role_key=service_role_key,
             project_id=project_id,
             query_embedding=query_embedding,
             selected_material_id=selected_material_ids[0],
@@ -3613,8 +2598,6 @@ def _match_course_content_chunks_for_selection(
 
     for material_id in selected_material_ids:
         material_chunks = _match_course_content_chunks(
-            url=url,
-            service_role_key=service_role_key,
             project_id=project_id,
             query_embedding=query_embedding,
             selected_material_id=material_id,
@@ -3636,31 +2619,15 @@ def _match_course_content_chunks_for_selection(
 
 def _match_course_content_chunks(
     *,
-    url: str,
-    service_role_key: str,
     project_id: int,
     query_embedding: list[float],
     selected_material_id: int | None,
     match_count: int,
 ) -> list[RagRetrievedChunk]:
-    payload = {
-        "query_embedding": _format_vector(query_embedding),
-        "filter_project_id": project_id,
-        "match_count": match_count,
-        "filter_material_id": selected_material_id,
-    }
-    response_body = _send_request(
-        endpoint=f"{url.rstrip('/')}/rest/v1/rpc/match_course_content_chunks",
-        method="POST",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            **_build_auth_headers(service_role_key),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        expected_statuses={200},
+    rows = db.fetch_all(
+        "SELECT * FROM public.match_course_content_chunks(%s::public.vector, %s, %s, %s)",
+        (_format_vector(query_embedding), project_id, match_count, selected_material_id),
     )
-    rows = _decode_json_rows(response_body, "course_content_chunks")
     chunks: list[RagRetrievedChunk] = []
 
     for row in rows:
@@ -3761,16 +2728,10 @@ def _format_rag_location_label(chunk: RagRetrievedChunk) -> str | None:
 
 def _upload_preview_manifest(
     *,
-    url: str,
-    service_role_key: str,
-    bucket: str,
     course_content_id: int,
     manifest: CourseContentPreviewManifest,
 ) -> None:
     _upload_or_replace_storage_object(
-        url=url,
-        service_role_key=service_role_key,
-        bucket=bucket,
         storage_path=_build_preview_manifest_storage_path(course_content_id=course_content_id),
         file_bytes=manifest.model_dump_json().encode("utf-8"),
         content_type="application/json",
@@ -3779,9 +2740,6 @@ def _upload_preview_manifest(
 
 def _upload_preview_status(
     *,
-    url: str,
-    service_role_key: str,
-    bucket: str,
     course_content_id: int,
     material_name: str,
     access_url: str,
@@ -3800,9 +2758,6 @@ def _upload_preview_status(
         "preview_error": preview_error,
     }
     _upload_or_replace_storage_object(
-        url=url,
-        service_role_key=service_role_key,
-        bucket=bucket,
         storage_path=_build_preview_status_storage_path(course_content_id=course_content_id),
         file_bytes=json.dumps(payload).encode("utf-8"),
         content_type="application/json",
@@ -3811,15 +2766,9 @@ def _upload_preview_status(
 
 def _download_preview_manifest(
     *,
-    url: str,
-    service_role_key: str,
-    bucket: str,
     course_content_id: int,
 ) -> CourseContentPreviewManifest | None:
     response_body = _download_storage_object_optional(
-        url=url,
-        service_role_key=service_role_key,
-        bucket=bucket,
         storage_path=_build_preview_manifest_storage_path(course_content_id=course_content_id),
     )
     if response_body is None:
@@ -3828,22 +2777,16 @@ def _download_preview_manifest(
     try:
         payload = json.loads(response_body.decode("utf-8"))
     except json.JSONDecodeError as exc:
-        raise SupabaseServiceError("Stored preview manifest is unreadable.") from exc
+        raise DataServiceError("Stored preview manifest is unreadable.") from exc
 
     return CourseContentPreviewManifest.model_validate(payload)
 
 
 def _download_preview_status(
     *,
-    url: str,
-    service_role_key: str,
-    bucket: str,
     course_content_id: int,
 ) -> dict[str, Any]:
     response_body = _download_storage_object_optional(
-        url=url,
-        service_role_key=service_role_key,
-        bucket=bucket,
         storage_path=_build_preview_status_storage_path(course_content_id=course_content_id),
     )
     if response_body is None:
@@ -3852,7 +2795,7 @@ def _download_preview_status(
     try:
         payload = json.loads(response_body.decode("utf-8"))
     except json.JSONDecodeError as exc:
-        raise SupabaseServiceError("Stored preview status is unreadable.") from exc
+        raise DataServiceError("Stored preview status is unreadable.") from exc
 
     return payload if isinstance(payload, dict) else {}
 
@@ -3893,136 +2836,19 @@ def _build_preview_manifest_from_status_payload(
     )
 
 
-def _build_auth_headers(service_role_key: str) -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {service_role_key}",
-        "apikey": service_role_key,
-    }
+def _build_object_url(*, storage_path: str) -> str:
+    return storage_service.build_public_url(key=storage_path)
 
 
-def _build_storage_endpoint(*, url: str, bucket: str, storage_path: str) -> str:
-    quoted_bucket = parse.quote(bucket, safe="")
-    quoted_path = parse.quote(storage_path, safe="/")
-    return f"{url.rstrip('/')}/storage/v1/object/{quoted_bucket}/{quoted_path}"
-
-
-def _build_object_url(*, url: str, bucket: str, storage_path: str) -> str:
-    quoted_bucket = parse.quote(bucket, safe="")
-    quoted_path = parse.quote(storage_path, safe="/")
-    return f"{url.rstrip('/')}/storage/v1/object/{quoted_bucket}/{quoted_path}"
-
-
-def _extract_storage_path_from_access_url(*, access_url: str, bucket: str) -> str | None:
-    parsed_url = parse.urlparse(access_url)
-    normalized_bucket = parse.quote(bucket, safe="")
-    expected_prefix = f"/storage/v1/object/{normalized_bucket}/"
-
-    if not parsed_url.path.startswith(expected_prefix):
-        return None
-
-    encoded_path = parsed_url.path.removeprefix(expected_prefix)
-    if not encoded_path:
-        return None
-
-    return parse.unquote(encoded_path)
+def _extract_storage_path_from_access_url(*, access_url: str) -> str | None:
+    return storage_service.extract_key_from_url(access_url)
 
 
 def _download_storage_object_optional(
     *,
-    url: str,
-    service_role_key: str,
-    bucket: str,
     storage_path: str,
 ) -> bytes | None:
-    endpoint = _build_storage_endpoint(url=url, bucket=bucket, storage_path=storage_path)
-    return _send_request_optional(
-        endpoint=endpoint,
-        method="GET",
-        headers=_build_auth_headers(service_role_key),
-        expected_statuses={200},
-    )
-
-
-def _send_request(
-    *,
-    endpoint: str,
-    method: str,
-    headers: dict[str, str],
-    expected_statuses: set[int],
-    data: Optional[bytes] = None,
-) -> bytes:
-    api_request = request.Request(
-        url=endpoint,
-        data=data,
-        headers=headers,
-        method=method,
-    )
-
-    try:
-        with request.urlopen(api_request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            status_code = response.getcode()
-            response_body = response.read()
-    except error.HTTPError as exc:
-        response_body = exc.read()
-        message = _extract_error_message(response_body)
-        raise SupabaseServiceError(f"Supabase request failed with status {exc.code}: {message}") from exc
-    except error.URLError as exc:
-        raise SupabaseServiceError(f"Supabase request failed: {exc.reason}") from exc
-
-    if status_code not in expected_statuses:
-        raise SupabaseServiceError(
-            f"Supabase request returned unexpected status {status_code}."
-        )
-
-    return response_body
-
-
-def _send_request_optional(
-    *,
-    endpoint: str,
-    method: str,
-    headers: dict[str, str],
-    expected_statuses: set[int],
-    data: Optional[bytes] = None,
-) -> bytes | None:
-    api_request = request.Request(
-        url=endpoint,
-        data=data,
-        headers=headers,
-        method=method,
-    )
-
-    try:
-        with request.urlopen(api_request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            status_code = response.getcode()
-            response_body = response.read()
-    except error.HTTPError as exc:
-        response_body = exc.read()
-        if exc.code == 404:
-            logger.info(
-                "Optional Supabase object missing via HTTP 404 for endpoint=%s",
-                endpoint,
-            )
-            return None
-        if _is_missing_storage_object_error(status_code=exc.code, response_body=response_body):
-            logger.info(
-                "Optional Supabase object missing via normalized %s for endpoint=%s",
-                exc.code,
-                endpoint,
-            )
-            return None
-
-        message = _extract_error_message(response_body)
-        raise SupabaseServiceError(f"Supabase request failed with status {exc.code}: {message}") from exc
-    except error.URLError as exc:
-        raise SupabaseServiceError(f"Supabase request failed: {exc.reason}") from exc
-
-    if status_code not in expected_statuses:
-        raise SupabaseServiceError(
-            f"Supabase request returned unexpected status {status_code}."
-        )
-
-    return response_body
+    return storage_service.get_object_optional(key=storage_path)
 
 
 def _detect_source_type(filename: str) -> SourceType:
@@ -4034,56 +2860,13 @@ def _detect_source_type(filename: str) -> SourceType:
     if suffix == ".pptx":
         return "pptx"
 
-    raise SupabaseServiceError("Unsupported source type.")
-
-
-def _is_missing_storage_object_error(*, status_code: int, response_body: bytes) -> bool:
-    if status_code != 400 or not response_body:
-        return False
-
-    try:
-        payload: Any = json.loads(response_body.decode("utf-8"))
-    except json.JSONDecodeError:
-        return False
-
-    if not isinstance(payload, dict):
-        return False
-
-    status_value = payload.get("statusCode")
-    error_value = payload.get("error")
-    message_value = payload.get("message")
-
-    status_text = str(status_value).strip().lower() if status_value is not None else ""
-    error_text = error_value.strip().lower() if isinstance(error_value, str) else ""
-    message_text = message_value.strip().lower() if isinstance(message_value, str) else ""
-
-    return (
-        status_text == "404"
-        or error_text == "not_found"
-        or message_text == "object not found"
-    )
-
-
-def _decode_json_payload(response_body: bytes, label: str) -> Any:
-    try:
-        return json.loads(response_body.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise SupabaseServiceError(f"Supabase returned an unreadable {label} response.") from exc
-
-
-def _decode_json_rows(response_body: bytes, label: str) -> list[dict[str, Any]]:
-    payload = _decode_json_payload(response_body, label)
-
-    if not isinstance(payload, list):
-        raise SupabaseServiceError(f"Supabase did not return valid {label} rows.")
-
-    return [row for row in payload if isinstance(row, dict)]
+    raise DataServiceError("Unsupported source type.")
 
 
 def _read_int(row: dict[str, Any], field: str) -> int:
     value = _read_optional_int(row, field)
     if value is None:
-        raise SupabaseServiceError(f"Supabase row is missing integer field {field}.")
+        raise DataServiceError(f"Database row is missing integer field {field}.")
 
     return value
 
@@ -4098,20 +2881,22 @@ def _read_optional_int(row: dict[str, Any], field: str) -> int | None:
     return None
 
 
-def _extract_error_message(response_body: bytes) -> str:
-    if not response_body:
-        return "No additional details returned."
+def _download_object_by_url(object_url: str) -> bytes:
+    storage_path = _extract_storage_path_from_access_url(access_url=object_url)
+    if not storage_path:
+        raise DataServiceError(f"Stored file URL is not in the configured storage bucket: {object_url}")
 
-    decoded_body = response_body.decode("utf-8", errors="replace").strip()
+    file_bytes = _download_storage_object_optional(storage_path=storage_path)
+    if file_bytes is None:
+        raise DataServiceError(f"Stored file was not found: {storage_path}")
+
+    return file_bytes
+
+
+def _is_uuid(value: str) -> bool:
     try:
-        payload: Any = json.loads(decoded_body)
-    except json.JSONDecodeError:
-        return decoded_body
+        UUID(value)
+    except (TypeError, ValueError):
+        return False
 
-    if isinstance(payload, dict):
-        for field in ("message", "error_description", "error", "details", "hint"):
-            value = payload.get(field)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-
-    return decoded_body
+    return True

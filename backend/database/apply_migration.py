@@ -1,5 +1,5 @@
 """
-Run a SQL migration file against Supabase Postgres.
+Run a SQL migration file against Neon Postgres (uses DIRECT_URL, falling back to DATABASE_URL).
 
 Usage:
   backend/.venv/bin/python backend/database/apply_migration.py \
@@ -33,7 +33,7 @@ def _get_connection_string() -> str:
     if "your-project-ref" in dsn or "your-password" in dsn:
         raise RuntimeError(
             "DIRECT_URL/DATABASE_URL still contains placeholder values. "
-            "Set real Supabase connection values before running migrations."
+            "Set real Neon connection values before running migrations."
         )
     return dsn
 
