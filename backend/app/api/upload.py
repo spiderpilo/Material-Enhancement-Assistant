@@ -17,6 +17,7 @@ from app.api.deps import (
 )
 
 from app.models.document_model import (
+    CourseContentFileResponse,
     CourseContentPreviewManifest,
     CourseContentRecord,
     UpdateCourseContentRequest,
@@ -24,6 +25,8 @@ from app.models.document_model import (
 from app.services.data_service import (
     AuthenticationError,
     DuplicateCourseContentError,
+    InvalidStorageLocationError,
+    StoredFileMissingError,
     MissingConfigError,
     PreviewNotFoundError,
     ProjectAccessDeniedError,
@@ -32,6 +35,7 @@ from app.services.data_service import (
     delete_course_content_for_user,
     generate_course_content_rag_index,
     generate_course_content_preview_assets,
+    get_course_content_file_for_user,
     get_course_content_preview_for_user,
     update_course_content_name_for_user,
     upload_course_content,
@@ -142,6 +146,35 @@ def get_course_content_preview_manifest(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DataServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get(
+    "/course-contents/{course_content_id}/file",
+    response_model=CourseContentFileResponse,
+    tags=["Course materials"],
+    summary="Get the original file",
+    description='Checks that the uploaded file exists in storage and returns a URL the browser can display (PDFs render inline).',
+    responses={**MATERIAL_ERRORS, 422: {"model": ErrorResponse, "description": "Stored file URL does not point into the configured storage bucket."}, **UPSTREAM_ERRORS},
+)
+def get_course_content_file(
+    course_content_id: int,
+    access_token: str = Depends(require_access_token),
+) -> CourseContentFileResponse:
+    try:
+        return get_course_content_file_for_user(
+            access_token=access_token,
+            course_content_id=course_content_id,
+        )
+    except MissingConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except AuthenticationError as exc:
+        raise unauthorized(str(exc)) from exc
+    except (ProjectNotFoundError, StoredFileMissingError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvalidStorageLocationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except DataServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

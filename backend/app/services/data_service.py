@@ -35,6 +35,7 @@ from app.models.chat_model import (
     ProjectChatSourceRecord,
 )
 from app.models.document_model import (
+    CourseContentFileResponse,
     CourseContentPreviewItem,
     CourseContentPreviewManifest,
     CourseContentRecord,
@@ -95,6 +96,14 @@ class GeneratedMaterialNotFoundError(DataServiceError):
 
 class DuplicateCourseContentError(DataServiceError):
     """Raised when the same source bytes already exist in a project."""
+
+
+class StoredFileMissingError(DataServiceError):
+    """Raised when a material's original file is not in object storage."""
+
+
+class InvalidStorageLocationError(DataServiceError):
+    """Raised when a material's stored URL does not point into the configured bucket."""
 
 
 @dataclass(frozen=True)
@@ -743,6 +752,58 @@ def get_course_content_preview_for_user(
     )
 
     return get_course_content_preview(course_content_id=course_content_id)
+
+
+def get_course_content_file_for_user(
+    *,
+    access_token: str,
+    course_content_id: int,
+) -> CourseContentFileResponse:
+    auth_user = _resolve_authenticated_user(access_token=access_token)
+    row = db.fetch_one(
+        """
+        SELECT material.id, material.material_name, material.access_url, material.source_type
+        FROM public.course_contents AS material
+        WHERE material.id = %s
+          AND EXISTS (
+              SELECT 1
+              FROM public.project_materials AS link
+              JOIN public.projects AS project ON project.id = link.project_id
+              WHERE link.material_id = material.id AND project.owner_user_id = %s
+          )
+        """,
+        (course_content_id, auth_user.user_id),
+    )
+    if row is None:
+        raise ProjectNotFoundError("Course content was not found.")
+
+    storage_path = _extract_storage_path_from_access_url(access_url=row.get("access_url") or "")
+    if not storage_path:
+        raise InvalidStorageLocationError("Stored file URL is not in the configured storage bucket.")
+
+    stored_object = storage_service.head_object_optional(key=storage_path)
+    if stored_object is None:
+        raise StoredFileMissingError(
+            f"The original file for {row['material_name']} is missing from storage. Upload it again."
+        )
+
+    source_type = row.get("source_type")
+    if source_type is None:
+        try:
+            source_type = _detect_source_type(row["material_name"])
+        except DataServiceError:
+            source_type = None
+
+    content_length = stored_object.get("content_length")
+    return CourseContentFileResponse(
+        course_content_id=row["id"],
+        material_name=row["material_name"],
+        source_type=source_type,
+        # Rebuilt from the key so rows still holding legacy Supabase URLs resolve to current storage.
+        url=_build_object_url(storage_path=storage_path),
+        content_type=stored_object.get("content_type") or mimetypes.guess_type(row["material_name"])[0],
+        size=content_length if isinstance(content_length, int) else None,
+    )
 
 
 def update_course_content_name_for_user(
