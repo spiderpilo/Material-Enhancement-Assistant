@@ -41,11 +41,7 @@ Backend URLs:
 - API base: `http://127.0.0.1:8000`
 - Health check: `http://127.0.0.1:8000/health`
 
-The current backend exposes:
-- `GET /health`
-- `POST /upload-doc`
-- `POST /create-account`
-- `POST /login-account`
+API docs (Swagger UI, grouped by feature, with an **Authorize** button for bearer tokens): `http://127.0.0.1:8000/docs`. See `backend/README.md` for the auth flow, migrations, and tests.
 ### Frontend
 
 From the `frontend/` directory:
