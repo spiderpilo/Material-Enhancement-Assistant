@@ -5,6 +5,7 @@ from app.api.account import router as account_router
 from app.api.projects import router as projects_router
 from app.api.quiz import router as quiz_router
 from app.api.upload import router as upload_router
+from app.config import get_app_version, get_cors_allowed_origins
 
 
 OPENAPI_TAGS = [
@@ -34,11 +35,7 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://0.0.0.0:3000",
-    ],
+    allow_origins=get_cors_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -54,4 +51,4 @@ async def root() -> dict[str, str]:
 
 @app.get("/health", tags=["System"], summary="Health check")
 async def health_check() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "version": get_app_version()}

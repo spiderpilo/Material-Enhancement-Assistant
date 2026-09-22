@@ -22,6 +22,12 @@ DEFAULT_JWT_ACCESS_TOKEN_TTL_SECONDS = 3600
 DEFAULT_JWT_REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30
 MIN_JWT_SECRET_LENGTH = 32
 
+DEFAULT_CORS_ALLOWED_ORIGINS = (
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://0.0.0.0:3000",
+)
+
 
 @dataclass(frozen=True)
 class DatabaseSettings:
@@ -69,6 +75,21 @@ def get_gemini_embedding_dimensions() -> int:
         return DEFAULT_GEMINI_EMBEDDING_DIMENSIONS
 
     return dimensions if dimensions > 0 else DEFAULT_GEMINI_EMBEDDING_DIMENSIONS
+
+
+def get_cors_allowed_origins() -> list[str]:
+    """Comma-separated CORS_ALLOWED_ORIGINS; local frontend origins when unset."""
+    value = os.getenv("CORS_ALLOWED_ORIGINS")
+    if not value or not value.strip():
+        return list(DEFAULT_CORS_ALLOWED_ORIGINS)
+
+    return [origin.strip().rstrip("/") for origin in value.split(",") if origin.strip()]
+
+
+def get_app_version() -> str:
+    """Build identifier (git SHA) baked into the image; lets deploys verify what is live."""
+    value = os.getenv("APP_VERSION")
+    return value.strip() if value and value.strip() else "dev"
 
 
 def get_database_settings() -> DatabaseSettings:
