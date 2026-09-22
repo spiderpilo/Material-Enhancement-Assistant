@@ -95,7 +95,7 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     api_key = get_gemini_api_key()
     if not api_key:
         raise MissingGeminiAPIKeyError(
-            "Gemini API key not found. Set GOOGLE_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY."
+            "Gemini API key not found. Set GOOGLE_GEMINI_API_KEY."
         )
 
     normalized_texts = [text.strip() for text in texts if text and text.strip()]

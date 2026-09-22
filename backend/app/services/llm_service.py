@@ -44,7 +44,7 @@ def improve_clarity(text: str) -> str:
     api_key = get_gemini_api_key()
     if not api_key:
         raise MissingAPIKeyError(
-            "Gemini API key not found. Set GOOGLE_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY."
+            "Gemini API key not found. Set GOOGLE_GEMINI_API_KEY."
         )
 
     prompt = _build_prompt(text[:MAX_INPUT_CHARS])
@@ -78,7 +78,7 @@ def answer_project_question(
     api_key = get_gemini_api_key()
     if not api_key:
         raise MissingAPIKeyError(
-            "Gemini API key not found. Set GOOGLE_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY."
+            "Gemini API key not found. Set GOOGLE_GEMINI_API_KEY."
         )
 
     if not materials:
@@ -129,7 +129,7 @@ def generate_quiz_with_usage(
     api_key = get_gemini_api_key()
     if not api_key:
         raise MissingAPIKeyError(
-            "Gemini API key not found. Set GOOGLE_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY."
+            "Gemini API key not found. Set GOOGLE_GEMINI_API_KEY."
         )
 
     if not materials:
@@ -177,7 +177,7 @@ def generate_slide_deck_outline_with_usage(
     api_key = get_gemini_api_key()
     if not api_key:
         raise MissingAPIKeyError(
-            "Gemini API key not found. Set GOOGLE_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY."
+            "Gemini API key not found. Set GOOGLE_GEMINI_API_KEY."
         )
 
     if not materials:

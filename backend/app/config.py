@@ -11,11 +11,6 @@ load_dotenv(ROOT_DIR / ".env")
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
 DEFAULT_GEMINI_EMBEDDING_DIMENSIONS = 768
-GEMINI_ENV_VARS = (
-    "GOOGLE_GEMINI_API_KEY",
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
-)
 
 
 DEFAULT_JWT_ACCESS_TOKEN_TTL_SECONDS = 3600
@@ -51,12 +46,9 @@ class AuthSettings:
     refresh_token_ttl_seconds: int
 
 
-def get_gemini_api_key() -> str:
-    for env_var in GEMINI_ENV_VARS:
-        value = os.getenv(env_var)
-        if value:
-            return value
-    return None
+def get_gemini_api_key() -> str | None:
+    value = os.getenv("GOOGLE_GEMINI_API_KEY")
+    return value.strip() if value and value.strip() else None
 
 
 def get_gemini_embedding_model() -> str:

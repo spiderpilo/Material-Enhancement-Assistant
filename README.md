@@ -29,7 +29,6 @@ GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 GEMINI_EMBEDDING_DIMENSIONS=768
 ```
 
-You can also use `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
 
 Start the FastAPI server:
 

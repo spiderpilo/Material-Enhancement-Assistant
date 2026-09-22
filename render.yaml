@@ -1,0 +1,63 @@
+# Render Blueprint. Both services pull images that GitHub Actions builds and pushes
+# to GHCR (.github/workflows/deploy.yml); Render never builds from source.
+# Deploys happen only when that workflow calls each service's deploy hook with
+# the commit-SHA image tag. The `:main` tag below is just the default image, and
+# every deployed tag must use the same repository.
+#
+# Secrets use `sync: false`: Render asks for them when the Blueprint is first
+# applied, and they are never stored in this file.
+services:
+  - type: web
+    name: mea-backend
+    runtime: image
+    image:
+      url: ghcr.io/spiderpilo/mea-backend:main
+      creds:
+        fromRegistryCreds:
+          name: ghcr
+    region: ohio # same AWS region as Neon (us-east-2)
+    healthCheckPath: /health
+    envVars:
+      # Neon pooled connection string (host contains "-pooler").
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_ACCESS_TOKEN_TTL_SECONDS
+        value: "3600"
+      - key: JWT_REFRESH_TOKEN_TTL_SECONDS
+        value: "2592000"
+      - key: GOOGLE_GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_EMBEDDING_MODEL
+        value: gemini-embedding-001
+      - key: GEMINI_EMBEDDING_DIMENSIONS
+        value: "768"
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: STORAGE_PUBLIC_URL
+        sync: false
+      # Public frontend origin(s), comma-separated, e.g. https://mea-frontend.onrender.com
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+
+  - type: web
+    name: mea-frontend
+    runtime: image
+    image:
+      url: ghcr.io/spiderpilo/mea-frontend:main
+      creds:
+        fromRegistryCreds:
+          name: ghcr
+    region: ohio # same AWS region as Neon (us-east-2)
+    healthCheckPath: /api/health
+    # NEXT_PUBLIC_API_BASE_URL is baked into the image at build time from the
+    # GitHub repository variable of the same name, so no runtime env vars are needed.
