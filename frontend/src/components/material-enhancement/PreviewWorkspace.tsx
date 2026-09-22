@@ -21,6 +21,7 @@ import {
   ArrowRightIcon,
 } from "./icons";
 import { CenterChatComposer } from "./CenterChatComposer";
+import { PdfViewer } from "./PdfViewer";
 
 const PROMPT_SUGGESTIONS = [
   "Summarize this material",
@@ -61,6 +62,11 @@ export function PreviewWorkspace({
 }: PreviewWorkspaceProps) {
   const currentIndex = previewItem?.index ?? 0;
   const totalCount = selectedMaterial?.previewItems.length ?? 0;
+  const [pdfMaterialId, setPdfMaterialId] = useState<string | null>(null);
+  const canShowPdf =
+    selectedMaterial?.extension === "pdf" && typeof selectedMaterial.databaseId === "number";
+  // PDF mode belongs to one material; selecting another returns to page previews.
+  const isPdfMode = canShowPdf && pdfMaterialId === selectedMaterial?.id;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isChatSubmitting, setIsChatSubmitting] = useState(false);
   const [isChatMemoryLoading, setIsChatMemoryLoading] = useState(true);
@@ -227,18 +233,49 @@ export function PreviewWorkspace({
 
         <NavigationButton
           direction="previous"
-          disabled={!selectedMaterial || currentIndex === 0}
+          disabled={!selectedMaterial || isPdfMode || currentIndex === 0}
           onClick={() => onNavigate("previous")}
         />
         <NavigationButton
           direction="next"
-          disabled={!selectedMaterial || currentIndex >= totalCount - 1}
+          disabled={!selectedMaterial || isPdfMode || currentIndex >= totalCount - 1}
           onClick={() => onNavigate("next")}
         />
 
+        {canShowPdf && selectedMaterial ? (
+          <div
+            role="group"
+            aria-label="Preview mode"
+            className="absolute bottom-[6px] right-3 z-10 flex rounded-[10px] border border-white/[0.1] bg-black/30 p-0.5 text-[11px] font-semibold"
+          >
+            {(["pages", "pdf"] as const).map((mode) => {
+              const isActive = mode === "pdf" ? isPdfMode : !isPdfMode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={isActive}
+                  onClick={() => setPdfMaterialId(mode === "pdf" ? selectedMaterial.id : null)}
+                  className={[
+                    "rounded-[8px] px-2.5 py-1 transition",
+                    isActive ? "bg-white/[0.14] text-white" : "text-white/55 hover:text-white/80",
+                  ].join(" ")}
+                >
+                  {mode === "pdf" ? "PDF" : "Pages"}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+
         <div className="absolute inset-x-[clamp(4rem,9%,5.25rem)] top-3 bottom-7 xl:top-4 xl:bottom-8 2xl:top-[22px] 2xl:bottom-[37px]">
           <div className="shadow-card-soft relative flex h-full items-center justify-center overflow-hidden rounded-[20px] border border-[#e7e5e4] bg-white">
-            {selectedMaterial && previewItem ? (
+            {isPdfMode && selectedMaterial?.databaseId !== undefined ? (
+              <PdfViewer
+                courseContentId={selectedMaterial.databaseId}
+                materialName={selectedMaterial.name}
+              />
+            ) : selectedMaterial && previewItem ? (
               <PreviewSurface material={selectedMaterial} previewItem={previewItem} />
             ) : (
               <PreviewEmptyState />
@@ -248,9 +285,11 @@ export function PreviewWorkspace({
 
         <div className="absolute bottom-[11px] left-1/2 max-w-[calc(100%_-_3rem)] -translate-x-1/2 text-center">
           <p className="text-[12.6px] font-semibold text-[color:var(--text-muted)]">
-            {selectedMaterial && previewItem
-              ? getPreviewLabel(selectedMaterial, previewItem)
-              : "Select or upload a file to preview"}
+            {isPdfMode && selectedMaterial
+              ? `${selectedMaterial.name} · original PDF`
+              : selectedMaterial && previewItem
+                ? getPreviewLabel(selectedMaterial, previewItem)
+                : "Select or upload a file to preview"}
           </p>
         </div>
       </div>

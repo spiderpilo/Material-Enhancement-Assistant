@@ -55,5 +55,14 @@ class CourseContentRecord(BaseModel):
     rag_error: Optional[str] = None
 
 
+class CourseContentFileResponse(BaseModel):
+    course_content_id: int
+    material_name: str
+    source_type: Optional[SourceType] = None
+    url: str = Field(description="URL of the original file. PDFs display inline in the browser.")
+    content_type: Optional[str] = None
+    size: Optional[int] = Field(default=None, description="File size in bytes.")
+
+
 class UpdateCourseContentRequest(BaseModel):
     material_name: str = Field(min_length=1, max_length=180)

@@ -52,6 +52,21 @@ def get_object_optional(*, key: str) -> bytes | None:
         raise DataServiceError(f"Storage download failed for {key}: {exc}") from exc
 
 
+def head_object_optional(*, key: str) -> dict[str, object] | None:
+    """Return content type and size of an object, or None when it does not exist."""
+    settings = _get_settings()
+    try:
+        response = _get_client(settings).head_object(Bucket=settings.bucket, Key=key)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in MISSING_OBJECT_ERROR_CODES:
+            return None
+        raise DataServiceError(f"Storage lookup failed for {key}: {exc}") from exc
+    except BotoCoreError as exc:
+        raise DataServiceError(f"Storage lookup failed for {key}: {exc}") from exc
+
+    return {"content_type": response.get("ContentType"), "content_length": response.get("ContentLength")}
+
+
 def delete_object(*, key: str) -> None:
     """Delete an object. S3 deletes are idempotent, so a missing key is not an error."""
     settings = _get_settings()

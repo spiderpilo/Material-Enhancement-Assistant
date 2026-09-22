@@ -1,3 +1,4 @@
+import { authorizedFetch } from "@/lib/api/auth";
 import { getApiBaseUrl } from "@/lib/api/course-content";
 
 export type QuizOption = {
@@ -33,7 +34,7 @@ export async function generateQuiz({
   materialIds: number[];
   questionCount?: number;
 }): Promise<GeneratedQuiz> {
-  const response = await fetch(`${getApiBaseUrl()}/quiz/generate`, {
+  const response = await authorizedFetch(`${getApiBaseUrl()}/quiz/generate`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,

@@ -8,14 +8,21 @@ must be copied before the Supabase project is shut down. Preview JSON files embe
 full Supabase object URLs, so those URLs are rewritten to STORAGE_PUBLIC_URL while
 copying.
 
+The source is either the live Supabase bucket or a local download of it
+(``--source-dir``, a folder whose relative paths are the object keys, e.g. a
+Supabase dashboard bucket export). A local source is the only option once the
+Supabase project has been deleted.
+
 Reads from the repo-root .env (or the environment):
   source: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_STORAGE_BUCKET
+          (not needed with --source-dir)
   target: S3_BUCKET, S3_ENDPOINT_URL, S3_REGION, S3_ACCESS_KEY_ID,
           S3_SECRET_ACCESS_KEY, STORAGE_PUBLIC_URL
 
 Usage:
   python backend/scripts/migrate_supabase_storage.py --dry-run
   python backend/scripts/migrate_supabase_storage.py
+  python backend/scripts/migrate_supabase_storage.py --source-dir ~/Downloads/<project-ref>/course-contents
 """
 
 from __future__ import annotations
@@ -38,6 +45,7 @@ from app.services import storage_service  # noqa: E402
 
 LIST_PAGE_SIZE = 1000
 REQUEST_TIMEOUT_SECONDS = 60
+IGNORED_LOCAL_FILES = {".DS_Store", "Thumbs.db"}
 SUPABASE_OBJECT_URL = re.compile(
     r"https://[a-z0-9-]+\.supabase\.co/storage/v1/object/(?:public/)?[^/\s\"\\]+/"
 )
@@ -46,16 +54,36 @@ SUPABASE_OBJECT_URL = re.compile(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dry-run", action="store_true", help="List objects without copying")
+    parser.add_argument(
+        "--source-dir",
+        type=Path,
+        help="Copy from a local download of the bucket instead of the Supabase API",
+    )
     args = parser.parse_args()
 
-    supabase_url = _require_env("SUPABASE_URL").rstrip("/")
-    service_role_key = _require_env("SUPABASE_SERVICE_ROLE_KEY")
-    source_bucket = _require_env("SUPABASE_STORAGE_BUCKET")
     target = get_storage_settings()
 
-    objects = list(_list_objects(supabase_url, service_role_key, source_bucket, prefix=""))
+    if args.source_dir:
+        source_dir = args.source_dir.expanduser().resolve()
+        if not source_dir.is_dir():
+            raise SystemExit(f"{source_dir} is not a directory.")
+        objects = list(_list_local_objects(source_dir))
+        source_label = f"local directory {source_dir}"
+
+        def download(key: str) -> bytes:
+            return (source_dir / key).read_bytes()
+    else:
+        supabase_url = _require_env("SUPABASE_URL").rstrip("/")
+        service_role_key = _require_env("SUPABASE_SERVICE_ROLE_KEY")
+        source_bucket = _require_env("SUPABASE_STORAGE_BUCKET")
+        objects = list(_list_objects(supabase_url, service_role_key, source_bucket, prefix=""))
+        source_label = f"Supabase bucket {source_bucket}"
+
+        def download(key: str) -> bytes:
+            return _download(supabase_url, service_role_key, source_bucket, key)
+
     total_bytes = sum(size for _, size, _ in objects)
-    print(f"Found {len(objects)} objects ({total_bytes / 1_048_576:.1f} MiB) in Supabase bucket {source_bucket}")
+    print(f"Found {len(objects)} objects ({total_bytes / 1_048_576:.1f} MiB) in {source_label}")
 
     if args.dry_run:
         for key, size, _ in objects:
@@ -67,7 +95,7 @@ def main() -> int:
 
     for index, (key, _, mimetype) in enumerate(objects, start=1):
         try:
-            body = _download(supabase_url, service_role_key, source_bucket, key)
+            body = download(key)
             content_type = mimetype or mimetypes.guess_type(key)[0] or "application/octet-stream"
 
             if key.endswith(".json"):
@@ -85,6 +113,14 @@ def main() -> int:
         print("Failures:", *failures, sep="\n  ", file=sys.stderr)
         return 1
     return 0
+
+
+def _list_local_objects(source_dir: Path):
+    """Yield (key, size, mimetype) for every file under source_dir, skipping OS metadata files."""
+    for path in sorted(source_dir.rglob("*")):
+        if not path.is_file() or path.name in IGNORED_LOCAL_FILES:
+            continue
+        yield path.relative_to(source_dir).as_posix(), path.stat().st_size, None
 
 
 def _list_objects(supabase_url: str, service_role_key: str, bucket: str, *, prefix: str):

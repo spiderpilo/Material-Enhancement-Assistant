@@ -10,6 +10,7 @@ import {
   GoogleLogoIcon,
   MicrosoftLogoIcon,
 } from "@/components/login/LoginIcons";
+import { storeSession } from "@/lib/api/auth";
 
 export function LoginForm() {
   const router = useRouter();
@@ -43,6 +44,7 @@ export function LoginForm() {
       const payload = (await response.json().catch(() => ({}))) as {
         detail?: string;
         access_token?: string;
+        refresh_token?: string;
       };
 
       if (!response.ok) {
@@ -52,9 +54,10 @@ export function LoginForm() {
         throw new Error(payload.detail || "Unable to sign in.");
       }
 
-      if (payload.access_token) {
-        localStorage.setItem("mea_access_token", payload.access_token);
+      if (!payload.access_token || !payload.refresh_token) {
+        throw new Error("Sign-in response did not include a session.");
       }
+      storeSession({ access_token: payload.access_token, refresh_token: payload.refresh_token });
 
       router.push("/dashboard");
     } catch (cause) {
