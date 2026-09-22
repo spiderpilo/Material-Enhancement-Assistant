@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -13,5 +15,5 @@ class SlideDeckOutline(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     title: str
-    subtitle: str | None = None
+    subtitle: Optional[str] = None
     slides: list[SlideDeckOutlineSlide] = Field(default_factory=list)

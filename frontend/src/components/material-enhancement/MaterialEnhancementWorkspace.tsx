@@ -135,6 +135,9 @@ export function MaterialEnhancementWorkspace({
   const checkedMaterials = materials.filter((material) =>
     checkedMaterialIds.includes(material.id),
   );
+  const checkedMaterialDatabaseIds = checkedMaterials
+    .map((material) => material.databaseId)
+    .filter((databaseId): databaseId is number => typeof databaseId === "number");
   const currentQuizSourceKey = buildQuizSourceKey(checkedMaterials);
   const activeQuizHistoryItem =
     quizHistory.find((quizHistoryItem) => quizHistoryItem.id === activeQuizHistoryId) ?? null;
@@ -1285,8 +1288,11 @@ export function MaterialEnhancementWorkspace({
           <PreviewWorkspace
             key={normalizedRouteProjectUuid}
             onNavigate={navigatePreview}
+            projectName={projectName}
+            projectUuid={normalizedRouteProjectUuid}
             previewItem={selectedPreviewItem}
-            selectedSourceCount={checkedMaterials.length}
+            selectedSourceIds={checkedMaterialDatabaseIds}
+            selectedSourceCount={checkedMaterialDatabaseIds.length}
             selectedMaterial={selectedMaterial}
           />
 

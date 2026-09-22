@@ -1,9 +1,12 @@
-from typing import Literal
+from __future__ import annotations
+
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 PreviewStatus = Literal["pending", "ready", "failed"]
+RagStatus = Literal["pending", "ready", "failed"]
 SourceType = Literal["pdf", "docx", "pptx"]
 PreviewKind = Literal["page", "slide"]
 
@@ -31,7 +34,7 @@ class CourseContentPreviewManifest(BaseModel):
     preview_status: PreviewStatus
     preview_count: int
     access_url: str
-    preview_error: str | None = None
+    preview_error: Optional[str] = None
     items: list[CourseContentPreviewItem] = []
 
 
@@ -42,9 +45,14 @@ class CourseContentRecord(BaseModel):
     material_name: str
     access_url: str
     data_size: int
-    source_type: SourceType | None = None
+    project_id: Optional[int] = None
+    content_sha256: Optional[str] = None
+    source_type: Optional[SourceType] = None
     preview_status: PreviewStatus = "pending"
     preview_count: int = 0
+    rag_status: Optional[RagStatus] = None
+    rag_chunk_count: int = 0
+    rag_error: Optional[str] = None
 
 
 class UpdateCourseContentRequest(BaseModel):

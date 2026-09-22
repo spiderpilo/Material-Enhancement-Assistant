@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -7,13 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class GeneratedMaterialRecord(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    id: int | None = None
+    id: Optional[int] = None
     uuid: str
     created_at: datetime
-    input_token: int | None = None
-    output_token: int | None = None
+    input_token: Optional[int] = None
+    output_token: Optional[int] = None
     project_uuid: str
-    name: str | None = None
+    name: Optional[str] = None
     file_location: str
     tool_type: str
     source_material_ids: list[int] = Field(default_factory=list)

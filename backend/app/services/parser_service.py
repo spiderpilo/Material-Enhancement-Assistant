@@ -1,7 +1,9 @@
 import logging
 import re
 import zipfile
+from dataclasses import dataclass
 from io import BytesIO
+from typing import Literal
 from xml.etree import ElementTree
 
 import fitz
@@ -9,21 +11,37 @@ from docx import Document
 
 
 PREVIEW_LENGTH = 300
+DOCX_SECTION_TARGET_CHARS = 3000
 logger = logging.getLogger(__name__)
+ParsedLocationKind = Literal["page", "slide", "section"]
 
 
 class DocumentParseError(Exception):
     """Raised when an uploaded document cannot be parsed into text."""
 
 
+@dataclass(frozen=True)
+class ParsedTextUnit:
+    index: int
+    text: str
+    location_kind: ParsedLocationKind
+    location_start: int
+    location_end: int
+
+
 def parse_document(*, file_bytes: bytes, file_type: str) -> str:
+    units = parse_document_units(file_bytes=file_bytes, file_type=file_type)
+    return normalize_text("\n".join(unit.text for unit in units))
+
+
+def parse_document_units(*, file_bytes: bytes, file_type: str) -> list[ParsedTextUnit]:
     try:
         if file_type == "pdf":
-            raw_text = _extract_pdf_text(file_bytes)
+            raw_units = _extract_pdf_text_units(file_bytes)
         elif file_type == "docx":
-            raw_text = _extract_docx_text(file_bytes)
+            raw_units = _extract_docx_text_units(file_bytes)
         elif file_type == "pptx":
-            raw_text = _extract_pptx_text(file_bytes)
+            raw_units = _extract_pptx_text_units(file_bytes)
         else:
             raise DocumentParseError("Unsupported file type.")
     except DocumentParseError:
@@ -31,11 +49,25 @@ def parse_document(*, file_bytes: bytes, file_type: str) -> str:
     except Exception as exc:
         raise DocumentParseError(f"Failed to parse the uploaded {file_type.upper()} file.") from exc
 
-    cleaned_text = normalize_text(raw_text)
-    if not cleaned_text:
+    cleaned_units: list[ParsedTextUnit] = []
+    for unit in raw_units:
+        cleaned_text = normalize_text(unit.text)
+        if not cleaned_text:
+            continue
+        cleaned_units.append(
+            ParsedTextUnit(
+                index=len(cleaned_units),
+                text=cleaned_text,
+                location_kind=unit.location_kind,
+                location_start=unit.location_start,
+                location_end=unit.location_end,
+            )
+        )
+
+    if not cleaned_units:
         raise DocumentParseError("No text could be extracted from the uploaded file.")
 
-    return cleaned_text
+    return cleaned_units
 
 
 def build_preview(text: str, length: int = PREVIEW_LENGTH) -> str:
@@ -47,9 +79,13 @@ def normalize_text(text: str) -> str:
 
 
 def _extract_pdf_text(file_bytes: bytes) -> str:
+    return "\n".join(unit.text for unit in _extract_pdf_text_units(file_bytes))
+
+
+def _extract_pdf_text_units(file_bytes: bytes) -> list[ParsedTextUnit]:
     document = fitz.open(stream=file_bytes, filetype="pdf")
     try:
-        page_texts: list[str] = []
+        page_units: list[ParsedTextUnit] = []
         failed_page_count = 0
 
         for page_index in range(document.page_count):
@@ -67,27 +103,80 @@ def _extract_pdf_text(file_bytes: bytes) -> str:
                 continue
 
             if page_text:
-                page_texts.append(page_text)
+                page_number = page_index + 1
+                page_units.append(
+                    ParsedTextUnit(
+                        index=len(page_units),
+                        text=page_text,
+                        location_kind="page",
+                        location_start=page_number,
+                        location_end=page_number,
+                    )
+                )
 
         if failed_page_count:
             logger.warning(
-                "Skipped %s unreadable PDF page(s) while extracting quiz source text.",
+                "Skipped %s unreadable PDF page(s) while extracting source text.",
                 failed_page_count,
             )
 
-        return "\n".join(page_texts)
+        return page_units
     finally:
         document.close()
 
 
 def _extract_docx_text(file_bytes: bytes) -> str:
+    return "\n".join(unit.text for unit in _extract_docx_text_units(file_bytes))
+
+
+def _extract_docx_text_units(file_bytes: bytes) -> list[ParsedTextUnit]:
     document = Document(BytesIO(file_bytes))
     paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
-    return "\n".join(paragraphs)
+    section_units: list[ParsedTextUnit] = []
+    current_paragraphs: list[str] = []
+    current_length = 0
+
+    for paragraph in paragraphs:
+        next_length = current_length + len(paragraph) + (1 if current_paragraphs else 0)
+        if current_paragraphs and next_length > DOCX_SECTION_TARGET_CHARS:
+            section_number = len(section_units) + 1
+            section_units.append(
+                ParsedTextUnit(
+                    index=len(section_units),
+                    text="\n".join(current_paragraphs),
+                    location_kind="section",
+                    location_start=section_number,
+                    location_end=section_number,
+                )
+            )
+            current_paragraphs = []
+            current_length = 0
+            next_length = len(paragraph)
+
+        current_length = next_length
+        current_paragraphs.append(paragraph)
+
+    if current_paragraphs:
+        section_number = len(section_units) + 1
+        section_units.append(
+            ParsedTextUnit(
+                index=len(section_units),
+                text="\n".join(current_paragraphs),
+                location_kind="section",
+                location_start=section_number,
+                location_end=section_number,
+            )
+        )
+
+    return section_units
 
 
 def _extract_pptx_text(file_bytes: bytes) -> str:
-    slide_text: list[str] = []
+    return "\n".join(unit.text for unit in _extract_pptx_text_units(file_bytes))
+
+
+def _extract_pptx_text_units(file_bytes: bytes) -> list[ParsedTextUnit]:
+    slide_units: list[ParsedTextUnit] = []
 
     with zipfile.ZipFile(BytesIO(file_bytes)) as archive:
         slide_names = sorted(
@@ -108,9 +197,18 @@ def _extract_pptx_text(file_bytes: bytes) -> str:
             ]
 
             if text_nodes:
-                slide_text.append(" ".join(text_nodes))
+                slide_number = _slide_sort_key(slide_name)
+                slide_units.append(
+                    ParsedTextUnit(
+                        index=len(slide_units),
+                        text=" ".join(text_nodes),
+                        location_kind="slide",
+                        location_start=slide_number,
+                        location_end=slide_number,
+                    )
+                )
 
-    return "\n".join(slide_text)
+    return slide_units
 
 
 def _slide_sort_key(slide_name: str) -> int:

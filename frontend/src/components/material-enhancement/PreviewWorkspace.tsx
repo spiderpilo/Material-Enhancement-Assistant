@@ -6,6 +6,15 @@ import {
   getMaterialBaseName,
   getPreviewLabel,
 } from "@/lib/material-enhancement/workspace";
+import {
+  askProjectQuestion,
+  clearProjectChatHistory,
+  getProjectChatHistory,
+  type ProjectChatMessage,
+  type ProjectChatSelectionMode,
+  type ProjectChatSource,
+} from "@/lib/api/projects";
+import { getStoredAccessToken } from "@/lib/api/auth";
 
 import {
   ArrowLeftIcon,
@@ -23,7 +32,10 @@ const PROMPT_SUGGESTIONS = [
 
 type PreviewWorkspaceProps = {
   onNavigate: (direction: "previous" | "next") => void;
+  projectName: string;
+  projectUuid: string;
   previewItem: PreviewItem | null;
+  selectedSourceIds: number[];
   selectedSourceCount: number;
   selectedMaterial: Material | null;
 };
@@ -32,20 +44,71 @@ type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
-  timestamp: number;
+  timestamp: string;
+  sources?: ProjectChatSource[];
+  isLoading?: boolean;
+  selectionMode?: ProjectChatSelectionMode | null;
 };
 
 export function PreviewWorkspace({
   onNavigate,
+  projectName,
+  projectUuid,
   previewItem,
+  selectedSourceIds,
   selectedSourceCount,
   selectedMaterial,
 }: PreviewWorkspaceProps) {
   const currentIndex = previewItem?.index ?? 0;
   const totalCount = selectedMaterial?.previewItems.length ?? 0;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isChatSubmitting, setIsChatSubmitting] = useState(false);
+  const [isChatMemoryLoading, setIsChatMemoryLoading] = useState(true);
+  const [chatMemoryError, setChatMemoryError] = useState<string | null>(null);
+  const [isNewConversationModalOpen, setIsNewConversationModalOpen] = useState(false);
+  const [isResettingConversation, setIsResettingConversation] = useState(false);
+  const [resetConversationError, setResetConversationError] = useState<string | null>(null);
   const conversationEndRef = useRef<HTMLDivElement>(null);
-  const assistantTimersRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    const accessToken = getStoredAccessToken();
+
+    setMessages([]);
+    setChatMemoryError(null);
+    setIsChatMemoryLoading(true);
+
+    if (!accessToken) {
+      setChatMemoryError("Sign in to load chat memory.");
+      setIsChatMemoryLoading(false);
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    void getProjectChatHistory({ accessToken, projectUuid })
+      .then((history) => {
+        if (!isCancelled) {
+          setMessages(history.messages.map(toChatMessage));
+        }
+      })
+      .catch((error: unknown) => {
+        if (!isCancelled) {
+          setChatMemoryError(
+            error instanceof Error ? error.message : "Unable to load chat memory.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsChatMemoryLoading(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [projectUuid]);
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
@@ -60,36 +123,101 @@ export function PreviewWorkspace({
     };
   }, [messages]);
 
-  useEffect(() => {
-    return () => {
-      for (const timerId of assistantTimersRef.current) {
-        window.clearTimeout(timerId);
-      }
-      assistantTimersRef.current = [];
-    };
-  }, []);
-
-  const handleChatSubmit = (message: string) => {
+  const handleChatSubmit = async (message: string) => {
     const userMessage = createChatMessage("user", message);
-    const assistantMessage = createChatMessage(
-      "assistant",
-      buildAssistantPlaceholderReply({
-        message,
-        selectedSourceCount,
-      }),
-    );
+    const assistantMessageId = createMessageId();
 
-    setMessages((currentMessages) => [...currentMessages, userMessage]);
+    setMessages((currentMessages) => [
+      ...currentMessages,
+      userMessage,
+      {
+        id: assistantMessageId,
+        role: "assistant",
+        content: "Reading the best-matching document...",
+        timestamp: new Date().toISOString(),
+        isLoading: true,
+      },
+    ]);
 
-    // TODO: Replace this local placeholder with a real project chat backend response.
-    const timerId = window.setTimeout(() => {
-      setMessages((currentMessages) => [...currentMessages, assistantMessage]);
-      assistantTimersRef.current = assistantTimersRef.current.filter(
-        (currentTimerId) => currentTimerId !== timerId,
+    setIsChatSubmitting(true);
+
+    const accessToken = getStoredAccessToken();
+    if (!accessToken) {
+      setMessages((currentMessages) =>
+        currentMessages.filter(
+          (messageItem) =>
+            messageItem.id !== userMessage.id &&
+            messageItem.id !== assistantMessageId,
+        ),
       );
-    }, 220);
+      setChatMemoryError("Sign in to use the document assistant.");
+      setIsChatSubmitting(false);
+      return;
+    }
 
-    assistantTimersRef.current.push(timerId);
+    try {
+      const response = await askProjectQuestion({
+        accessToken,
+        projectUuid,
+        message,
+        selectedMaterialId: selectedSourceIds.length === 1 ? selectedSourceIds[0] : null,
+        selectedMaterialIds: selectedSourceIds,
+      });
+
+      setMessages(response.messages.map(toChatMessage));
+      setChatMemoryError(null);
+    } catch (error) {
+      setMessages((currentMessages) =>
+        currentMessages.filter(
+          (messageItem) =>
+            messageItem.id !== userMessage.id &&
+            messageItem.id !== assistantMessageId,
+        ),
+      );
+      setChatMemoryError(
+        error instanceof Error
+          ? error.message
+          : "Unable to answer from the current project documents.",
+      );
+    } finally {
+      setIsChatSubmitting(false);
+    }
+  };
+
+  const handleStartNewConversation = async (saveJsonFirst: boolean) => {
+    if (isResettingConversation) {
+      return;
+    }
+
+    if (saveJsonFirst) {
+      downloadConversationJson({
+        messages,
+        projectName,
+        projectUuid,
+      });
+    }
+
+    const accessToken = getStoredAccessToken();
+    if (!accessToken) {
+      setResetConversationError("Sign in before starting a new conversation.");
+      return;
+    }
+
+    setIsResettingConversation(true);
+    setResetConversationError(null);
+
+    try {
+      await clearProjectChatHistory({ accessToken, projectUuid });
+      setMessages([]);
+      setChatMemoryError(null);
+      setIsNewConversationModalOpen(false);
+    } catch (error) {
+      setResetConversationError(
+        error instanceof Error ? error.message : "Unable to start a new conversation.",
+      );
+    } finally {
+      setIsResettingConversation(false);
+    }
   };
 
   return (
@@ -128,8 +256,36 @@ export function PreviewWorkspace({
       </div>
 
       <div className="mt-3 flex min-h-0 flex-1 flex-col 2xl:mt-4">
+        <div className="flex min-h-8 shrink-0 items-center justify-between gap-3 px-1 pb-1">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-white/38">
+            Conversation
+          </p>
+          {messages.length > 0 ? (
+            <button
+              type="button"
+              disabled={isChatSubmitting || isChatMemoryLoading}
+              onClick={() => {
+                setResetConversationError(null);
+                setIsNewConversationModalOpen(true);
+              }}
+              className="rounded-[10px] border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-[11.5px] font-semibold text-white/64 transition hover:bg-white/[0.07] hover:text-white/82 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              New conversation
+            </button>
+          ) : null}
+        </div>
+        {chatMemoryError ? (
+          <p className="mx-1 mb-1 rounded-[10px] border border-[rgba(255,170,184,0.16)] bg-[rgba(255,170,184,0.06)] px-3 py-2 text-[11.5px] text-[#ffc8d3]">
+            {chatMemoryError}
+          </p>
+        ) : null}
+
         <div className="studio-scroll min-h-0 flex-1 overflow-y-auto pr-1">
-          {messages.length === 0 ? (
+          {isChatMemoryLoading ? (
+            <div className="flex h-full items-center justify-center px-4 text-center">
+              <p className="text-[13px] text-white/38">Loading conversation...</p>
+            </div>
+          ) : messages.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-5 px-4 text-center">
               <p className="text-[14px] font-medium text-white/50">
                 Ask a question about your materials
@@ -139,7 +295,11 @@ export function PreviewWorkspace({
                   <button
                     key={suggestion}
                     type="button"
-                    disabled={selectedSourceCount === 0}
+                    disabled={
+                      selectedSourceCount === 0 ||
+                      isChatSubmitting ||
+                      isResettingConversation
+                    }
                     onClick={() => handleChatSubmit(suggestion)}
                     className="rounded-full border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-[13px] text-white/60 transition hover:border-white/[0.14] hover:bg-white/[0.08] hover:text-white/80 disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -159,11 +319,34 @@ export function PreviewWorkspace({
         </div>
 
         <CenterChatComposer
-          disabled={selectedSourceCount === 0}
+          disabled={
+            selectedSourceCount === 0 ||
+            isChatSubmitting ||
+            isChatMemoryLoading ||
+            isResettingConversation
+          }
           onSubmit={handleChatSubmit}
           selectedSourceCount={selectedSourceCount}
         />
       </div>
+
+      <NewConversationModal
+        errorMessage={resetConversationError}
+        isOpen={isNewConversationModalOpen}
+        isResetting={isResettingConversation}
+        onCancel={() => {
+          if (!isResettingConversation) {
+            setIsNewConversationModalOpen(false);
+            setResetConversationError(null);
+          }
+        }}
+        onSaveAndStart={() => {
+          void handleStartNewConversation(true);
+        }}
+        onStartWithoutSaving={() => {
+          void handleStartNewConversation(false);
+        }}
+      />
     </section>
   );
 }
@@ -458,29 +641,129 @@ function ChatMessageBubble({ message }: { message: ChatMessage }) {
         <p className="whitespace-pre-wrap text-[14.5px] leading-[1.7]">
           {message.content}
         </p>
+        {message.sources && message.sources.length > 0 ? (
+          <p className="mt-3 text-[11.5px] leading-5 text-white/58">
+            {message.selectionMode ? `${getSelectionModeLabel(message.selectionMode)} - ` : ""}
+            Sources: {message.sources.map(formatChatSourceLabel).join(", ")}
+          </p>
+        ) : null}
       </article>
     </div>
   );
 }
 
-function buildAssistantPlaceholderReply({
-  message,
-  selectedSourceCount,
-}: {
-  message: string;
-  selectedSourceCount: number;
-}) {
-  const normalizedMessage = message.trim();
+function getSelectionModeLabel(selectionMode: NonNullable<ChatMessage["selectionMode"]>) {
+  switch (selectionMode) {
+    case "rag":
+      return "Project sources";
+    case "rag_selected":
+      return "Selected sources";
+    case "rag_unavailable":
+      return "Indexed sources unavailable";
+    case "selected":
+      return "Selected document";
+    case "title_match":
+      return "Matched by title";
+    case "fallback":
+      return "Fallback document";
+  }
+}
 
-  return [
-    `I'm ready to help with ${selectedSourceCount} selected source${selectedSourceCount === 1 ? "" : "s"}.`,
-    "This is a local placeholder response while chat backend integration is still pending.",
-    normalizedMessage
-      ? `Your latest prompt was: "${normalizedMessage}"`
-      : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+function formatChatSourceLabel(source: ProjectChatSource): string {
+  const locations = Array.isArray(source.locations)
+    ? source.locations.filter((location) => location.trim().length > 0)
+    : [];
+
+  if (locations.length === 0) {
+    return source.material_name;
+  }
+
+  return `${source.material_name} (${locations.join(", ")})`;
+}
+
+function NewConversationModal({
+  errorMessage,
+  isOpen,
+  isResetting,
+  onCancel,
+  onSaveAndStart,
+  onStartWithoutSaving,
+}: {
+  errorMessage: string | null;
+  isOpen: boolean;
+  isResetting: boolean;
+  onCancel: () => void;
+  onSaveAndStart: () => void;
+  onStartWithoutSaving: () => void;
+}) {
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div
+      role="presentation"
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 px-4 backdrop-blur-[4px]"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onCancel();
+        }
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-conversation-title"
+        className="relative w-full max-w-[480px] rounded-[24px] border border-white/[0.12] bg-[#24211f] p-6 shadow-[0_28px_80px_rgba(0,0,0,0.58)]"
+      >
+        <button
+          type="button"
+          disabled={isResetting}
+          onClick={onCancel}
+          aria-label="Close new conversation dialog"
+          className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.03] text-[20px] leading-none text-white/55 transition hover:bg-white/[0.08] hover:text-white/85 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+
+        <h2
+          id="new-conversation-title"
+          className="pr-10 text-[20px] font-semibold tracking-[-0.03em] text-white"
+        >
+          Start a new conversation?
+        </h2>
+        <p className="mt-3 text-[13.5px] leading-6 text-white/62">
+          This permanently clears the current server copy. Save the conversation as
+          JSON first if you want to keep it.
+        </p>
+
+        {errorMessage ? (
+          <p className="mt-3 rounded-[12px] border border-[rgba(255,170,184,0.22)] bg-[rgba(255,170,184,0.08)] px-3 py-2 text-[12.5px] text-[#ffc8d3]">
+            {errorMessage}
+          </p>
+        ) : null}
+
+        <div className="mt-6 flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            disabled={isResetting}
+            onClick={onStartWithoutSaving}
+            className="h-10 rounded-[12px] border border-[rgba(255,170,184,0.26)] bg-[rgba(255,170,184,0.09)] px-4 text-[12.5px] font-semibold text-[#ffc8d3] transition hover:bg-[rgba(255,170,184,0.15)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Start without saving
+          </button>
+          <button
+            type="button"
+            disabled={isResetting}
+            onClick={onSaveAndStart}
+            className="h-10 rounded-[12px] bg-[#FFAAB8] px-4 text-[12.5px] font-bold text-[#1c1917] transition hover:brightness-[1.04] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isResetting ? "Starting..." : "Save JSON & start"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function createChatMessage(
@@ -491,8 +774,65 @@ function createChatMessage(
     id: createMessageId(),
     role,
     content,
-    timestamp: Date.now(),
+    timestamp: new Date().toISOString(),
   };
+}
+
+function toChatMessage(message: ProjectChatMessage): ChatMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    timestamp: message.timestamp,
+    sources: message.sources,
+    selectionMode: message.selection_mode,
+  };
+}
+
+function downloadConversationJson({
+  messages,
+  projectName,
+  projectUuid,
+}: {
+  messages: ChatMessage[];
+  projectName: string;
+  projectUuid: string;
+}) {
+  const payload = {
+    schema_version: 1,
+    project_uuid: projectUuid,
+    project_name: projectName || "Untitled project",
+    exported_at: new Date().toISOString(),
+    messages: messages
+      .filter((message) => !message.isLoading)
+      .map((message) => ({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        timestamp: message.timestamp,
+        sources: message.sources ?? [],
+        selection_mode: message.selectionMode ?? null,
+      })),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json;charset=utf-8",
+  });
+  const objectUrl = URL.createObjectURL(blob);
+  const downloadLink = document.createElement("a");
+  const safeProjectName =
+    (projectName || "project")
+      .trim()
+      .replace(/[^a-z0-9]+/gi, "-")
+      .replace(/^-+|-+$/g, "")
+      .toLowerCase() || "project";
+  const exportDate = new Date().toISOString().replace(/[:.]/g, "-");
+
+  downloadLink.href = objectUrl;
+  downloadLink.download = `${safeProjectName}-conversation-${exportDate}.json`;
+  document.body.appendChild(downloadLink);
+  downloadLink.click();
+  downloadLink.remove();
+  URL.revokeObjectURL(objectUrl);
 }
 
 function createMessageId() {

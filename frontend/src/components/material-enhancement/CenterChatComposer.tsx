@@ -68,14 +68,14 @@ export function CenterChatComposer({
             onChange={(event) => setMessage(event.target.value)}
             onKeyDown={handleKeyDown}
             rows={1}
-            placeholder="Ask a question or create something"
+            placeholder="Ask about your project documents"
             spellCheck={false}
             className="studio-scroll h-6 max-h-24 w-full resize-none bg-transparent pt-[1px] text-[15px] leading-6 text-white outline-none placeholder:text-white/42 2xl:h-7 2xl:text-[16px] 2xl:leading-7"
           />
         </label>
 
         <div className="flex shrink-0 items-center gap-3">
-          <p className="min-w-[64px] text-right text-[12px] text-white/64 2xl:min-w-[74px] 2xl:text-[13px]">
+          <p className="min-w-[74px] text-right text-[13px] text-white/64">
             {selectedSourceCount} source
             {selectedSourceCount === 1 ? "" : "s"}
           </p>

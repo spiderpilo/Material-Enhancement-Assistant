@@ -20,10 +20,13 @@ source backend/.venv/bin/activate
 pip install -r backend/requirements.txt
 ```
 
-Create a repository-root `.env` file. The backend loads environment variables from the project root and expects one of the following API keys:
+Create a repository-root `.env` file. The backend loads environment variables from the project root.
+AI features use Gemini:
 
 ```env
 GOOGLE_GEMINI_API_KEY=your_api_key_here
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+GEMINI_EMBEDDING_DIMENSIONS=768
 ```
 
 You can also use `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
@@ -99,6 +102,7 @@ Notes:
 - Changing `backend/requirements.txt`, `frontend/package.json`, or `frontend/package-lock.json` triggers a rebuild.
 - Gemini and Supabase settings are passed through from your shell or repo-root `.env` via Compose variable expansion.
 - Uploads accept PDF, DOCX, and PPTX files up to 50MB and create a `course_contents` row after Supabase Storage upload succeeds.
+- Uploaded files are indexed for RAG chat in the background. The original file remains stored for previews, quizzes, and slide deck generation.
 
 ## Example Workflow
 

@@ -27,6 +27,42 @@ export type GeneratedQuizHistoryRecord = {
   quiz: GeneratedQuiz;
 };
 
+export type ProjectChatSource = {
+  id: number;
+  material_name: string;
+  chunk_count?: number | null;
+  top_similarity?: number | null;
+  locations?: string[];
+};
+
+export type ProjectChatSelectionMode =
+  | "selected"
+  | "title_match"
+  | "fallback"
+  | "rag"
+  | "rag_selected"
+  | "rag_unavailable";
+
+export type ProjectChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+  sources: ProjectChatSource[];
+  selection_mode?: ProjectChatSelectionMode | null;
+};
+
+export type ProjectChatHistoryResponse = {
+  messages: ProjectChatMessage[];
+};
+
+export type ProjectChatResponse = {
+  answer: string;
+  selection_mode: ProjectChatSelectionMode;
+  sources: ProjectChatSource[];
+  messages: ProjectChatMessage[];
+};
+
 type ListGeneratedQuizHistoryResponse = {
   generated_quizzes?: GeneratedQuizHistoryRecord[];
 };
@@ -157,6 +193,98 @@ export async function listGeneratedMaterials({
   );
 
   return Array.isArray(payload.generated_quizzes) ? payload.generated_quizzes : [];
+}
+
+export async function askProjectQuestion({
+  accessToken,
+  projectUuid,
+  message,
+  selectedMaterialId,
+  selectedMaterialIds,
+}: {
+  accessToken: string;
+  projectUuid: string;
+  message: string;
+  selectedMaterialId?: number | null;
+  selectedMaterialIds?: number[] | null;
+}): Promise<ProjectChatResponse> {
+  const response = await fetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/chat`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      message,
+      selected_material_id: selectedMaterialId ?? null,
+      selected_material_ids: selectedMaterialIds ?? [],
+    }),
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as
+    | ProjectChatResponse
+    | { detail?: string };
+
+  if (!response.ok) {
+    throw new Error(
+      "detail" in payload && payload.detail
+        ? payload.detail
+        : "Unable to generate a chat response.",
+    );
+  }
+
+  return payload as ProjectChatResponse;
+}
+
+export async function getProjectChatHistory({
+  accessToken,
+  projectUuid,
+}: {
+  accessToken: string;
+  projectUuid: string;
+}): Promise<ProjectChatHistoryResponse> {
+  const response = await fetch(
+    `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/chat`,
+    {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Cache-Control": "no-cache",
+      },
+    },
+  );
+
+  return readProjectPayload<ProjectChatHistoryResponse>(
+    response,
+    "Unable to load chat memory.",
+  );
+}
+
+export async function clearProjectChatHistory({
+  accessToken,
+  projectUuid,
+}: {
+  accessToken: string;
+  projectUuid: string;
+}): Promise<void> {
+  const response = await fetch(
+    `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/chat`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  );
+
+  if (response.ok) {
+    return;
+  }
+
+  throw new Error(
+    await readProjectErrorMessage(response, "Unable to start a new conversation."),
+  );
 }
 
 async function readProjectPayload<T>(response: Response, fallbackMessage: string): Promise<T> {
