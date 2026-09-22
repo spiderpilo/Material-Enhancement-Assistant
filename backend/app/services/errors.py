@@ -15,3 +15,7 @@ class InvalidCredentialsError(DataServiceError):
 
 class AuthenticationError(DataServiceError):
     """Raised when a request is missing valid user authentication."""
+
+
+class AccountConflictError(DataServiceError):
+    """Raised when an email address or username is already registered."""

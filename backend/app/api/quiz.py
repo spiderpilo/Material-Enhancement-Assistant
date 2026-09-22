@@ -1,6 +1,8 @@
 import logging
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from app.api.deps import FORBIDDEN_ERROR, PROJECT_ERRORS, UPSTREAM_ERRORS, require_access_token, unauthorized
 
 from app.models.quiz_model import GeneratedQuiz, QuizGenerateRequest
 from app.services.llm_service import GeminiServiceError, MissingAPIKeyError
@@ -18,25 +20,21 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def _extract_bearer_token(authorization: str | None) -> str:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Sign in required.")
-
-    token = authorization.removeprefix("Bearer ").strip()
-    if not token:
-        raise HTTPException(status_code=401, detail="Sign in required.")
-
-    return token
-
-
-@router.post("/quiz/generate", response_model=GeneratedQuiz)
+@router.post(
+    "/quiz/generate",
+    response_model=GeneratedQuiz,
+    tags=["Quiz"],
+    summary="Generate a quiz",
+    description='Generates a multiple-choice quiz from selected project materials and saves it to the project.',
+    responses={**PROJECT_ERRORS, **FORBIDDEN_ERROR, **UPSTREAM_ERRORS},
+)
 def generate_quiz_from_materials(
     payload: QuizGenerateRequest,
-    authorization: str | None = Header(default=None),
+    access_token: str = Depends(require_access_token),
 ) -> GeneratedQuiz:
     try:
         return generate_quiz_for_user(
-            access_token=_extract_bearer_token(authorization),
+            access_token=access_token,
             project_uuid=payload.project_uuid,
             material_ids=payload.material_ids,
             question_count=payload.question_count,
@@ -44,7 +42,7 @@ def generate_quiz_from_materials(
     except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+        raise unauthorized(str(exc)) from exc
     except ProjectAccessDeniedError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProjectNotFoundError as exc:

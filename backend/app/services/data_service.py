@@ -15,13 +15,19 @@ import psycopg2.extras
 from pydantic import ValidationError
 
 from app.services import auth_service, db, storage_service
-from app.services.errors import (  # noqa: F401 - AuthenticationError/InvalidCredentialsError re-exported for API routes
+from app.services.errors import (  # noqa: F401 - error types re-exported for API routes
+    AccountConflictError,
     AuthenticationError,
     DataServiceError,
     InvalidCredentialsError,
     MissingConfigError,
 )
-from app.models.account_model import CreateAccountResponse, LoginAccountResponse, UserProfileRecord
+from app.models.account_model import (
+    CreateAccountResponse,
+    CurrentUserResponse,
+    LoginAccountResponse,
+    UserProfileRecord,
+)
 from app.models.chat_model import (
     ProjectChatHistoryResponse,
     ProjectChatMessageRecord,
@@ -94,6 +100,7 @@ class DuplicateCourseContentError(DataServiceError):
 @dataclass(frozen=True)
 class AuthenticatedUser:
     user_id: str
+    session_id: str
     email: str
     username: str
     profession: str
@@ -117,16 +124,30 @@ class RagRetrievedChunk:
     location_end: int | None = None
 
 
-def login_account(*, email: str, password: str) -> LoginAccountResponse:
+def login_account(*, email: str, password: str, user_agent: str | None = None) -> LoginAccountResponse:
     user = auth_service.authenticate(email=email, password=password)
-    tokens = auth_service.issue_tokens(user)
+    tokens = auth_service.issue_tokens(user, user_agent=user_agent)
     return _build_login_response(user=user, tokens=tokens)
 
 
 def refresh_session(*, refresh_token: str) -> LoginAccountResponse:
-    user = auth_service.resolve_token(refresh_token, expected_type="refresh")
-    tokens = auth_service.issue_tokens(user)
+    user, tokens = auth_service.rotate_refresh_token(refresh_token)
     return _build_login_response(user=user, tokens=tokens)
+
+
+def logout_session(*, access_token: str) -> None:
+    auth_user = _resolve_authenticated_user(access_token=access_token)
+    auth_service.revoke_session(auth_user.session_id)
+
+
+def get_current_user(*, access_token: str) -> CurrentUserResponse:
+    auth_user = _resolve_authenticated_user(access_token=access_token)
+    return CurrentUserResponse(
+        user_id=auth_user.user_id,
+        email=auth_user.email,
+        username=auth_user.username,
+        profession=auth_user.profession,
+    )
 
 
 def _build_login_response(
@@ -141,6 +162,8 @@ def _build_login_response(
         access_token=tokens.access_token,
         refresh_token=tokens.refresh_token,
         token_type=tokens.token_type,
+        expires_in=tokens.expires_in,
+        refresh_expires_in=tokens.refresh_expires_in,
         user_id=user.id,
         email=user.email,
         username=username if isinstance(username, str) else "",
@@ -148,7 +171,14 @@ def _build_login_response(
     )
 
 
-def create_account(*, email: str, password: str, username: str, profession: str) -> CreateAccountResponse:
+def create_account(
+    *,
+    email: str,
+    password: str,
+    username: str,
+    profession: str,
+    user_agent: str | None = None,
+) -> CreateAccountResponse:
     with db.transaction() as cursor:
         auth_user = auth_service.insert_auth_user(
             cursor,
@@ -171,9 +201,12 @@ def create_account(*, email: str, password: str, username: str, profession: str)
         )
         profile_row = cursor.fetchone()
         if profile_row is None:
-            raise DataServiceError(f"Username {username} is already taken.")
+            raise AccountConflictError(f"Username {username} is already taken.")
+        tokens = auth_service.issue_tokens(auth_user, user_agent=user_agent, cursor=cursor)
 
+    login_response = _build_login_response(user=auth_user, tokens=tokens)
     return CreateAccountResponse(
+        **login_response.model_dump(),
         auth_user_id=auth_user.id,
         profile=UserProfileRecord.model_validate(db.normalize_rows([profile_row])[0]),
     )
@@ -1755,12 +1788,13 @@ def _resolve_authenticated_user(
     *,
     access_token: str,
 ) -> AuthenticatedUser:
-    auth_user = auth_service.resolve_token(access_token, expected_type="access")
+    auth_user = auth_service.resolve_token(access_token)
     metadata_username = auth_user.user_metadata.get("username")
     profession = auth_user.user_metadata.get("profession")
 
     return AuthenticatedUser(
         user_id=auth_user.id,
+        session_id=auth_user.session_id or "",
         email=auth_user.email,
         username=metadata_username.strip() if isinstance(metadata_username, str) else "",
         profession=profession.strip() if isinstance(profession, str) else "",
