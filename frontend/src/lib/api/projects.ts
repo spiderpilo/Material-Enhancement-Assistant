@@ -1,3 +1,4 @@
+import { authorizedFetch } from "@/lib/api/auth";
 import type { CourseContentRecord } from "@/lib/api/course-content";
 import { getApiBaseUrl } from "@/lib/api/course-content";
 import type { GeneratedQuiz } from "@/lib/api/quiz";
@@ -69,7 +70,7 @@ type ListGeneratedQuizHistoryResponse = {
 
 export async function listProjects(accessToken: string, limit?: number): Promise<ProjectSummary[]> {
   const query = typeof limit === "number" ? `?limit=${limit}` : "";
-  const response = await fetch(`${getApiBaseUrl()}/projects${query}`, {
+  const response = await authorizedFetch(`${getApiBaseUrl()}/projects${query}`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -91,7 +92,7 @@ export async function getProject({
   accessToken: string;
   projectUuid: string;
 }): Promise<Project> {
-  const response = await fetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}`, {
+  const response = await authorizedFetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}`, {
     method: "GET",
     cache: "no-store",
     headers: {
@@ -113,7 +114,7 @@ export async function createProject({
   const trimmedName = typeof name === "string" ? name.trim() : "";
   const requestBody = trimmedName ? { name: trimmedName } : {};
 
-  const response = await fetch(`${getApiBaseUrl()}/projects`, {
+  const response = await authorizedFetch(`${getApiBaseUrl()}/projects`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -134,7 +135,7 @@ export async function updateProjectTitle({
   projectUuid: string;
   name: string;
 }): Promise<Project> {
-  const response = await fetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}`, {
+  const response = await authorizedFetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}`, {
     method: "PATCH",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -153,7 +154,7 @@ export async function deleteProject({
   accessToken: string;
   projectUuid: string;
 }): Promise<void> {
-  const response = await fetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}`, {
+  const response = await authorizedFetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}`, {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -177,7 +178,7 @@ export async function listGeneratedMaterials({
   tool?: "quiz";
 }): Promise<GeneratedQuizHistoryRecord[]> {
   const query = new URLSearchParams({ tool }).toString();
-  const response = await fetch(
+  const response = await authorizedFetch(
     `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/generated-materials?${query}`,
     {
       method: "GET",
@@ -208,7 +209,7 @@ export async function askProjectQuestion({
   selectedMaterialId?: number | null;
   selectedMaterialIds?: number[] | null;
 }): Promise<ProjectChatResponse> {
-  const response = await fetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/chat`, {
+  const response = await authorizedFetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/chat`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -243,7 +244,7 @@ export async function getProjectChatHistory({
   accessToken: string;
   projectUuid: string;
 }): Promise<ProjectChatHistoryResponse> {
-  const response = await fetch(
+  const response = await authorizedFetch(
     `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/chat`,
     {
       method: "GET",
@@ -268,7 +269,7 @@ export async function clearProjectChatHistory({
   accessToken: string;
   projectUuid: string;
 }): Promise<void> {
-  const response = await fetch(
+  const response = await authorizedFetch(
     `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/chat`,
     {
       method: "DELETE",

@@ -5,6 +5,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { ChevronDownIcon } from "@/components/material-enhancement/icons";
+import { storeSession, type SessionTokens } from "@/lib/api/auth";
+
+type CreateAccountPayload = SessionTokens & {
+  auth_user_id: string;
+  profile: { username: string };
+};
 
 const backendUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ||
@@ -43,20 +49,22 @@ export function CreateAccountForm() {
 
       const payload = (await response.json()) as
         | { detail?: string }
-        | { auth_user_id: string; profile: { username: string } };
+        | CreateAccountPayload;
 
       if (!response.ok) {
         throw new Error("detail" in payload && payload.detail ? payload.detail : "An error occurred");
       }
 
-      const successPayload = payload as { auth_user_id: string; profile: { username: string } };
+      const successPayload = payload as CreateAccountPayload;
+      // Account creation signs the user in, so go straight to the dashboard.
+      storeSession(successPayload);
 
-      setSuccess(`Account created successfully for ${successPayload.profile.username}. Redirecting to login...`);
+      setSuccess(`Account created successfully for ${successPayload.profile.username}. Opening your dashboard...`);
       setEmail("");
       setUsername("");
       setPassword("");
       setRole("student");
-      router.push("/login");
+      router.push("/dashboard");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "An error occurred");
     } finally {

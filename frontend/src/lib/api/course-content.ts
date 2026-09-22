@@ -1,3 +1,5 @@
+import { authorizedFetch } from "@/lib/api/auth";
+
 export const MAX_COURSE_CONTENT_UPLOAD_BYTES = 50 * 1024 * 1024;
 export const SUPPORTED_COURSE_CONTENT_EXTENSIONS = ["pdf", "docx", "pptx"] as const;
 export const SUPPORTED_COURSE_CONTENT_ACCEPT = ".pdf,.docx,.pptx";
@@ -70,7 +72,7 @@ export async function uploadCourseContent({
   formData.append("project_id", String(projectId));
   formData.append("file", file);
 
-  const response = await fetch(`${getApiBaseUrl()}/upload-doc`, {
+  const response = await authorizedFetch(`${getApiBaseUrl()}/upload-doc`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -97,7 +99,7 @@ export async function getCourseContentPreview(
   courseContentId: number,
   accessToken: string,
 ): Promise<CourseContentPreviewManifest> {
-  const response = await fetch(`${getApiBaseUrl()}/course-contents/${courseContentId}/preview`, {
+  const response = await authorizedFetch(`${getApiBaseUrl()}/course-contents/${courseContentId}/preview`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -119,6 +121,43 @@ export async function getCourseContentPreview(
   return payload as CourseContentPreviewManifest;
 }
 
+export type CourseContentFile = {
+  course_content_id: number;
+  material_name: string;
+  source_type?: CourseContentSourceType | null;
+  url: string;
+  content_type?: string | null;
+  size?: number | null;
+};
+
+// Resolves the original upload. The API checks the object exists first, so a missing
+// file surfaces as a readable error instead of the storage provider's XML error page.
+export async function getCourseContentFile(
+  courseContentId: number,
+  accessToken: string,
+): Promise<CourseContentFile> {
+  const response = await authorizedFetch(`${getApiBaseUrl()}/course-contents/${courseContentId}/file`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as
+    | CourseContentFile
+    | { detail?: string };
+
+  if (!response.ok) {
+    throw new Error(
+      "detail" in payload && payload.detail
+        ? payload.detail
+        : "Unable to load the original file.",
+    );
+  }
+
+  return payload as CourseContentFile;
+}
+
 export async function renameCourseContent({
   accessToken,
   courseContentId,
@@ -128,7 +167,7 @@ export async function renameCourseContent({
   courseContentId: number;
   materialName: string;
 }): Promise<CourseContentRecord> {
-  const response = await fetch(`${getApiBaseUrl()}/course-contents/${courseContentId}`, {
+  const response = await authorizedFetch(`${getApiBaseUrl()}/course-contents/${courseContentId}`, {
     method: "PATCH",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -159,7 +198,7 @@ export async function deleteCourseContent({
   accessToken: string;
   courseContentId: number;
 }): Promise<void> {
-  const response = await fetch(`${getApiBaseUrl()}/course-contents/${courseContentId}`, {
+  const response = await authorizedFetch(`${getApiBaseUrl()}/course-contents/${courseContentId}`, {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${accessToken}`,

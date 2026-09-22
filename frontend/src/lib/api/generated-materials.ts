@@ -1,3 +1,4 @@
+import { authorizedFetch } from "@/lib/api/auth";
 import { getApiBaseUrl } from "@/lib/api/course-content";
 
 export type GeneratedMaterial = {
@@ -32,7 +33,7 @@ export async function listGeneratedMaterials({
   accessToken: string;
   projectUuid: string;
 }): Promise<GeneratedMaterial[]> {
-  const response = await fetch(
+  const response = await authorizedFetch(
     `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/generated-materials`,
     {
       method: "GET",
@@ -72,7 +73,7 @@ export async function generateSlideDeck({
   materialIds: number[];
   slideCount?: number;
 }): Promise<GeneratedMaterial> {
-  const response = await fetch(
+  const response = await authorizedFetch(
     `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/slide-decks/generate`,
     {
       method: "POST",
@@ -114,7 +115,7 @@ export async function getGeneratedMaterialDownload({
   generatedMaterialUuid: string;
 }): Promise<DownloadGeneratedMaterialResponse> {
   const searchParams = new URLSearchParams({ format });
-  const response = await fetch(
+  const response = await authorizedFetch(
     `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/generated-materials/${encodeURIComponent(generatedMaterialUuid)}/download?${searchParams.toString()}`,
     {
       method: "GET",
