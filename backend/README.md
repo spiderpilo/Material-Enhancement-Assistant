@@ -126,13 +126,15 @@ Fresh database:
 psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f backend/database/neon/schema.sql
 ```
 
-`schema.sql` is the Neon baseline (pgvector, all `public` tables/functions, and `auth_users`). Dated migrations before `20260922` are the Supabase history that produced it and do not need to be replayed. Apply the later ones in order, then backfill preview state:
+`schema.sql` is the Neon baseline (pgvector, all `public` tables/functions, and `auth_users`). Dated migrations before `20260922` are the Supabase history that produced it and do not need to be replayed. Apply the later ones with the tracked runner, then backfill preview state:
 
 ```bash
-backend/.venv/bin/python backend/database/apply_migration.py backend/database/migrations/20260922_perf_indexes_preview_state_auth_sessions.sql
-backend/.venv/bin/python backend/database/apply_migration.py backend/database/migrations/20260923_projects_owner_index_nulls_last.sql
+backend/.venv/bin/python backend/database/migrate.py --dry-run   # list pending
+backend/.venv/bin/python backend/database/migrate.py             # apply and record in schema_migrations
 backend/.venv/bin/python backend/scripts/backfill_preview_state.py --regenerate-missing
 ```
+
+`migrate.py` uses `DIRECT_URL` (it refuses `-pooler` hosts), holds an advisory lock so only one run applies at a time, and refuses to continue if an applied file has been edited. New migrations go in `backend/database/migrations/` with a later date prefix and must be idempotent (`IF NOT EXISTS`, guarded `DO` blocks). In production, run them from the **Migrate database** GitHub workflow (see the root README).
 
 The migration files document which queries each index serves.
 
@@ -151,7 +153,7 @@ The migration files document which queries each index serves.
    psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f backend/database/neon/out/neon_restore.sql
    ```
 
-3. Copy files out of Supabase Storage (needs `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET` plus the S3 settings):
+3. Copy files out of Supabase Storage. The script needs `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET` plus the S3 settings. These one-off variables are deliberately left out of `.env.example`, so export them in your shell for this step only:
 
    ```bash
    backend/.venv/bin/python backend/scripts/migrate_supabase_storage.py --dry-run
@@ -166,7 +168,11 @@ The migration files document which queries each index serves.
 
 Existing users keep their passwords but must sign in again: Supabase-issued tokens are not accepted. `backend/database/neon/out/` is gitignored because it contains user data and password hashes.
 
-## Project Schema Migration (UUID Contract + Legacy Constraint Relax)
+## Legacy Migrations (pre-Neon databases only)
+
+The sections below apply only to an old Supabase-era database that is not yet at the `schema.sql` baseline. They use `apply_migration.py`, which runs one file and does not record it.
+
+### Project Schema Migration (UUID Contract + Legacy Constraint Relax)
 
 If an older database's `projects` table still uses legacy columns (`owner_auth_user_id`, `created_on`, `created_by`),
 apply the migrations below to add and backfill UUID-contract columns used by the current app
@@ -222,7 +228,9 @@ backend/scripts/test_db.sh stop
 
 ## Docker Run
 
-From the repository root:
+The production image binds to `$PORT` (Render sets 10000; the default is 8000), runs as a non-root user, and exposes `/health` (liveness plus the `version` = git SHA) and `/health/db` (Neon connectivity, 503 without details on failure). Set `CORS_ALLOWED_ORIGINS` to the frontend origin in any deployed environment.
+
+For local development, from the repository root:
 
 ```bash
 cp .env.example .env
