@@ -1,0 +1,113 @@
+name: Deploy
+
+# Every merge to main re-runs CI on the merged commit, pushes the images that CI
+# built and smoke-tested, and deploys only the services whose code changed.
+# Manual runs redeploy both services from the current main.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # Explicit bash turns on -o pipefail; the implicit default shell does not.
+    shell: bash
+
+concurrency:
+  # One production deploy at a time; never cancel one halfway through.
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: read
+    with:
+      all: ${{ github.event_name == 'workflow_dispatch' }}
+      push: true
+
+  migrations:
+    name: Check migrations applied
+    needs: ci
+    if: needs.ci.outputs.backend-image != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --disable-pip-version-check "$(grep '^psycopg2-binary==' backend/requirements.txt)"
+      - name: Fail if migrations are pending
+        env:
+          DIRECT_URL: ${{ secrets.NEON_DIRECT_URL }}
+        run: python backend/database/migrate.py --check
+
+  backend:
+    name: Deploy backend
+    needs: [ci, migrations]
+    if: needs.ci.outputs.backend-image != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    environment:
+      name: production
+      url: ${{ vars.BACKEND_URL }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Deploy to Render and wait until live
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_BACKEND_DEPLOY_HOOK }}
+        run: bash .github/scripts/render_deploy.sh "${{ needs.ci.outputs.backend-image }}" "${{ vars.BACKEND_URL }}" /health "$GITHUB_SHA"
+      - name: Verify Neon connectivity from Render
+        run: |
+          status="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "${{ vars.BACKEND_URL }}/health/db")"
+          test "$status" = 200 || { echo "::error::/health/db returned $status; check DATABASE_URL on the Render backend service."; exit 1; }
+      - name: Point :main at the live image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ needs.ci.outputs.backend-image }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx imagetools create --tag "${IMAGE%:*}:main" "$IMAGE"
+
+  frontend:
+    name: Deploy frontend
+    needs: [ci, migrations, backend]
+    # After the backend when both changed; alone when only the frontend did. A failed
+    # migration gate skips (not fails) the backend job, so check it explicitly.
+    if: >-
+      ${{ !cancelled() && needs.ci.result == 'success' && needs.ci.outputs.frontend-image != ''
+      && needs.migrations.result != 'failure' && needs.backend.result != 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    environment:
+      name: production
+      url: ${{ vars.FRONTEND_URL }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Deploy to Render and wait until live
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK }}
+        run: bash .github/scripts/render_deploy.sh "${{ needs.ci.outputs.frontend-image }}" "${{ vars.FRONTEND_URL }}" /api/health "$GITHUB_SHA"
+      - name: Point :main at the live image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ needs.ci.outputs.frontend-image }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx imagetools create --tag "${IMAGE%:*}:main" "$IMAGE"

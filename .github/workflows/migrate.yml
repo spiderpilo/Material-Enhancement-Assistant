@@ -1,0 +1,46 @@
+name: Migrate database
+
+# Applies pending Neon migrations on purpose, never as a side effect of a deploy.
+# Protect the "production" environment with required reviewers so each run is approved.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Apply pending migrations (unchecked = dry run that only lists them)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # Explicit bash turns on -o pipefail; the implicit default shell does not.
+    shell: bash
+
+concurrency:
+  group: migrate-production
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --disable-pip-version-check "$(grep '^psycopg2-binary==' backend/requirements.txt)"
+      - name: ${{ inputs.apply && 'Apply pending migrations' || 'List pending migrations' }}
+        env:
+          DIRECT_URL: ${{ secrets.NEON_DIRECT_URL }}
+          MODE: ${{ inputs.apply && 'apply' || 'dry-run' }}
+        run: |
+          if [ "$MODE" = apply ]; then
+            python backend/database/migrate.py
+          else
+            python backend/database/migrate.py --dry-run
+          fi

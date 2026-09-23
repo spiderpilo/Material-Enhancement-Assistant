@@ -10,7 +10,7 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-Set this in the repo-root `.env` when the backend runs on a non-default URL:
+Set this in `frontend/.env.local` (or the repo-root `.env` when using Docker Compose) when the backend runs on a non-default URL. It is inlined into the client bundle at build time, so production images take it as a Docker build arg:
 
 ```bash
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000

@@ -11,16 +11,17 @@ load_dotenv(ROOT_DIR / ".env")
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
 DEFAULT_GEMINI_EMBEDDING_DIMENSIONS = 768
-GEMINI_ENV_VARS = (
-    "GOOGLE_GEMINI_API_KEY",
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
-)
 
 
 DEFAULT_JWT_ACCESS_TOKEN_TTL_SECONDS = 3600
 DEFAULT_JWT_REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30
 MIN_JWT_SECRET_LENGTH = 32
+
+DEFAULT_CORS_ALLOWED_ORIGINS = (
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://0.0.0.0:3000",
+)
 
 
 @dataclass(frozen=True)
@@ -45,12 +46,9 @@ class AuthSettings:
     refresh_token_ttl_seconds: int
 
 
-def get_gemini_api_key() -> str:
-    for env_var in GEMINI_ENV_VARS:
-        value = os.getenv(env_var)
-        if value:
-            return value
-    return None
+def get_gemini_api_key() -> str | None:
+    value = os.getenv("GOOGLE_GEMINI_API_KEY")
+    return value.strip() if value and value.strip() else None
 
 
 def get_gemini_embedding_model() -> str:
@@ -69,6 +67,21 @@ def get_gemini_embedding_dimensions() -> int:
         return DEFAULT_GEMINI_EMBEDDING_DIMENSIONS
 
     return dimensions if dimensions > 0 else DEFAULT_GEMINI_EMBEDDING_DIMENSIONS
+
+
+def get_cors_allowed_origins() -> list[str]:
+    """Comma-separated CORS_ALLOWED_ORIGINS; local frontend origins when unset."""
+    value = os.getenv("CORS_ALLOWED_ORIGINS")
+    if not value or not value.strip():
+        return list(DEFAULT_CORS_ALLOWED_ORIGINS)
+
+    return [origin.strip().rstrip("/") for origin in value.split(",") if origin.strip()]
+
+
+def get_app_version() -> str:
+    """Build identifier (git SHA) baked into the image; lets deploys verify what is live."""
+    value = os.getenv("APP_VERSION")
+    return value.strip() if value and value.strip() else "dev"
 
 
 def get_database_settings() -> DatabaseSettings:

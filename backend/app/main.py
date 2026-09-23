@@ -1,10 +1,20 @@
+import logging
+
 from fastapi import FastAPI
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.account import router as account_router
 from app.api.projects import router as projects_router
 from app.api.quiz import router as quiz_router
 from app.api.upload import router as upload_router
+from app.config import get_app_version, get_cors_allowed_origins
+from app.services import db
+from app.services.errors import DataServiceError, MissingConfigError
+
+
+logger = logging.getLogger(__name__)
 
 
 OPENAPI_TAGS = [
@@ -34,11 +44,7 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://0.0.0.0:3000",
-    ],
+    allow_origins=get_cors_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -54,4 +60,20 @@ async def root() -> dict[str, str]:
 
 @app.get("/health", tags=["System"], summary="Health check")
 async def health_check() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "version": get_app_version()}
+
+
+@app.get(
+    "/health/db",
+    tags=["System"],
+    summary="Database connectivity check",
+    responses={503: {"description": "The database is unreachable or not configured."}},
+)
+async def database_health_check() -> JSONResponse:
+    # Not the platform health check: a Neon blip should not restart the container.
+    try:
+        await run_in_threadpool(db.fetch_one, "SELECT 1")
+    except (DataServiceError, MissingConfigError) as exc:
+        logger.warning("Database health check failed: %s", exc)
+        return JSONResponse({"status": "unavailable"}, status_code=503)
+    return JSONResponse({"status": "ok"})
