@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    # Explicit bash turns on -o pipefail; the implicit default shell does not.
+    shell: bash
+
 concurrency:
   # One production deploy at a time; never cancel one halfway through.
   group: deploy-production

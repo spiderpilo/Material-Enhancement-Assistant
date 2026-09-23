@@ -24,6 +24,11 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    # Explicit bash turns on -o pipefail; the implicit default shell does not.
+    shell: bash
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -114,7 +119,6 @@ jobs:
       - name: Run tests
         # Skipped tests usually mean TEST_DATABASE_URL was not picked up; treat that as a failure.
         run: |
-          set -o pipefail
           python -m pytest -q -ra | tee pytest.log
           if grep -Eq '[0-9]+ skipped' pytest.log; then
             echo "::error::Tests were skipped; integration tests must run in CI."
@@ -176,8 +180,10 @@ jobs:
       - name: Smoke test container on Render's port
         run: |
           docker run -d --name backend -p 8000:10000 -e PORT=10000 mea-backend:ci
+          version=""
           for _ in $(seq 1 30); do
-            if version="$(curl -fsS localhost:8000/health | jq -r .version)"; then break; fi
+            version="$(curl -fsS localhost:8000/health 2>/dev/null | jq -r '.version // empty' 2>/dev/null || true)"
+            [ -n "$version" ] && break
             sleep 2
           done
           test "${version:-}" = "$GITHUB_SHA" || { echo "::error::/health returned '${version:-nothing}', expected $GITHUB_SHA"; exit 1; }
@@ -237,8 +243,10 @@ jobs:
       - name: Smoke test container on Render's port
         run: |
           docker run -d --name frontend -p 3000:10000 -e PORT=10000 mea-frontend:ci
+          version=""
           for _ in $(seq 1 30); do
-            if version="$(curl -fsS localhost:3000/api/health | jq -r .version)"; then break; fi
+            version="$(curl -fsS localhost:3000/api/health 2>/dev/null | jq -r '.version // empty' 2>/dev/null || true)"
+            [ -n "$version" ] && break
             sleep 2
           done
           test "${version:-}" = "$GITHUB_SHA" || { echo "::error::/api/health returned '${version:-nothing}', expected $GITHUB_SHA"; exit 1; }
