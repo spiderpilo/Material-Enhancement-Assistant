@@ -102,3 +102,44 @@ function withAccessToken(init: RequestInit, accessToken: string | null): Request
   }
   return { ...init, headers };
 }
+
+export type OAuthProvider = "google" | "github";
+
+/** Full-page navigation target that starts Google or GitHub sign-in on the API. */
+export function oauthAuthorizeUrl(provider: OAuthProvider): string {
+  return `${getApiBaseUrl()}/oauth/${provider}/authorize`;
+}
+
+/** Trade the one-time code from the OAuth redirect for a session and store it. */
+export async function exchangeOAuthCode(code: string): Promise<void> {
+  const response = await fetch(`${getApiBaseUrl()}/oauth/exchange`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const payload = (await response.json().catch(() => ({}))) as Partial<SessionTokens> & { detail?: string };
+
+  if (!response.ok || !payload.access_token || !payload.refresh_token) {
+    throw new Error(payload.detail || "Unable to finish signing in.");
+  }
+  storeSession({ access_token: payload.access_token, refresh_token: payload.refresh_token });
+}
+
+/** Create the account for a first-time Google/GitHub sign-in and store its session. */
+export async function completeOAuthSignup(input: {
+  ticket: string;
+  username: string;
+  profession: "student" | "professor";
+}): Promise<void> {
+  const response = await fetch(`${getApiBaseUrl()}/oauth/complete-signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const payload = (await response.json().catch(() => ({}))) as Partial<SessionTokens> & { detail?: unknown };
+
+  if (!response.ok || !payload.access_token || !payload.refresh_token) {
+    throw new Error(typeof payload.detail === "string" ? payload.detail : "Unable to create your account.");
+  }
+  storeSession({ access_token: payload.access_token, refresh_token: payload.refresh_token });
+}

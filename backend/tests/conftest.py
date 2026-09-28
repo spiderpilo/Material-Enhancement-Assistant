@@ -53,6 +53,7 @@ MIGRATIONS_AFTER_SCHEMA = sorted(
     if path.name >= "20260922"
 )
 DATA_TABLES = (
+    "auth_identities",
     "auth_sessions",
     "course_content_chunks",
     "project_chat_memory",

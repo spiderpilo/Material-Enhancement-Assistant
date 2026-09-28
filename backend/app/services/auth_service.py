@@ -11,6 +11,11 @@ its id as ``sid``:
   logout takes effect immediately;
 * refresh tokens rotate on every use. Only the session's ``current_refresh_jti`` is
   accepted; replaying an older refresh token revokes the whole session.
+
+Google and GitHub sign-in link provider accounts through ``auth_identities``. The OAuth
+callback runs on the API origin, so it hands the browser a one-time *login code* instead
+of tokens: a two-minute JWT carrying the new session's refresh jti, redeemed exactly like
+a refresh token (and revoking the session if replayed).
 """
 
 from __future__ import annotations
@@ -40,8 +45,11 @@ JWT_ALGORITHM = "HS256"
 JWT_AUDIENCE = "authenticated"
 JWT_ISSUER = "material-enhancement-assistant"
 MAX_USER_AGENT_LENGTH = 512
+LOGIN_CODE_TTL_SECONDS = 120
+# bcrypt never produces this, so password login is impossible for OAuth-only users.
+UNUSABLE_PASSWORD = "!oauth"
 
-TokenType = Literal["access", "refresh"]
+TokenType = Literal["access", "refresh", "login_code"]
 
 
 @dataclass(frozen=True)
@@ -111,7 +119,7 @@ def authenticate(*, email: str, password: str) -> AuthUser:
     )
     encrypted_password = row.get("encrypted_password") if row else None
 
-    if not isinstance(encrypted_password, str) or not encrypted_password:
+    if not isinstance(encrypted_password, str) or not encrypted_password.startswith("$2"):
         # Spend the same bcrypt time as a real check so response timing does not
         # reveal which emails are registered.
         bcrypt.checkpw(password.encode("utf-8"), _dummy_password_hash())
@@ -168,6 +176,45 @@ def rotate_refresh_token(refresh_token: str) -> tuple[AuthUser, IssuedTokens]:
     """Exchange a refresh token for a new pair, invalidating the presented one."""
     settings = _get_settings()
     claims = _decode_claims(refresh_token, expected_type="refresh", settings=settings)
+    return _rotate_session(claims, settings=settings)
+
+
+def issue_login_code(user: AuthUser, *, user_agent: str | None = None) -> str:
+    """Start a session for ``user`` and return a short-lived code that redeems it once."""
+    settings = _get_settings()
+    session_id = str(uuid.uuid4())
+    refresh_jti = str(uuid.uuid4())
+    db.execute(
+        """
+        INSERT INTO public.auth_sessions (id, user_id, current_refresh_jti, expires_at, user_agent)
+        VALUES (%s::uuid, %s::uuid, %s::uuid, now() + make_interval(secs => %s), %s)
+        """,
+        (
+            session_id,
+            user.id,
+            refresh_jti,
+            settings.refresh_token_ttl_seconds,
+            (user_agent or "")[:MAX_USER_AGENT_LENGTH] or None,
+        ),
+    )
+    return _encode_token(
+        user,
+        "login_code",
+        LOGIN_CODE_TTL_SECONDS,
+        settings.jwt_secret,
+        session_id=session_id,
+        jti=refresh_jti,
+    )
+
+
+def redeem_login_code(code: str) -> tuple[AuthUser, IssuedTokens]:
+    """Exchange a login code for the session's first token pair. A second redeem revokes it."""
+    settings = _get_settings()
+    claims = _decode_claims(code, expected_type="login_code", settings=settings)
+    return _rotate_session(claims, settings=settings)
+
+
+def _rotate_session(claims: dict[str, Any], *, settings) -> tuple[AuthUser, IssuedTokens]:
     session_id, user_id, presented_jti = claims["sid"], claims["sub"], claims["jti"]
     next_jti = str(uuid.uuid4())
 
@@ -214,6 +261,138 @@ def rotate_refresh_token(refresh_token: str) -> tuple[AuthUser, IssuedTokens]:
 
     user = _build_auth_user(row, session_id=session_id)
     return user, _encode_token_pair(user, session_id=session_id, refresh_jti=next_jti, settings=settings)
+
+
+def find_user_by_identity(
+    *,
+    provider: str,
+    provider_user_id: str,
+    verified_email: str | None,
+) -> AuthUser | None:
+    """Return the user behind a provider account, linking it by verified email on first use.
+
+    ``verified_email`` must only be passed when the provider vouches for the address;
+    linking on an unverified email would let anyone claim an existing account.
+    """
+    row = db.fetch_one(
+        """
+        WITH identity AS (
+            UPDATE public.auth_identities
+            SET last_sign_in_at = now()
+            WHERE provider = %s AND provider_user_id = %s
+            RETURNING user_id
+        )
+        SELECT u.id, u.email, u.user_metadata
+        FROM identity
+        JOIN public.auth_users AS u ON u.id = identity.user_id
+        WHERE u.deleted_at IS NULL
+        """,
+        (provider, provider_user_id),
+    )
+    if row is None and verified_email:
+        row = db.fetch_one(
+            """
+            WITH account AS (
+                SELECT id, email, user_metadata
+                FROM public.auth_users
+                WHERE email = %(email)s AND deleted_at IS NULL
+            ), linked AS (
+                INSERT INTO public.auth_identities (user_id, provider, provider_user_id, email, last_sign_in_at)
+                SELECT id, %(provider)s, %(provider_user_id)s, %(email)s, now() FROM account
+                ON CONFLICT (provider, provider_user_id) DO NOTHING
+                RETURNING user_id
+            )
+            SELECT account.id, account.email, account.user_metadata
+            FROM account JOIN linked ON linked.user_id = account.id
+            """,
+            {
+                "email": normalize_email(verified_email),
+                "provider": provider,
+                "provider_user_id": provider_user_id,
+            },
+        )
+    if row is None:
+        return None
+
+    db.execute(
+        "UPDATE public.auth_users SET last_sign_in_at = now() WHERE id = %s::uuid",
+        (row["id"],),
+    )
+    return _build_auth_user(db.normalize_rows([row])[0])
+
+
+def insert_oauth_user(
+    cursor: psycopg2.extras.RealDictCursor,
+    *,
+    email: str,
+    provider: str,
+    provider_user_id: str,
+    user_metadata: dict[str, Any],
+) -> AuthUser:
+    """Create a password-less user linked to a provider account, in the caller's transaction."""
+    normalized_email = normalize_email(email)
+    cursor.execute(
+        """
+        INSERT INTO public.auth_users (email, encrypted_password, user_metadata, email_confirmed_at, last_sign_in_at)
+        VALUES (%s, %s, %s, now(), now())
+        ON CONFLICT DO NOTHING
+        RETURNING id, email, user_metadata
+        """,
+        (normalized_email, UNUSABLE_PASSWORD, db.json_param(user_metadata)),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise AccountConflictError("An account with this email address already exists. Sign in instead.")
+
+    cursor.execute(
+        """
+        INSERT INTO public.auth_identities (user_id, provider, provider_user_id, email, last_sign_in_at)
+        VALUES (%s::uuid, %s, %s, %s, now())
+        ON CONFLICT (provider, provider_user_id) DO NOTHING
+        RETURNING id
+        """,
+        (row["id"], provider, provider_user_id, normalized_email),
+    )
+    if cursor.fetchone() is None:
+        raise AccountConflictError("This sign-in is already linked to an account. Sign in instead.")
+
+    return _build_auth_user(db.normalize_rows([row])[0])
+
+
+def encode_signed(purpose: str, claims: dict[str, Any], *, ttl_seconds: int) -> str:
+    """Sign short-lived, non-session data (OAuth state, signup tickets) with the JWT secret."""
+    settings = _get_settings()
+    issued_at = datetime.now(timezone.utc)
+    payload = {
+        **claims,
+        "aud": JWT_AUDIENCE,
+        "iss": JWT_ISSUER,
+        "typ": purpose,
+        "iat": issued_at,
+        "exp": issued_at + timedelta(seconds=ttl_seconds),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=JWT_ALGORITHM)
+
+
+def decode_signed(token: str | None, purpose: str) -> dict[str, Any]:
+    """Verify a token from :func:`encode_signed`; its ``typ`` must equal ``purpose``."""
+    settings = _get_settings()
+    if not token or not token.strip():
+        raise AuthenticationError("Sign in required.")
+    try:
+        claims = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[JWT_ALGORITHM],
+            audience=JWT_AUDIENCE,
+            issuer=JWT_ISSUER,
+            options={"require": ["exp", "iat", "typ"]},
+        )
+    except jwt.PyJWTError as exc:
+        raise AuthenticationError("Sign in required.") from exc
+    if claims.get("typ") != purpose:
+        raise AuthenticationError("Sign in required.")
+    return claims
 
 
 def revoke_session(session_id: str, *, reason: str = "logout") -> None:

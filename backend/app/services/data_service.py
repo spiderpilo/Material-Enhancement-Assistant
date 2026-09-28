@@ -15,6 +15,7 @@ import psycopg2.extras
 from pydantic import ValidationError
 
 from app.services import auth_service, db, storage_service
+from app.services.oauth_service import OAuthError, OAuthProfile
 from app.services.errors import (  # noqa: F401 - error types re-exported for API routes
     AccountConflictError,
     AuthenticationError,
@@ -72,6 +73,7 @@ GENERATED_MATERIALS_STORAGE_PREFIX = "generated-materials"
 PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 PDF_CONTENT_TYPE = "application/pdf"
 logger = logging.getLogger(__name__)
+OAUTH_SIGNUP_TICKET_TTL_SECONDS = 15 * 60
 LEGACY_PROJECTS_NOT_NULL_COLUMNS = ("created_by", "owner_auth_user_id")
 CHAT_MEMORY_LIMIT = 10
 
@@ -111,6 +113,14 @@ class AuthenticatedUser:
     email: str
     username: str
     profession: str
+
+
+@dataclass(frozen=True)
+class OAuthSignInResult:
+    """Exactly one is set: a login code for a known user, or a ticket to finish signing up."""
+
+    login_code: str | None = None
+    signup_ticket: str | None = None
 
 
 @dataclass(frozen=True)
@@ -197,24 +207,109 @@ def create_account(
                 "email_verified": True,
             },
         )
-        cursor.execute(
-            """
-            INSERT INTO public.users (username, profession, user_uuid)
-            VALUES (%s, %s, %s::uuid)
-            ON CONFLICT (username) DO NOTHING
-            RETURNING *
-            """,
-            (username, profession, auth_user.id),
-        )
-        profile_row = cursor.fetchone()
-        if profile_row is None:
-            raise AccountConflictError(f"Username {username} is already taken.")
+        profile_row = _insert_profile_row(cursor, username=username, profession=profession, user_uuid=auth_user.id)
         tokens = auth_service.issue_tokens(auth_user, user_agent=user_agent, cursor=cursor)
 
-    login_response = _build_login_response(user=auth_user, tokens=tokens)
+    return _build_create_account_response(user=auth_user, tokens=tokens, profile_row=profile_row)
+
+
+def sign_in_with_oauth(*, profile: OAuthProfile, user_agent: str | None = None) -> OAuthSignInResult:
+    """Sign in a returning provider account, or hand back a ticket to create a new one.
+
+    New accounts need a username and role the providers do not know, so they finish in
+    :func:`complete_oauth_signup`.
+    """
+    if not profile.email or not profile.email_verified:
+        raise OAuthError(
+            f"Your {profile.provider.title()} account has no verified email address. "
+            "Verify one with the provider, or create an account with a password."
+        )
+
+    user = auth_service.find_user_by_identity(
+        provider=profile.provider,
+        provider_user_id=profile.provider_user_id,
+        verified_email=profile.email,
+    )
+    if user is not None:
+        return OAuthSignInResult(login_code=auth_service.issue_login_code(user, user_agent=user_agent))
+
+    ticket = auth_service.encode_signed(
+        "oauth_signup",
+        {
+            "provider": profile.provider,
+            "provider_user_id": profile.provider_user_id,
+            "email": auth_service.normalize_email(profile.email),
+            "name": profile.name or "",
+        },
+        ttl_seconds=OAUTH_SIGNUP_TICKET_TTL_SECONDS,
+    )
+    return OAuthSignInResult(signup_ticket=ticket)
+
+
+def exchange_login_code(*, code: str) -> LoginAccountResponse:
+    user, tokens = auth_service.redeem_login_code(code)
+    return _build_login_response(user=user, tokens=tokens)
+
+
+def complete_oauth_signup(
+    *,
+    ticket: str,
+    username: str,
+    profession: str,
+    user_agent: str | None = None,
+) -> CreateAccountResponse:
+    claims = auth_service.decode_signed(ticket, "oauth_signup")
+    with db.transaction() as cursor:
+        auth_user = auth_service.insert_oauth_user(
+            cursor,
+            email=claims["email"],
+            provider=claims["provider"],
+            provider_user_id=claims["provider_user_id"],
+            user_metadata={
+                "username": username,
+                "profession": profession,
+                "email_verified": True,
+                "full_name": claims.get("name") or "",
+            },
+        )
+        profile_row = _insert_profile_row(cursor, username=username, profession=profession, user_uuid=auth_user.id)
+        tokens = auth_service.issue_tokens(auth_user, user_agent=user_agent, cursor=cursor)
+
+    return _build_create_account_response(user=auth_user, tokens=tokens, profile_row=profile_row)
+
+
+def _insert_profile_row(
+    cursor: psycopg2.extras.RealDictCursor,
+    *,
+    username: str,
+    profession: str,
+    user_uuid: str,
+) -> dict[str, Any]:
+    cursor.execute(
+        """
+        INSERT INTO public.users (username, profession, user_uuid)
+        VALUES (%s, %s, %s::uuid)
+        ON CONFLICT (username) DO NOTHING
+        RETURNING *
+        """,
+        (username, profession, user_uuid),
+    )
+    profile_row = cursor.fetchone()
+    if profile_row is None:
+        raise AccountConflictError(f"Username {username} is already taken.")
+    return profile_row
+
+
+def _build_create_account_response(
+    *,
+    user: auth_service.AuthUser,
+    tokens: auth_service.IssuedTokens,
+    profile_row: dict[str, Any],
+) -> CreateAccountResponse:
+    login_response = _build_login_response(user=user, tokens=tokens)
     return CreateAccountResponse(
         **login_response.model_dump(),
-        auth_user_id=auth_user.id,
+        auth_user_id=user.id,
         profile=UserProfileRecord.model_validate(db.normalize_rows([profile_row])[0]),
     )
 

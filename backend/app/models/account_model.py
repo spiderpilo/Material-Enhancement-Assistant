@@ -53,3 +53,13 @@ class LoginAccountRequest(BaseModel):
 
 class RefreshSessionRequest(BaseModel):
     refresh_token: str = Field(min_length=1, description="Refresh token from login, account creation, or the previous refresh.")
+
+
+class OAuthExchangeRequest(BaseModel):
+    code: str = Field(min_length=1, description="One-time login code from the OAuth callback redirect.")
+
+
+class OAuthSignupRequest(BaseModel):
+    ticket: str = Field(min_length=1, description="Signup ticket from the OAuth callback redirect.")
+    username: str = Field(min_length=1, max_length=80)
+    profession: ProfessionType

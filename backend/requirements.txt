@@ -53,7 +53,9 @@ httpcore2==2.13.1
 httptools==0.8.0
     # via uvicorn
 httpx==0.28.1
-    # via google-genai
+    # via
+    #   -r requirements.in
+    #   google-genai
 httpx2==2.13.1
     # via openai
 idna==3.20
