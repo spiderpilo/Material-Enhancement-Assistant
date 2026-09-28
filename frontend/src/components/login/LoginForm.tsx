@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -10,7 +10,7 @@ import {
   GoogleLogoIcon,
   MicrosoftLogoIcon,
 } from "@/components/login/LoginIcons";
-import { storeSession } from "@/lib/api/auth";
+import { oauthAuthorizeUrl, storeSession, type OAuthProvider } from "@/lib/api/auth";
 
 export function LoginForm() {
   const router = useRouter();
@@ -18,6 +18,24 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [redirectingTo, setRedirectingTo] = useState<OAuthProvider | null>(null);
+
+  useEffect(() => {
+    // Coming back from the provider with the Back button restores this page from the
+    // bfcache with the buttons still disabled.
+    const resetRedirect = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        setRedirectingTo(null);
+      }
+    };
+    window.addEventListener("pageshow", resetRedirect);
+    return () => window.removeEventListener("pageshow", resetRedirect);
+  }, []);
+
+  const startOAuth = (provider: OAuthProvider) => {
+    setRedirectingTo(provider);
+    window.location.assign(oauthAuthorizeUrl(provider));
+  };
 
   const backendUrl =
     process.env.NEXT_PUBLIC_API_BASE_URL ||
@@ -141,6 +159,8 @@ export function LoginForm() {
             <button
               type="button"
               aria-label="Continue with Google"
+              onClick={() => startOAuth("google")}
+              disabled={redirectingTo !== null}
               className="auth-social-button group flex h-[52px] items-center justify-center rounded-[16px] focus:outline-none"
             >
               <span className="flex h-5 w-5 items-center justify-center transition-transform duration-250 ease-out group-hover:scale-110">
@@ -150,6 +170,8 @@ export function LoginForm() {
             <button
               type="button"
               aria-label="Continue with GitHub"
+              onClick={() => startOAuth("github")}
+              disabled={redirectingTo !== null}
               className="auth-social-button group flex h-[52px] items-center justify-center rounded-[16px] focus:outline-none"
             >
               <span className="flex h-5 w-5 items-center justify-center transition-transform duration-250 ease-out group-hover:scale-110">
