@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from google import genai
+from google.genai import types
 
 from app.config import DEFAULT_GEMINI_MODEL, get_gemini_api_key
 from app.models.chat_model import ProjectChatMessageRecord
@@ -18,6 +19,21 @@ MAX_CHAT_INPUT_CHARS = 24000
 MAX_QUIZ_INPUT_CHARS = 24000
 MAX_SLIDE_INPUT_CHARS = 28000
 QUIZ_OPTION_LABELS = ("A", "B", "C", "D")
+# Gemini answers 503 "high demand" and 429 in bursts; a few backed-off retries
+# turn most of those into successes instead of a 502 for the user.
+GEMINI_RETRY_OPTIONS = types.HttpRetryOptions(
+    attempts=4,
+    initial_delay=1.0,
+    max_delay=8.0,
+    http_status_codes=[408, 429, 500, 502, 503, 504],
+)
+
+
+def _create_client(api_key: str) -> genai.Client:
+    return genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(retry_options=GEMINI_RETRY_OPTIONS),
+    )
 
 
 class MissingAPIKeyError(Exception):
@@ -48,7 +64,7 @@ def improve_clarity(text: str) -> str:
         )
 
     prompt = _build_prompt(text[:MAX_INPUT_CHARS])
-    client = genai.Client(api_key=api_key)
+    client = _create_client(api_key)
 
     try:
         response = client.models.generate_content(
@@ -89,7 +105,7 @@ def answer_project_question(
         materials=materials,
         history=history or [],
     )
-    client = genai.Client(api_key=api_key)
+    client = _create_client(api_key)
 
     try:
         response = client.models.generate_content(
@@ -136,7 +152,7 @@ def generate_quiz_with_usage(
         raise GeminiServiceError("At least one source material is required.")
 
     prompt = _build_quiz_prompt(materials=materials, question_count=question_count)
-    client = genai.Client(api_key=api_key)
+    client = _create_client(api_key)
 
     try:
         response = client.models.generate_content(
@@ -184,7 +200,7 @@ def generate_slide_deck_outline_with_usage(
         raise GeminiServiceError("At least one source material is required.")
 
     prompt = _build_slide_deck_prompt(materials=materials, slide_count=slide_count)
-    client = genai.Client(api_key=api_key)
+    client = _create_client(api_key)
 
     try:
         response = client.models.generate_content(
