@@ -39,6 +39,9 @@ services:
         sync: false
       - key: OPENAI_CHAT_MODEL
         value: gpt-5.5
+      # Slide deck outlines (Claude).
+      - key: ANTHROPIC_API_KEY
+        sync: false
       - key: S3_ENDPOINT_URL
         sync: false
       - key: S3_REGION

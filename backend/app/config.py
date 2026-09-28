@@ -62,6 +62,11 @@ def get_openai_chat_model() -> str:
     return value.strip() if value and value.strip() else DEFAULT_OPENAI_CHAT_MODEL
 
 
+def get_anthropic_api_key() -> str | None:
+    value = os.getenv("ANTHROPIC_API_KEY")
+    return value.strip() if value and value.strip() else None
+
+
 def get_gemini_embedding_model() -> str:
     value = os.getenv("GEMINI_EMBEDDING_MODEL")
     return value.strip() if value and value.strip() else DEFAULT_GEMINI_EMBEDDING_MODEL
