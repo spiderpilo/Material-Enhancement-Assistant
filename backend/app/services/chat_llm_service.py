@@ -30,7 +30,10 @@ CHAT_INSTRUCTIONS = (
     "If a source header gives a page range such as pages 5-11, cite that full range exactly. "
     "Do not infer or mention a single exact page from within a page range. "
     "Never mention internal retrieval chunks.\n"
-    "Keep the answer concise, direct, and helpful for a student or instructor."
+    "Keep the answer concise, direct, and helpful for a student or instructor.\n"
+    # The chat panel shows text as-is, so Markdown would appear as literal ** and #.
+    "Write plain text only: no Markdown such as **bold**, # headings, or tables. "
+    "Use simple hyphen lists when a list helps."
 )
 
 
