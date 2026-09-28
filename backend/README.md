@@ -11,7 +11,7 @@ The full, grouped contract is in Swagger UI at `http://127.0.0.1:8000/docs` (Ope
 | Authentication | `POST /create-account`, `POST /login-account`, `POST /refresh-token`, `POST /logout`, `GET /me` |
 | Projects | `GET/POST /projects`, `GET/PATCH/DELETE /projects/{project_uuid}` |
 | Course materials | `POST /upload-doc`, `GET /course-contents/{id}/preview`, `GET /course-contents/{id}/file`, `PATCH/DELETE /course-contents/{id}` |
-| Project chat | `GET/POST/DELETE /projects/{project_uuid}/chat` |
+| Project chat | `GET/POST/DELETE /projects/{project_uuid}/chat`, `POST /projects/{project_uuid}/chat/stream` |
 | Generated materials | `GET /projects/{project_uuid}/generated-materials`, `POST /projects/{project_uuid}/slide-decks/generate`, `GET .../generated-materials/{uuid}/download` |
 | Quiz | `POST /quiz/generate` |
 | System | `GET /`, `GET /health` |
@@ -103,6 +103,8 @@ If you already have a repo-root `.env`, keep it and make sure it contains:
 GOOGLE_GEMINI_API_KEY=your-gemini-api-key
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 GEMINI_EMBEDDING_DIMENSIONS=768
+DEEPSEEK_API_KEY=your-deepseek-api-key
+CEREBRAS_API_KEY=your-cerebras-api-key
 DATABASE_URL=postgresql://user:password@ep-xxxx-pooler.region.aws.neon.tech/neondb?sslmode=require
 DIRECT_URL=postgresql://user:password@ep-xxxx.region.aws.neon.tech/neondb?sslmode=require
 JWT_SECRET=at-least-32-random-characters
@@ -301,3 +303,28 @@ List recent projects:
 curl http://127.0.0.1:8000/projects?limit=10 \
   -H "Authorization: Bearer <mea_access_token>"
 ```
+
+Ask a project question and stream the answer (`-N` turns off curl's buffering):
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/projects/<project_uuid>/chat/stream \
+  -H "Authorization: Bearer <mea_access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"What database does the system use?","selected_material_ids":[31]}'
+```
+
+The response is `text/event-stream`. Each event is one `data:` line of JSON, in this order:
+
+```text
+data: {"type":"status","phase":"searching"}
+data: {"type":"sources","selection_mode":"rag_selected","sources":[{"id":31,"material_name":"Report.pdf","locations":["pages 1-2"]}]}
+data: {"type":"status","phase":"writing"}
+data: {"type":"delta","text":"The system uses"}
+data: {"type":"delta","text":" NeoDB..."}
+data: {"type":"done","messages":[...the saved conversation...]}
+```
+
+- When no indexed content matches, `writing` is skipped and a single `delta` carries the "no ready indexed content" notice.
+- A failure after the stream starts arrives as `{"type":"error","detail":"..."}`. Access and validation errors (401, 403, 404, 400) are normal HTTP errors returned before the stream opens.
+- The exchange is saved only on `done`.
+- The backend sends `X-Accel-Buffering: no` so nginx-style proxies pass events through immediately.

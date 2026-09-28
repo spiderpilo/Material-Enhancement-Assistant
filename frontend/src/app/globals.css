@@ -905,6 +905,176 @@ button:disabled {
   animation: center-chat-message-enter 200ms ease-out both;
 }
 
+/* Streaming chat: NotebookLM-style thinking orb, shimmering status, fading tokens. */
+@keyframes chat-user-enter {
+  from {
+    opacity: 0;
+    transform: translate(12px, 6px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes chat-token-enter {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+  }
+
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+@keyframes chat-source-chip-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.94);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes chat-status-swap {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes chat-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@keyframes chat-orb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes chat-orb-breathe {
+  0%,
+  100% {
+    transform: scale(0.72);
+  }
+
+  50% {
+    transform: scale(0.9);
+  }
+}
+
+@keyframes chat-caret-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.75);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-chat-user-enter {
+  transform-origin: bottom right;
+  animation: chat-user-enter 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* `backwards`, not `both`: a lingering filter on every finished token would cost a layer each. */
+.animate-chat-token {
+  animation: chat-token-enter 380ms ease-out backwards;
+}
+
+.animate-chat-source-chip {
+  animation: chat-source-chip-enter 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.chat-thinking-orb {
+  position: relative;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: conic-gradient(from 0deg, #ffaab8, #b8db80, #9ec5ff, #ffaab8);
+  box-shadow: 0 0 14px rgba(255, 170, 184, 0.35);
+  animation: chat-orb-spin 1.4s linear infinite;
+}
+
+.chat-thinking-orb::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #242830;
+  animation: chat-orb-breathe 1.4s ease-in-out infinite;
+}
+
+.chat-shimmer-text {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.45) 0%,
+    rgba(255, 255, 255, 0.45) 40%,
+    rgba(255, 255, 255, 0.95) 50%,
+    rgba(255, 255, 255, 0.45) 60%,
+    rgba(255, 255, 255, 0.45) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation:
+    chat-status-swap 240ms ease-out both,
+    chat-shimmer 1.8s linear infinite;
+}
+
+.chat-caret {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 5px;
+  border-radius: 9999px;
+  background: #ffaab8;
+  vertical-align: middle;
+  animation: chat-caret-pulse 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-center-chat-message-enter,
+  .animate-chat-user-enter,
+  .animate-chat-token,
+  .animate-chat-source-chip,
+  .chat-thinking-orb,
+  .chat-thinking-orb::after,
+  .chat-caret {
+    animation: none;
+  }
+
+  .chat-shimmer-text {
+    animation: none;
+    background: none;
+    color: rgba(255, 255, 255, 0.7);
+  }
+}
+
 .studio-scroll {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;

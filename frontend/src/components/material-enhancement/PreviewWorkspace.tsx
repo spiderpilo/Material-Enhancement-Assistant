@@ -7,9 +7,9 @@ import {
   getPreviewLabel,
 } from "@/lib/material-enhancement/workspace";
 import {
-  askProjectQuestion,
   clearProjectChatHistory,
   getProjectChatHistory,
+  streamProjectQuestion,
   type ProjectChatMessage,
   type ProjectChatSelectionMode,
   type ProjectChatSource,
@@ -47,9 +47,20 @@ type ChatMessage = {
   content: string;
   timestamp: string;
   sources?: ProjectChatSource[];
-  isLoading?: boolean;
   selectionMode?: ProjectChatSelectionMode | null;
+  /** React key that survives swapping a streamed message for its saved copy. */
+  renderKey?: string;
+  isStreaming?: boolean;
+  phase?: "searching" | "writing";
+  /** Answer text in the pieces it arrived in, so each piece can fade in. */
+  segments?: string[];
 };
+
+const WRITING_STATUS_LABELS = ["Connecting the key ideas", "Drafting an answer"];
+const STATUS_ROTATE_MS = 2400;
+
+// Stay pinned to the newest message unless the reader has scrolled further up than this.
+const STICK_TO_BOTTOM_THRESHOLD_PX = 96;
 
 export function PreviewWorkspace({
   onNavigate,
@@ -74,7 +85,10 @@ export function PreviewWorkspace({
   const [isNewConversationModalOpen, setIsNewConversationModalOpen] = useState(false);
   const [isResettingConversation, setIsResettingConversation] = useState(false);
   const [resetConversationError, setResetConversationError] = useState<string | null>(null);
-  const conversationEndRef = useRef<HTMLDivElement>(null);
+  const conversationScrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const autoScrollTopRef = useRef(0);
+  const streamAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     let isCancelled = false;
@@ -113,15 +127,18 @@ export function PreviewWorkspace({
 
     return () => {
       isCancelled = true;
+      streamAbortRef.current?.abort();
     };
   }, [projectUuid]);
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
-      conversationEndRef.current?.scrollIntoView({
-        behavior: messages.length > 1 ? "smooth" : "auto",
-        block: "end",
-      });
+      const container = conversationScrollRef.current;
+      // Instant, not smooth: a smooth scroll per streamed token lags and fights the reader.
+      if (container && stickToBottomRef.current) {
+        container.scrollTop = container.scrollHeight;
+        autoScrollTopRef.current = container.scrollTop;
+      }
     });
 
     return () => {
@@ -129,50 +146,99 @@ export function PreviewWorkspace({
     };
   }, [messages]);
 
-  const handleChatSubmit = async (message: string) => {
+  const handleConversationScroll = () => {
+    const container = conversationScrollRef.current;
+    if (!container) {
+      return;
+    }
+    // Streamed text can grow the list before this event fires, so distance alone would
+    // misread our own scroll as the reader leaving. Only scrolling up unpins.
+    if (container.scrollHeight - container.scrollTop - container.clientHeight < STICK_TO_BOTTOM_THRESHOLD_PX) {
+      stickToBottomRef.current = true;
+    } else if (container.scrollTop < autoScrollTopRef.current - 1) {
+      stickToBottomRef.current = false;
+    }
+  };
+
+  const handleChatSubmit = async (message: string): Promise<boolean> => {
+    const accessToken = getStoredAccessToken();
+    if (!accessToken) {
+      setChatMemoryError("Sign in to use the document assistant.");
+      return false;
+    }
+
     const userMessage = createChatMessage("user", message);
     const assistantMessageId = createMessageId();
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
+    stickToBottomRef.current = true;
 
+    setChatMemoryError(null);
+    setIsChatSubmitting(true);
     setMessages((currentMessages) => [
       ...currentMessages,
       userMessage,
       {
         id: assistantMessageId,
         role: "assistant",
-        content: "Reading the best-matching document...",
+        content: "",
         timestamp: new Date().toISOString(),
-        isLoading: true,
+        isStreaming: true,
+        phase: "searching",
+        segments: [],
       },
     ]);
 
-    setIsChatSubmitting(true);
-
-    const accessToken = getStoredAccessToken();
-    if (!accessToken) {
+    const updateAssistantMessage = (update: (messageItem: ChatMessage) => ChatMessage) => {
       setMessages((currentMessages) =>
-        currentMessages.filter(
-          (messageItem) =>
-            messageItem.id !== userMessage.id &&
-            messageItem.id !== assistantMessageId,
+        currentMessages.map((messageItem) =>
+          messageItem.id === assistantMessageId ? update(messageItem) : messageItem,
         ),
       );
-      setChatMemoryError("Sign in to use the document assistant.");
-      setIsChatSubmitting(false);
-      return;
-    }
+    };
 
     try {
-      const response = await askProjectQuestion({
+      const savedMessages = await streamProjectQuestion({
         accessToken,
         projectUuid,
         message,
         selectedMaterialId: selectedSourceIds.length === 1 ? selectedSourceIds[0] : null,
         selectedMaterialIds: selectedSourceIds,
+        signal: controller.signal,
+        onEvent: (event) => {
+          switch (event.type) {
+            case "status":
+              updateAssistantMessage((messageItem) => ({ ...messageItem, phase: event.phase }));
+              break;
+            case "sources":
+              updateAssistantMessage((messageItem) => ({
+                ...messageItem,
+                sources: event.sources,
+                selectionMode: event.selection_mode,
+              }));
+              break;
+            case "delta":
+              updateAssistantMessage((messageItem) => ({
+                ...messageItem,
+                content: messageItem.content + event.text,
+                segments: [...(messageItem.segments ?? []), event.text],
+              }));
+              break;
+          }
+        },
       });
 
-      setMessages(response.messages.map(toChatMessage));
-      setChatMemoryError(null);
+      setMessages((currentMessages) =>
+        mergeSavedConversation(currentMessages, savedMessages.map(toChatMessage), {
+          userKey: userMessage.id,
+          assistantKey: assistantMessageId,
+        }),
+      );
+      return true;
     } catch (error) {
+      if (controller.signal.aborted) {
+        return false;
+      }
       setMessages((currentMessages) =>
         currentMessages.filter(
           (messageItem) =>
@@ -185,7 +251,11 @@ export function PreviewWorkspace({
           ? error.message
           : "Unable to answer from the current project documents.",
       );
+      return false;
     } finally {
+      if (streamAbortRef.current === controller) {
+        streamAbortRef.current = null;
+      }
       setIsChatSubmitting(false);
     }
   };
@@ -319,7 +389,11 @@ export function PreviewWorkspace({
           </p>
         ) : null}
 
-        <div className="studio-scroll min-h-0 flex-1 overflow-y-auto pr-1">
+        <div
+          ref={conversationScrollRef}
+          onScroll={handleConversationScroll}
+          className="studio-scroll min-h-0 flex-1 overflow-y-auto pr-1"
+        >
           {isChatMemoryLoading ? (
             <div className="flex h-full items-center justify-center px-4 text-center">
               <p className="text-[13px] text-white/38">Loading conversation...</p>
@@ -330,17 +404,18 @@ export function PreviewWorkspace({
                 Ask a question about your materials
               </p>
               <div className="flex flex-wrap justify-center gap-2">
-                {PROMPT_SUGGESTIONS.map((suggestion) => (
+                {PROMPT_SUGGESTIONS.map((suggestion, index) => (
                   <button
                     key={suggestion}
                     type="button"
+                    style={{ animationDelay: `${index * 45}ms` }}
                     disabled={
                       selectedSourceCount === 0 ||
                       isChatSubmitting ||
                       isResettingConversation
                     }
                     onClick={() => handleChatSubmit(suggestion)}
-                    className="rounded-full border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-[13px] text-white/60 transition hover:border-white/[0.14] hover:bg-white/[0.08] hover:text-white/80 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="animate-chat-source-chip rounded-full border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-[13px] text-white/60 transition hover:border-white/[0.14] hover:bg-white/[0.08] hover:text-white/80 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {suggestion}
                   </button>
@@ -350,9 +425,8 @@ export function PreviewWorkspace({
           ) : (
             <div className="flex min-h-full flex-col justify-end gap-3 px-1 py-1">
               {messages.map((message) => (
-                <ChatMessageBubble key={message.id} message={message} />
+                <ChatMessageBubble key={message.renderKey ?? message.id} message={message} />
               ))}
-              <div ref={conversationEndRef} />
             </div>
           )}
         </div>
@@ -661,32 +735,110 @@ function PlaceholderLine({ width }: { width: string }) {
 
 function ChatMessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
+  const isThinking = Boolean(message.isStreaming) && message.content.length === 0;
+  const sources = message.sources ?? [];
 
   return (
     <div
       className={[
-        "animate-center-chat-message-enter flex w-full",
-        isUser ? "justify-end" : "justify-start",
+        "flex w-full",
+        isUser
+          ? "animate-chat-user-enter justify-end"
+          : "animate-center-chat-message-enter justify-start",
       ].join(" ")}
     >
       <article
+        aria-busy={message.isStreaming || undefined}
         className={[
-          "overflow-hidden rounded-[22px] border px-5 py-4 shadow-[0_10px_24px_rgba(0,0,0,0.18)]",
+          "overflow-hidden rounded-[22px] border px-5 py-4 shadow-[0_10px_24px_rgba(0,0,0,0.18)] transition-[border-color] duration-500",
           isUser
             ? "max-w-[72%] border-white/[0.08] bg-[#2A2F38] text-white"
-            : "max-w-[78%] border-white/[0.08] bg-[#242830] text-white",
+            : "max-w-[78%] bg-[#242830] text-white",
+          !isUser && message.isStreaming ? "border-[rgba(255,170,184,0.22)]" : !isUser ? "border-white/[0.08]" : "",
         ].join(" ")}
       >
-        <p className="whitespace-pre-wrap text-[14.5px] leading-[1.7]">
-          {message.content}
-        </p>
-        {message.sources && message.sources.length > 0 ? (
-          <p className="mt-3 text-[11.5px] leading-5 text-white/58">
-            {message.selectionMode ? `${getSelectionModeLabel(message.selectionMode)} - ` : ""}
-            Sources: {message.sources.map(formatChatSourceLabel).join(", ")}
+        {isThinking ? (
+          <ThinkingIndicator
+            key={message.phase}
+            phase={message.phase}
+            sourceCount={sources.length}
+          />
+        ) : (
+          <p className="whitespace-pre-wrap text-[14.5px] leading-[1.7]">
+            {message.segments
+              ? message.segments.map((segment, index) => (
+                  <span key={index} className="animate-chat-token">
+                    {segment}
+                  </span>
+                ))
+              : message.content}
+            {message.isStreaming ? <span aria-hidden="true" className="chat-caret" /> : null}
           </p>
+        )}
+        {sources.length > 0 ? (
+          <div className="mt-3">
+            {message.selectionMode ? (
+              <p className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-white/38">
+                {getSelectionModeLabel(message.selectionMode)}
+              </p>
+            ) : null}
+            <ul aria-label="Sources" className="flex flex-wrap gap-1.5">
+              {sources.map((source, index) => {
+                const label = formatChatSourceLabel(source);
+                return (
+                  <li
+                    key={`${source.id}-${index}`}
+                    title={label}
+                    style={{ animationDelay: `${index * 70}ms` }}
+                    className="animate-chat-source-chip flex max-w-full items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.05] py-1 pl-1 pr-2.5 text-[11.5px] text-white/68"
+                  >
+                    <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[rgba(255,170,184,0.16)] px-1 text-[10px] font-bold text-[#FFAAB8]">
+                      {index + 1}
+                    </span>
+                    <span className="truncate">{label}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         ) : null}
       </article>
+    </div>
+  );
+}
+
+function ThinkingIndicator({
+  phase,
+  sourceCount,
+}: {
+  phase: ChatMessage["phase"];
+  sourceCount: number;
+}) {
+  const labels =
+    phase === "writing" && sourceCount > 0
+      ? [`Reading ${sourceCount} source${sourceCount === 1 ? "" : "s"}`, ...WRITING_STATUS_LABELS]
+      : ["Searching your sources"];
+  const [labelIndex, setLabelIndex] = useState(0);
+  const label = labels[Math.min(labelIndex, labels.length - 1)];
+
+  // The model can think for several seconds before its first word; keep the status moving.
+  useEffect(() => {
+    if (labels.length < 2) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      setLabelIndex((currentIndex) => Math.min(currentIndex + 1, labels.length - 1));
+    }, STATUS_ROTATE_MS);
+    return () => window.clearInterval(intervalId);
+  }, [labels.length]);
+
+  return (
+    <div role="status" className="flex items-center gap-3 py-0.5">
+      <span aria-hidden="true" className="chat-thinking-orb" />
+      {/* Keyed by label so each new status slides in. */}
+      <span key={label} className="chat-shimmer-text text-[14px] font-medium">
+        {label}...
+      </span>
     </div>
   );
 }
@@ -817,6 +969,31 @@ function createChatMessage(
   };
 }
 
+/**
+ * Replace the conversation with the server's saved copy without remounting bubbles
+ * that are already on screen, so finished answers do not replay their entrance.
+ */
+function mergeSavedConversation(
+  currentMessages: ChatMessage[],
+  savedMessages: ChatMessage[],
+  { userKey, assistantKey }: { userKey: string; assistantKey: string },
+): ChatMessage[] {
+  const renderKeys = new Map(
+    currentMessages.map((messageItem) => [messageItem.id, messageItem.renderKey ?? messageItem.id]),
+  );
+  const lastIndex = savedMessages.length - 1;
+
+  return savedMessages.map((messageItem, index) => {
+    if (index === lastIndex && messageItem.role === "assistant") {
+      return { ...messageItem, renderKey: assistantKey };
+    }
+    if (index === lastIndex - 1 && messageItem.role === "user") {
+      return { ...messageItem, renderKey: userKey };
+    }
+    return { ...messageItem, renderKey: renderKeys.get(messageItem.id) };
+  });
+}
+
 function toChatMessage(message: ProjectChatMessage): ChatMessage {
   return {
     id: message.id,
@@ -843,7 +1020,7 @@ function downloadConversationJson({
     project_name: projectName || "Untitled project",
     exported_at: new Date().toISOString(),
     messages: messages
-      .filter((message) => !message.isLoading)
+      .filter((message) => !message.isStreaming)
       .map((message) => ({
         id: message.id,
         role: message.role,

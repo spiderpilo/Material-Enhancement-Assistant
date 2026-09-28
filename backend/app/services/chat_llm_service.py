@@ -8,6 +8,9 @@ DeepSeek.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import openai
 
 from app.config import get_deepseek_api_key, get_deepseek_chat_model
@@ -47,6 +50,47 @@ def answer_project_question(
     materials: list[QuizSourceMaterial],
     history: list[ProjectChatMessageRecord] | None = None,
 ) -> str:
+    client, messages = _prepare_request(question=question, materials=materials, history=history)
+    with _deepseek_errors():
+        response = client.chat.completions.create(model=get_deepseek_chat_model(), messages=messages)
+
+    choice = response.choices[0] if response.choices else None
+    answer = (choice.message.content or "").strip() if choice else ""
+    if not answer:
+        raise ChatServiceError("DeepSeek returned an empty response.")
+
+    return answer
+
+
+def stream_project_answer(
+    *,
+    question: str,
+    materials: list[QuizSourceMaterial],
+    history: list[ProjectChatMessageRecord] | None = None,
+) -> Iterator[str]:
+    """Yield the answer's text as DeepSeek writes it.
+
+    Validation and the request itself happen on the first ``next()``, so errors surface
+    to whoever iterates. Reasoning tokens (``reasoning_content``) are never yielded.
+    """
+    client, messages = _prepare_request(question=question, materials=materials, history=history)
+    with _deepseek_errors():
+        stream = client.chat.completions.create(model=get_deepseek_chat_model(), messages=messages, stream=True)
+        try:
+            for chunk in stream:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta is not None and delta.content:
+                    yield delta.content
+        finally:
+            stream.close()
+
+
+def _prepare_request(
+    *,
+    question: str,
+    materials: list[QuizSourceMaterial],
+    history: list[ProjectChatMessageRecord] | None,
+) -> tuple[openai.OpenAI, list[dict[str, str]]]:
     api_key = get_deepseek_api_key()
     if not api_key:
         raise MissingAPIKeyError("DeepSeek API key not found. Set DEEPSEEK_API_KEY.")
@@ -60,14 +104,17 @@ def answer_project_question(
         timeout=CHAT_TIMEOUT_SECONDS,
         max_retries=3,
     )
+    messages = [
+        {"role": "system", "content": CHAT_INSTRUCTIONS},
+        {"role": "user", "content": _build_chat_input(question=question, materials=materials, history=history or [])},
+    ]
+    return client, messages
+
+
+@contextmanager
+def _deepseek_errors() -> Iterator[None]:
     try:
-        response = client.chat.completions.create(
-            model=get_deepseek_chat_model(),
-            messages=[
-                {"role": "system", "content": CHAT_INSTRUCTIONS},
-                {"role": "user", "content": _build_chat_input(question=question, materials=materials, history=history or [])},
-            ],
-        )
+        yield
     except openai.AuthenticationError as exc:
         raise ChatServiceError("DeepSeek rejected the API key. Check DEEPSEEK_API_KEY.") from exc
     except openai.APIStatusError as exc:
@@ -76,13 +123,6 @@ def answer_project_question(
         raise ChatServiceError(f"DeepSeek request failed: {exc}") from exc
     except openai.APIError as exc:
         raise ChatServiceError(f"DeepSeek request failed: {exc}") from exc
-
-    choice = response.choices[0] if response.choices else None
-    answer = (choice.message.content or "").strip() if choice else ""
-    if not answer:
-        raise ChatServiceError("DeepSeek returned an empty response.")
-
-    return answer
 
 
 def _build_chat_input(
