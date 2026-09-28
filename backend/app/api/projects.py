@@ -35,7 +35,7 @@ from app.models.project_model import (
 )
 from app.services.export_service import SlideDeckExportError
 from app.services.embedding_service import GeminiEmbeddingError, MissingGeminiAPIKeyError
-from app.services.llm_service import GeminiServiceError, MissingAPIKeyError
+from app.services.llm_service import LLMServiceError, MissingAPIKeyError
 from app.services.data_service import (
     AuthenticationError,
     GeneratedMaterialNotFoundError,
@@ -179,7 +179,7 @@ def chat_with_project(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except MissingGeminiAPIKeyError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except (GeminiEmbeddingError, GeminiServiceError, DataServiceError) as exc:
+    except (GeminiEmbeddingError, LLMServiceError, DataServiceError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -369,7 +369,7 @@ def generate_slide_deck(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except MissingAPIKeyError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except (GeminiServiceError, SlideDeckExportError, DataServiceError) as exc:
+    except (LLMServiceError, SlideDeckExportError, DataServiceError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

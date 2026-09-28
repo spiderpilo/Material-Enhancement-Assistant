@@ -11,3 +11,4 @@ boto3
 PyJWT
 bcrypt
 httpx
+openai
