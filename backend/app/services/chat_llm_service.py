@@ -1,24 +1,25 @@
-"""Project chat answers, generated with OpenAI (Responses API).
+"""Project chat answers, generated with DeepSeek.
 
-Retrieval stays on Gemini embeddings (``embedding_service``); only the answer that is
-written from the retrieved chunks comes from OpenAI.
+DeepSeek serves an OpenAI-compatible Chat Completions API, so this uses the ``openai``
+SDK pointed at DeepSeek's base URL. Retrieval stays on Gemini embeddings
+(``embedding_service``); only the answer written from the retrieved chunks comes from
+DeepSeek.
 """
 
 from __future__ import annotations
 
 import openai
 
-from app.config import get_openai_api_key, get_openai_chat_model
+from app.config import get_deepseek_api_key, get_deepseek_chat_model
 from app.models.chat_model import ProjectChatMessageRecord
 from app.models.quiz_model import QuizSourceMaterial
 from app.services.llm_service import LLMServiceError, MissingAPIKeyError
 
 
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 MAX_CHAT_INPUT_CHARS = 24000
 CHAT_HISTORY_LIMIT = 10
 CHAT_TIMEOUT_SECONDS = 90.0
-# 429 codes for an exhausted balance; retrying them never helps.
-OUT_OF_CREDIT_CODES = {"insufficient_quota", "credit_balance_exhausted"}
 
 CHAT_INSTRUCTIONS = (
     "You are a curriculum assistant that answers only from the provided course documents.\n"
@@ -33,8 +34,8 @@ CHAT_INSTRUCTIONS = (
 )
 
 
-class OpenAIServiceError(LLMServiceError):
-    """Raised when OpenAI fails to produce a usable chat answer."""
+class ChatServiceError(LLMServiceError):
+    """Raised when DeepSeek fails to produce a usable chat answer."""
 
 
 def answer_project_question(
@@ -43,32 +44,40 @@ def answer_project_question(
     materials: list[QuizSourceMaterial],
     history: list[ProjectChatMessageRecord] | None = None,
 ) -> str:
-    api_key = get_openai_api_key()
+    api_key = get_deepseek_api_key()
     if not api_key:
-        raise MissingAPIKeyError("OpenAI API key not found. Set OPENAI_API_KEY.")
+        raise MissingAPIKeyError("DeepSeek API key not found. Set DEEPSEEK_API_KEY.")
 
     if not materials:
-        raise OpenAIServiceError("At least one source material is required.")
+        raise ChatServiceError("At least one source material is required.")
 
-    client = openai.OpenAI(api_key=api_key, timeout=CHAT_TIMEOUT_SECONDS, max_retries=3)
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url=DEEPSEEK_BASE_URL,
+        timeout=CHAT_TIMEOUT_SECONDS,
+        max_retries=3,
+    )
     try:
-        response = client.responses.create(
-            model=get_openai_chat_model(),
-            instructions=CHAT_INSTRUCTIONS,
-            input=_build_chat_input(question=question, materials=materials, history=history or []),
+        response = client.chat.completions.create(
+            model=get_deepseek_chat_model(),
+            messages=[
+                {"role": "system", "content": CHAT_INSTRUCTIONS},
+                {"role": "user", "content": _build_chat_input(question=question, materials=materials, history=history or [])},
+            ],
         )
     except openai.AuthenticationError as exc:
-        raise OpenAIServiceError("OpenAI rejected the API key. Check OPENAI_API_KEY.") from exc
-    except openai.RateLimitError as exc:
-        if exc.code in OUT_OF_CREDIT_CODES:
-            raise OpenAIServiceError("The OpenAI account is out of credits, so chat is unavailable.") from exc
-        raise OpenAIServiceError("OpenAI is rate limiting chat requests. Try again shortly.") from exc
+        raise ChatServiceError("DeepSeek rejected the API key. Check DEEPSEEK_API_KEY.") from exc
+    except openai.APIStatusError as exc:
+        if exc.status_code == 402:
+            raise ChatServiceError("The DeepSeek account is out of credits, so chat is unavailable.") from exc
+        raise ChatServiceError(f"DeepSeek request failed: {exc}") from exc
     except openai.APIError as exc:
-        raise OpenAIServiceError(f"OpenAI request failed: {exc}") from exc
+        raise ChatServiceError(f"DeepSeek request failed: {exc}") from exc
 
-    answer = (response.output_text or "").strip()
+    choice = response.choices[0] if response.choices else None
+    answer = (choice.message.content or "").strip() if choice else ""
     if not answer:
-        raise OpenAIServiceError("OpenAI returned an empty response.")
+        raise ChatServiceError("DeepSeek returned an empty response.")
 
     return answer
 

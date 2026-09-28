@@ -11,7 +11,7 @@ load_dotenv(ROOT_DIR / ".env")
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
 DEFAULT_GEMINI_EMBEDDING_DIMENSIONS = 768
-DEFAULT_OPENAI_CHAT_MODEL = "gpt-5.5"
+DEFAULT_DEEPSEEK_CHAT_MODEL = "deepseek-v4-pro"
 
 
 DEFAULT_JWT_ACCESS_TOKEN_TTL_SECONDS = 3600
@@ -52,14 +52,14 @@ def get_gemini_api_key() -> str | None:
     return value.strip() if value and value.strip() else None
 
 
-def get_openai_api_key() -> str | None:
-    value = os.getenv("OPENAI_API_KEY")
+def get_deepseek_api_key() -> str | None:
+    value = os.getenv("DEEPSEEK_API_KEY")
     return value.strip() if value and value.strip() else None
 
 
-def get_openai_chat_model() -> str:
-    value = os.getenv("OPENAI_CHAT_MODEL")
-    return value.strip() if value and value.strip() else DEFAULT_OPENAI_CHAT_MODEL
+def get_deepseek_chat_model() -> str:
+    value = os.getenv("DEEPSEEK_CHAT_MODEL")
+    return value.strip() if value and value.strip() else DEFAULT_DEEPSEEK_CHAT_MODEL
 
 
 def get_anthropic_api_key() -> str | None:

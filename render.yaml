@@ -35,10 +35,10 @@ services:
       - key: GEMINI_EMBEDDING_DIMENSIONS
         value: "768"
       # Project chat answers (retrieval stays on Gemini embeddings).
-      - key: OPENAI_API_KEY
+      - key: DEEPSEEK_API_KEY
         sync: false
-      - key: OPENAI_CHAT_MODEL
-        value: gpt-5.5
+      - key: DEEPSEEK_CHAT_MODEL
+        value: deepseek-v4-pro
       # Slide deck outlines (Claude).
       - key: ANTHROPIC_API_KEY
         sync: false
