@@ -36,6 +36,7 @@ import {
   getSelectedMaterial,
   getSelectedPreviewItem,
   revokeMaterialObjectUrls,
+  UNAVAILABLE_TOOLS,
   validateUpload,
 } from "@/lib/material-enhancement/workspace";
 import { getStoredAccessToken } from "@/lib/api/auth";
@@ -637,6 +638,9 @@ export function MaterialEnhancementWorkspace({
   };
 
   const handleSelectTool = (tool: ActiveTool) => {
+    if (UNAVAILABLE_TOOLS.has(tool)) {
+      return;
+    }
     setActiveTool(tool);
 
     if (tool !== "slideDeck") {

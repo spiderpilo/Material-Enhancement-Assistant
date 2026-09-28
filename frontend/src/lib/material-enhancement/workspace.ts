@@ -18,6 +18,10 @@ export type AcceptedExtension = (typeof ACCEPTED_FILE_EXTENSIONS)[number];
 export type MaterialKind = "pdf" | "doc" | "ppt" | "image";
 export type PreviewKind = "page" | "slide" | "section" | "image";
 export type ActiveTool = "summary" | "quiz" | "slideDeck";
+
+// Shown in the AI tools list but not selectable yet. Slide Deck is in beta: its
+// generation backend is not available, so it cannot be started from the UI.
+export const UNAVAILABLE_TOOLS: ReadonlySet<ActiveTool> = new Set<ActiveTool>(["slideDeck"]);
 export type PlaceholderLayout = "diagram" | "document" | "outline" | "image";
 
 export type PreviewItem = {
