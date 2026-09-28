@@ -56,6 +56,9 @@ type ChatMessage = {
   segments?: string[];
 };
 
+const WRITING_STATUS_LABELS = ["Connecting the key ideas", "Drafting an answer"];
+const STATUS_ROTATE_MS = 2400;
+
 // Stay pinned to the newest message unless the reader has scrolled further up than this.
 const STICK_TO_BOTTOM_THRESHOLD_PX = 96;
 
@@ -84,6 +87,7 @@ export function PreviewWorkspace({
   const [resetConversationError, setResetConversationError] = useState<string | null>(null);
   const conversationScrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
+  const autoScrollTopRef = useRef(0);
   const streamAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -133,6 +137,7 @@ export function PreviewWorkspace({
       // Instant, not smooth: a smooth scroll per streamed token lags and fights the reader.
       if (container && stickToBottomRef.current) {
         container.scrollTop = container.scrollHeight;
+        autoScrollTopRef.current = container.scrollTop;
       }
     });
 
@@ -143,10 +148,15 @@ export function PreviewWorkspace({
 
   const handleConversationScroll = () => {
     const container = conversationScrollRef.current;
-    if (container) {
-      stickToBottomRef.current =
-        container.scrollHeight - container.scrollTop - container.clientHeight <
-        STICK_TO_BOTTOM_THRESHOLD_PX;
+    if (!container) {
+      return;
+    }
+    // Streamed text can grow the list before this event fires, so distance alone would
+    // misread our own scroll as the reader leaving. Only scrolling up unpins.
+    if (container.scrollHeight - container.scrollTop - container.clientHeight < STICK_TO_BOTTOM_THRESHOLD_PX) {
+      stickToBottomRef.current = true;
+    } else if (container.scrollTop < autoScrollTopRef.current - 1) {
+      stickToBottomRef.current = false;
     }
   };
 
@@ -748,7 +758,11 @@ function ChatMessageBubble({ message }: { message: ChatMessage }) {
         ].join(" ")}
       >
         {isThinking ? (
-          <ThinkingIndicator phase={message.phase} sourceCount={sources.length} />
+          <ThinkingIndicator
+            key={message.phase}
+            phase={message.phase}
+            sourceCount={sources.length}
+          />
         ) : (
           <p className="whitespace-pre-wrap text-[14.5px] leading-[1.7]">
             {message.segments
@@ -800,15 +814,28 @@ function ThinkingIndicator({
   phase: ChatMessage["phase"];
   sourceCount: number;
 }) {
-  const label =
+  const labels =
     phase === "writing" && sourceCount > 0
-      ? `Reading ${sourceCount} source${sourceCount === 1 ? "" : "s"}`
-      : "Searching your sources";
+      ? [`Reading ${sourceCount} source${sourceCount === 1 ? "" : "s"}`, ...WRITING_STATUS_LABELS]
+      : ["Searching your sources"];
+  const [labelIndex, setLabelIndex] = useState(0);
+  const label = labels[Math.min(labelIndex, labels.length - 1)];
+
+  // The model can think for several seconds before its first word; keep the status moving.
+  useEffect(() => {
+    if (labels.length < 2) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      setLabelIndex((currentIndex) => Math.min(currentIndex + 1, labels.length - 1));
+    }, STATUS_ROTATE_MS);
+    return () => window.clearInterval(intervalId);
+  }, [labels.length]);
 
   return (
     <div role="status" className="flex items-center gap-3 py-0.5">
       <span aria-hidden="true" className="chat-thinking-orb" />
-      {/* Keyed by label so each new phase slides in. */}
+      {/* Keyed by label so each new status slides in. */}
       <span key={label} className="chat-shimmer-text text-[14px] font-medium">
         {label}...
       </span>
