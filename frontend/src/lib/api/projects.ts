@@ -57,13 +57,6 @@ export type ProjectChatHistoryResponse = {
   messages: ProjectChatMessage[];
 };
 
-export type ProjectChatResponse = {
-  answer: string;
-  selection_mode: ProjectChatSelectionMode;
-  sources: ProjectChatSource[];
-  messages: ProjectChatMessage[];
-};
-
 type ListGeneratedQuizHistoryResponse = {
   generated_quizzes?: GeneratedQuizHistoryRecord[];
 };
@@ -196,45 +189,108 @@ export async function listGeneratedMaterials({
   return Array.isArray(payload.generated_quizzes) ? payload.generated_quizzes : [];
 }
 
-export async function askProjectQuestion({
+export type ProjectChatStreamEvent =
+  | { type: "status"; phase: "searching" | "writing" }
+  | { type: "sources"; selection_mode: ProjectChatSelectionMode; sources: ProjectChatSource[] }
+  | { type: "delta"; text: string }
+  | { type: "done"; messages: ProjectChatMessage[] }
+  | { type: "error"; detail: string };
+
+/**
+ * Ask a question and receive the answer as it is written.
+ *
+ * Calls `onEvent` for every server-sent event and resolves with the saved conversation
+ * once the `done` event arrives. Rejects on HTTP errors, `error` events, or a stream that
+ * ends early. Pass `signal` to stop listening.
+ */
+export async function streamProjectQuestion({
   accessToken,
   projectUuid,
   message,
   selectedMaterialId,
   selectedMaterialIds,
+  onEvent,
+  signal,
 }: {
   accessToken: string;
   projectUuid: string;
   message: string;
   selectedMaterialId?: number | null;
   selectedMaterialIds?: number[] | null;
-}): Promise<ProjectChatResponse> {
-  const response = await authorizedFetch(`${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/chat`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
+  onEvent: (event: ProjectChatStreamEvent) => void;
+  signal?: AbortSignal;
+}): Promise<ProjectChatMessage[]> {
+  const response = await authorizedFetch(
+    `${getApiBaseUrl()}/projects/${encodeURIComponent(projectUuid)}/chat/stream`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({
+        message,
+        selected_material_id: selectedMaterialId ?? null,
+        selected_material_ids: selectedMaterialIds ?? [],
+      }),
+      signal,
     },
-    body: JSON.stringify({
-      message,
-      selected_material_id: selectedMaterialId ?? null,
-      selected_material_ids: selectedMaterialIds ?? [],
-    }),
-  });
+  );
 
-  const payload = (await response.json().catch(() => ({}))) as
-    | ProjectChatResponse
-    | { detail?: string };
-
-  if (!response.ok) {
-    throw new Error(
-      "detail" in payload && payload.detail
-        ? payload.detail
-        : "Unable to generate a chat response.",
-    );
+  if (!response.ok || !response.body) {
+    throw new Error(await readProjectErrorMessage(response, "Unable to generate a chat response."));
   }
 
-  return payload as ProjectChatResponse;
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += value;
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      const event = parseServerSentEvent(buffer.slice(0, boundary));
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf("\n\n");
+
+      if (!event) {
+        continue;
+      }
+      if (event.type === "error") {
+        throw new Error(event.detail || "Unable to generate a chat response.");
+      }
+      onEvent(event);
+      if (event.type === "done") {
+        await reader.cancel();
+        return event.messages;
+      }
+    }
+  }
+
+  throw new Error("The answer was interrupted. Try again.");
+}
+
+function parseServerSentEvent(block: string): ProjectChatStreamEvent | null {
+  const data = block
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+
+  if (!data) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(data) as ProjectChatStreamEvent;
+  } catch {
+    return null;
+  }
 }
 
 export async function getProjectChatHistory({

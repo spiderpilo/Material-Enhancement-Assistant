@@ -7,7 +7,8 @@ import { ArrowUpIcon } from "./icons";
 
 type CenterChatComposerProps = {
   disabled?: boolean;
-  onSubmit: (message: string) => Promise<void> | void;
+  /** Resolve `false` to put the message back in the box, e.g. when sending failed. */
+  onSubmit: (message: string) => Promise<boolean | void> | boolean | void;
   selectedSourceCount: number;
 };
 
@@ -33,10 +34,13 @@ export function CenterChatComposer({
     }
 
     setIsSubmitting(true);
+    // Clear right away so the question visibly moves into the conversation.
+    setMessage("");
 
     try {
-      await onSubmit(nextMessage);
-      setMessage("");
+      if ((await onSubmit(nextMessage)) === false) {
+        setMessage((currentMessage) => currentMessage || nextMessage);
+      }
     } finally {
       setIsSubmitting(false);
     }
