@@ -11,7 +11,7 @@ import type {
   GeneratedMaterialDownloadFormat,
 } from "@/lib/api/generated-materials";
 import type { GeneratedQuiz } from "@/lib/api/quiz";
-import type { ActiveTool, Material } from "@/lib/material-enhancement/workspace";
+import { UNAVAILABLE_TOOLS, type ActiveTool, type Material } from "@/lib/material-enhancement/workspace";
 
 import {
   ArrowLeftIcon,
@@ -208,6 +208,7 @@ export function AIToolsSidebar({
   };
   const tools = TOOL_DEFINITIONS.map((tool) => ({
     ...tool,
+    unavailable: UNAVAILABLE_TOOLS.has(tool.id),
     onClick: () => {
       closeSlideDeckDownloadMenu();
       onSelectTool(tool.id);
@@ -444,9 +445,10 @@ function AIToolCard({
   index: number;
   isSelected: boolean;
   onClick: () => void;
-  tool: ToolDefinition & { onClick: () => void };
+  tool: ToolDefinition & { onClick: () => void; unavailable: boolean };
 }) {
   const Icon = tool.icon;
+  const interactive = !tool.unavailable;
   const toolStyle = {
     "--tool-border": tool.accent.border,
     "--tool-focus": tool.accent.focus,
@@ -463,8 +465,10 @@ function AIToolCard({
   return (
     <button
       type="button"
-      aria-label={`${tool.label} tool`}
+      aria-label={tool.unavailable ? `${tool.label} tool (coming soon)` : `${tool.label} tool`}
       aria-pressed={isSelected}
+      disabled={tool.unavailable}
+      title={tool.unavailable ? `${tool.label} is in beta and not available yet.` : undefined}
       onClick={onClick}
       style={{
         ...toolStyle,
@@ -475,8 +479,11 @@ function AIToolCard({
         "bg-[linear-gradient(140deg,var(--tool-tint)_0%,rgba(255,255,255,0.05)_58%,rgba(255,255,255,0.03)_100%)] shadow-[0_14px_30px_rgba(0,0,0,0.22)]",
         "before:pointer-events-none before:absolute before:inset-0 before:rounded-[inherit] before:bg-[radial-gradient(circle_at_12%_16%,var(--tool-glow)_0%,transparent_52%)] before:opacity-70 before:transition-opacity before:duration-200 before:ease-out",
         "after:pointer-events-none after:absolute after:inset-x-5 after:top-0 after:h-px after:bg-white/14",
-        "hover:-translate-y-0.5 hover:border-white/[0.16] hover:bg-[linear-gradient(140deg,var(--tool-tint)_0%,rgba(255,255,255,0.08)_48%,rgba(255,255,255,0.05)_100%)] hover:shadow-[0_18px_40px_rgba(0,0,0,0.26)] hover:before:opacity-100",
-        "active:translate-y-px active:scale-[0.98] active:shadow-[0_10px_20px_rgba(0,0,0,0.22)]",
+        interactive
+          ? "hover:-translate-y-0.5 hover:border-white/[0.16] hover:bg-[linear-gradient(140deg,var(--tool-tint)_0%,rgba(255,255,255,0.08)_48%,rgba(255,255,255,0.05)_100%)] hover:shadow-[0_18px_40px_rgba(0,0,0,0.26)] hover:before:opacity-100"
+          : // The entrance animation pins the button's own opacity, so dim its contents.
+            "cursor-not-allowed grayscale [&>*]:opacity-45",
+        interactive ? "active:translate-y-px active:scale-[0.98] active:shadow-[0_10px_20px_rgba(0,0,0,0.22)]" : "",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--tool-focus)]",
         isSelected ? "border-[color:var(--tool-border)]" : "",
       ].join(" ")}
@@ -484,7 +491,9 @@ function AIToolCard({
       <div
         className={[
           "relative flex h-10 w-10 shrink-0 items-center justify-center rounded-[16px] border border-white/[0.1] bg-[linear-gradient(180deg,rgba(255,255,255,0.14)_0%,rgba(255,255,255,0.06)_100%)] text-[color:var(--tool-icon)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_12px_24px_rgba(0,0,0,0.16)] transition-all duration-200 ease-out 2xl:h-11 2xl:w-11",
-          "group-hover:scale-[1.03] group-hover:border-white/[0.16] group-hover:bg-[linear-gradient(180deg,rgba(255,255,255,0.18)_0%,rgba(255,255,255,0.08)_100%)] group-hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_0_24px_var(--tool-glow),0_12px_24px_rgba(0,0,0,0.16)]",
+          interactive
+            ? "group-hover:scale-[1.03] group-hover:border-white/[0.16] group-hover:bg-[linear-gradient(180deg,rgba(255,255,255,0.18)_0%,rgba(255,255,255,0.08)_100%)] group-hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_0_24px_var(--tool-glow),0_12px_24px_rgba(0,0,0,0.16)]"
+            : "",
           isSelected ? "border-white/[0.16]" : "",
         ].join(" ")}
       >
@@ -507,7 +516,9 @@ function AIToolCard({
       <div
         className={[
           "ml-auto flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/[0.06] bg-black/12 text-white/58 transition-all duration-200 ease-out",
-          "group-hover:translate-x-0.5 group-hover:border-white/[0.1] group-hover:bg-white/[0.09] group-hover:text-white/88",
+          interactive
+            ? "group-hover:translate-x-0.5 group-hover:border-white/[0.1] group-hover:bg-white/[0.09] group-hover:text-white/88"
+            : "",
           isSelected ? "border-white/[0.12] bg-white/[0.1] text-white/88" : "",
         ].join(" ")}
         aria-hidden="true"
