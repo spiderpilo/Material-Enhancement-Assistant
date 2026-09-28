@@ -9,7 +9,7 @@ import pytest
 from app.models.chat_model import ProjectChatMessageRecord
 from app.models.quiz_model import QuizSourceMaterial
 from app.services import chat_llm_service
-from app.services.chat_llm_service import ChatServiceError, answer_project_question
+from app.services.chat_llm_service import ChatServiceError, answer_project_question, stream_project_answer
 from app.services.llm_service import LLMServiceError, MissingAPIKeyError
 
 
@@ -26,9 +26,30 @@ def status_error(status: int, message: str) -> openai.APIStatusError:
     return error_class(message, response=httpx2.Response(status, request=request), body=None)
 
 
+def chunk(content: str | None, *, reasoning: str | None = None):
+    delta = SimpleNamespace(content=content, reasoning_content=reasoning)
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+
+class FakeStream:
+    def __init__(self, chunks, *, error: Exception | None = None) -> None:
+        self.chunks = chunks
+        self.error = error
+        self.closed = False
+
+    def __iter__(self):
+        yield from self.chunks
+        if self.error:
+            raise self.error
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class FakeCompletions:
     def __init__(self) -> None:
         self.result = completion("  It makes glucose.  ")
+        self.stream = FakeStream([chunk("It "), chunk("makes "), chunk("glucose.")])
         self.error: Exception | None = None
         self.calls: list[dict] = []
 
@@ -36,7 +57,7 @@ class FakeCompletions:
         self.calls.append(kwargs)
         if self.error:
             raise self.error
-        return self.result
+        return self.stream if kwargs.get("stream") else self.result
 
 
 @pytest.fixture()
@@ -124,3 +145,46 @@ def test_requires_at_least_one_source(fake_deepseek):
     with pytest.raises(ChatServiceError):
         answer_project_question(question="q", materials=[])
     assert fake_deepseek.calls == []
+
+
+def test_stream_yields_answer_text_in_order(fake_deepseek):
+    fake_deepseek.stream = FakeStream([chunk(None, reasoning="thinking..."), chunk("It "), chunk(""), chunk("makes glucose.")])
+
+    parts = list(stream_project_answer(question="What does it make?", materials=MATERIALS))
+
+    assert parts == ["It ", "makes glucose."]
+    call = fake_deepseek.calls[0]
+    assert call["stream"] is True
+    assert call["model"] == "deepseek-v4-pro"
+    assert "Current question:\nWhat does it make?" in call["messages"][1]["content"]
+    assert fake_deepseek.stream.closed
+
+
+def test_stream_does_nothing_until_iterated(fake_deepseek):
+    stream_project_answer(question="q", materials=MATERIALS)
+
+    assert fake_deepseek.calls == []
+
+
+def test_stream_maps_request_errors(fake_deepseek):
+    fake_deepseek.error = status_error(402, "Insufficient Balance")
+
+    with pytest.raises(ChatServiceError, match="out of credits"):
+        list(stream_project_answer(question="q", materials=MATERIALS))
+
+
+def test_stream_maps_errors_raised_mid_answer(fake_deepseek):
+    fake_deepseek.stream = FakeStream([chunk("It ")], error=status_error(500, "boom"))
+    stream = stream_project_answer(question="q", materials=MATERIALS)
+
+    assert next(stream) == "It "
+    with pytest.raises(ChatServiceError, match="DeepSeek request failed"):
+        next(stream)
+    assert fake_deepseek.stream.closed
+
+
+def test_stream_requires_key(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "")
+
+    with pytest.raises(MissingAPIKeyError, match="DEEPSEEK_API_KEY"):
+        list(stream_project_answer(question="q", materials=MATERIALS))
