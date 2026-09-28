@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from typing import Literal
+import json
+import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import (
     AUTH_ERRORS,
@@ -54,11 +59,13 @@ from app.services.data_service import (
     list_generated_quiz_history_for_user,
     list_generated_materials_for_user,
     list_projects_for_user,
+    stream_project_answer_for_user,
     update_project_for_user,
 )
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get(
@@ -155,18 +162,71 @@ def chat_with_project(
     payload: ProjectChatRequest,
     access_token: str = Depends(require_access_token),
 ) -> ProjectChatResponse:
-    normalized_message = payload.message.strip()
-    if not normalized_message:
-        raise HTTPException(status_code=400, detail="Message cannot be empty.")
-
-    try:
+    message = _normalize_chat_message(payload)
+    with _project_chat_errors():
         return answer_project_question_for_user(
             access_token=access_token,
             project_uuid=project_uuid,
-            message=normalized_message,
+            message=message,
             selected_material_id=payload.selected_material_id,
             selected_material_ids=payload.selected_material_ids,
         )
+
+
+@router.post(
+    "/projects/{project_uuid}/chat/stream",
+    response_class=StreamingResponse,
+    tags=["Project chat"],
+    summary="Stream an answer about project materials",
+    description=(
+        "Same as asking a question, but the answer arrives as Server-Sent Events while it is written. "
+        "Each event is a `data:` line holding a JSON object with a `type`: "
+        "`status` (`phase` is `searching` or `writing`), `sources` (`sources`, `selection_mode`), "
+        "`delta` (`text`, the next piece of the answer), `done` (`messages`, the saved conversation), "
+        "or `error` (`detail`). The exchange is saved only when the answer completes. "
+        "Access errors are returned as normal HTTP errors before the stream starts."
+    ),
+    responses={
+        200: {"description": "A stream of chat events.", "content": {"text/event-stream": {}}},
+        **PROJECT_ERRORS,
+        **FORBIDDEN_ERROR,
+        **UPSTREAM_ERRORS,
+    },
+)
+def stream_chat_with_project(
+    project_uuid: str,
+    payload: ProjectChatRequest,
+    access_token: str = Depends(require_access_token),
+) -> StreamingResponse:
+    message = _normalize_chat_message(payload)
+    with _project_chat_errors():
+        events = stream_project_answer_for_user(
+            access_token=access_token,
+            project_uuid=project_uuid,
+            message=message,
+            selected_material_id=payload.selected_material_id,
+            selected_material_ids=payload.selected_material_ids,
+        )
+
+    return StreamingResponse(
+        _encode_chat_events(events),
+        media_type="text/event-stream",
+        # X-Accel-Buffering stops nginx-style proxies from holding the stream back.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _normalize_chat_message(payload: ProjectChatRequest) -> str:
+    message = payload.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+    return message
+
+
+@contextmanager
+def _project_chat_errors() -> Iterator[None]:
+    try:
+        yield
     except MissingConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except AuthenticationError as exc:
@@ -181,6 +241,23 @@ def chat_with_project(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except (GeminiEmbeddingError, LLMServiceError, DataServiceError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _encode_chat_events(events: Iterator[dict[str, Any]]) -> Iterator[str]:
+    # Headers are already sent, so failures after this point become an `error` event.
+    try:
+        for event in events:
+            yield _server_sent_event(event)
+    except (MissingAPIKeyError, MissingGeminiAPIKeyError, GeminiEmbeddingError, LLMServiceError, DataServiceError, MissingConfigError) as exc:
+        logger.warning("Streamed chat answer failed: %s", exc)
+        yield _server_sent_event({"type": "error", "detail": str(exc)})
+    except Exception:
+        logger.exception("Streamed chat answer failed unexpectedly")
+        yield _server_sent_event({"type": "error", "detail": "The answer failed unexpectedly. Try again."})
+
+
+def _server_sent_event(event: dict[str, Any]) -> str:
+    return f"data: {json.dumps(event, separators=(',', ':'))}\n\n"
 
 
 @router.get(

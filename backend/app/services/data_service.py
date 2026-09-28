@@ -8,7 +8,7 @@ import re
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Literal, Optional
+from typing import Any, Iterator, Literal, Optional
 from uuid import UUID, uuid4
 
 import psycopg2.extras
@@ -55,7 +55,11 @@ from app.services.embedding_service import (
     embed_chunks,
     embed_text,
 )
-from app.services.chat_llm_service import answer_project_question as generate_project_chat_answer
+from app.services.chat_llm_service import (
+    ChatServiceError,
+    answer_project_question as generate_project_chat_answer,
+    stream_project_answer as stream_project_chat_answer,
+)
 from app.services.llm_service import generate_quiz_with_usage
 from app.services.slide_deck_llm_service import generate_slide_deck_outline_with_usage
 from app.services.parser_service import DocumentParseError, ParsedTextUnit, parse_document, parse_document_units
@@ -984,6 +988,28 @@ def get_course_content_texts_for_user(
     return source_materials
 
 
+RAG_UNAVAILABLE_ANSWER = (
+    "I could not find any ready indexed content for that source yet. "
+    "Try again after upload indexing finishes, or upload a readable PDF, DOCX, or PPTX file."
+)
+
+
+@dataclass(frozen=True)
+class _ProjectChatContext:
+    project_id: int
+    owner_user_id: str
+    history: list[ProjectChatMessageRecord]
+    selected_material_ids: list[int]
+    selected_materials: list[ProjectMaterialRecord]
+
+
+@dataclass(frozen=True)
+class _ProjectChatRetrieval:
+    chunks: list[RagRetrievedChunk]
+    sources: list[ProjectChatSourceRecord]
+    selection_mode: Literal["rag", "rag_selected", "rag_unavailable"]
+
+
 def answer_project_question_for_user(
     *,
     access_token: str,
@@ -992,6 +1018,107 @@ def answer_project_question_for_user(
     selected_material_id: int | None = None,
     selected_material_ids: list[int] | None = None,
 ) -> ProjectChatResponse:
+    context = _prepare_project_chat(
+        access_token=access_token,
+        project_uuid=project_uuid,
+        selected_material_id=selected_material_id,
+        selected_material_ids=selected_material_ids,
+    )
+    retrieval = _retrieve_project_chat_sources(context=context, message=message)
+    if retrieval.chunks:
+        answer = generate_project_chat_answer(
+            question=message,
+            history=context.history,
+            materials=_chunks_as_chat_materials(retrieval.chunks),
+        )
+    else:
+        answer = RAG_UNAVAILABLE_ANSWER
+
+    messages = _append_project_chat_exchange(
+        project_id=context.project_id,
+        owner_user_id=context.owner_user_id,
+        user_content=message,
+        assistant_content=answer,
+        sources=retrieval.sources,
+        selection_mode=retrieval.selection_mode,
+    )
+    return ProjectChatResponse(
+        answer=answer,
+        selection_mode=retrieval.selection_mode,
+        sources=retrieval.sources,
+        messages=messages,
+    )
+
+
+def stream_project_answer_for_user(
+    *,
+    access_token: str,
+    project_uuid: str,
+    message: str,
+    selected_material_id: int | None = None,
+    selected_material_ids: list[int] | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Check access now, then return the answer as a lazy sequence of chat events.
+
+    Events, in order: ``status`` (phase ``searching``), ``sources``, ``status`` (phase
+    ``writing``, only when sources were found), one ``delta`` per piece of answer text,
+    and ``done`` with the saved conversation. Access errors raise here, before any event,
+    so the route can still answer with a normal HTTP error; later failures raise from the
+    iterator. The exchange is saved only once the whole answer has arrived.
+    """
+    context = _prepare_project_chat(
+        access_token=access_token,
+        project_uuid=project_uuid,
+        selected_material_id=selected_material_id,
+        selected_material_ids=selected_material_ids,
+    )
+    return _stream_project_chat_events(context=context, message=message)
+
+
+def _stream_project_chat_events(*, context: _ProjectChatContext, message: str) -> Iterator[dict[str, Any]]:
+    yield {"type": "status", "phase": "searching"}
+    retrieval = _retrieve_project_chat_sources(context=context, message=message)
+    yield {
+        "type": "sources",
+        "selection_mode": retrieval.selection_mode,
+        "sources": [source.model_dump(mode="json") for source in retrieval.sources],
+    }
+
+    if retrieval.chunks:
+        yield {"type": "status", "phase": "writing"}
+        parts: list[str] = []
+        for text in stream_project_chat_answer(
+            question=message,
+            history=context.history,
+            materials=_chunks_as_chat_materials(retrieval.chunks),
+        ):
+            parts.append(text)
+            yield {"type": "delta", "text": text}
+        answer = "".join(parts).strip()
+        if not answer:
+            raise ChatServiceError("DeepSeek returned an empty response.")
+    else:
+        answer = RAG_UNAVAILABLE_ANSWER
+        yield {"type": "delta", "text": answer}
+
+    messages = _append_project_chat_exchange(
+        project_id=context.project_id,
+        owner_user_id=context.owner_user_id,
+        user_content=message,
+        assistant_content=answer,
+        sources=retrieval.sources,
+        selection_mode=retrieval.selection_mode,
+    )
+    yield {"type": "done", "messages": [item.model_dump(mode="json") for item in messages]}
+
+
+def _prepare_project_chat(
+    *,
+    access_token: str,
+    project_uuid: str,
+    selected_material_id: int | None,
+    selected_material_ids: list[int] | None,
+) -> _ProjectChatContext:
     project = get_project_for_user(access_token=access_token, project_uuid=project_uuid)
     if project.id is None:
         raise DataServiceError("Project record is missing a numeric id.")
@@ -1021,67 +1148,49 @@ def answer_project_question_for_user(
         if len(selected_materials) != len(normalized_selected_material_ids):
             raise ProjectNotFoundError("One or more selected sources were not found in this project.")
 
-    query_embedding = embed_text(message)
-    retrieved_chunks = _match_course_content_chunks_for_selection(
-        project_id=project.id,
-        query_embedding=query_embedding,
-        selected_material_ids=normalized_selected_material_ids,
-        match_count=8,
-    )
-    selection_mode = "rag_selected" if normalized_selected_material_ids else "rag"
-
-    if not retrieved_chunks:
-        sources = [
-            ProjectChatSourceRecord(id=material.id, material_name=material.material_name)
-            for material in selected_materials
-        ] if selected_materials else []
-        answer = (
-            "I could not find any ready indexed content for that source yet. "
-            "Try again after upload indexing finishes, or upload a readable PDF, DOCX, or PPTX file."
-        )
-        messages = _append_project_chat_exchange(
-            project_id=project.id,
-            owner_user_id=project.owner_user_id,
-            user_content=message,
-            assistant_content=answer,
-            sources=sources,
-            selection_mode="rag_unavailable",
-        )
-        return ProjectChatResponse(
-            answer=answer,
-            selection_mode="rag_unavailable",
-            sources=sources,
-            messages=messages,
-        )
-
-    sources = _build_rag_source_records(retrieved_chunks)
-    answer = generate_project_chat_answer(
-        question=message,
-        history=history,
-        materials=[
-            QuizSourceMaterial(
-                id=chunk.course_content_id,
-                name=_format_rag_source_name(chunk),
-                text=chunk.text,
-            )
-            for chunk in retrieved_chunks
-        ],
-    )
-    messages = _append_project_chat_exchange(
+    return _ProjectChatContext(
         project_id=project.id,
         owner_user_id=project.owner_user_id,
-        user_content=message,
-        assistant_content=answer,
-        sources=sources,
-        selection_mode=selection_mode,
+        history=history,
+        selected_material_ids=normalized_selected_material_ids,
+        selected_materials=selected_materials,
     )
 
-    return ProjectChatResponse(
-        answer=answer,
-        selection_mode=selection_mode,
-        sources=sources,
-        messages=messages,
+
+def _retrieve_project_chat_sources(*, context: _ProjectChatContext, message: str) -> _ProjectChatRetrieval:
+    query_embedding = embed_text(message)
+    retrieved_chunks = _match_course_content_chunks_for_selection(
+        project_id=context.project_id,
+        query_embedding=query_embedding,
+        selected_material_ids=context.selected_material_ids,
+        match_count=8,
     )
+    if not retrieved_chunks:
+        return _ProjectChatRetrieval(
+            chunks=[],
+            sources=[
+                ProjectChatSourceRecord(id=material.id, material_name=material.material_name)
+                for material in context.selected_materials
+            ],
+            selection_mode="rag_unavailable",
+        )
+
+    return _ProjectChatRetrieval(
+        chunks=retrieved_chunks,
+        sources=_build_rag_source_records(retrieved_chunks),
+        selection_mode="rag_selected" if context.selected_material_ids else "rag",
+    )
+
+
+def _chunks_as_chat_materials(chunks: list[RagRetrievedChunk]) -> list[QuizSourceMaterial]:
+    return [
+        QuizSourceMaterial(
+            id=chunk.course_content_id,
+            name=_format_rag_source_name(chunk),
+            text=chunk.text,
+        )
+        for chunk in chunks
+    ]
 
 
 def get_project_chat_history_for_user(
