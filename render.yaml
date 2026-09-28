@@ -34,6 +34,11 @@ services:
         value: gemini-embedding-001
       - key: GEMINI_EMBEDDING_DIMENSIONS
         value: "768"
+      # Project chat answers (retrieval stays on Gemini embeddings).
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_CHAT_MODEL
+        value: gpt-5.5
       - key: S3_ENDPOINT_URL
         sync: false
       - key: S3_REGION

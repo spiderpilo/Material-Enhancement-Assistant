@@ -55,8 +55,8 @@ from app.services.embedding_service import (
     embed_chunks,
     embed_text,
 )
+from app.services.chat_llm_service import answer_project_question as generate_project_chat_answer
 from app.services.llm_service import (
-    answer_project_question as generate_project_chat_answer,
     generate_quiz_with_usage,
     generate_slide_deck_outline_with_usage,
 )
