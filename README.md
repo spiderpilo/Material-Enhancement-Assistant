@@ -3,8 +3,8 @@
 Material Enhancement Assistant is an AI-powered educational tool that helps professors improve the clarity and accessibility of course materials while keeping instructors in control of every change.
 
 The current repository includes:
-- a FastAPI backend for document upload and text extraction
-- a Next.js frontend for the course content upload interface
+- a FastAPI backend for document upload, retrieval-augmented (RAG) project chat, quiz generation, and slide deck generation
+- a Next.js workspace for uploading sources, previewing them, chatting with them, and running the AI tools
 
 ## Local Development
 
@@ -20,13 +20,22 @@ source backend/.venv/bin/activate
 pip install -r backend/requirements.txt
 ```
 
-Create a repository-root `.env` file. The backend loads environment variables from the project root.
-AI features use Gemini:
+Create a repository-root `.env` file (start from `.env.example`). The backend loads environment variables from the project root.
+AI features use three providers:
 
 ```env
+# Gemini: quiz generation, clarity rewrites, and the embeddings behind chat retrieval
 GOOGLE_GEMINI_API_KEY=your_api_key_here
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 GEMINI_EMBEDDING_DIMENSIONS=768
+
+# DeepSeek: project chat answers
+DEEPSEEK_API_KEY=your_api_key_here
+DEEPSEEK_CHAT_MODEL=deepseek-v4-pro
+
+# Cerebras: slide deck outlines (the Slide Deck tool is disabled in the UI while in beta)
+CEREBRAS_API_KEY=your_api_key_here
+CEREBRAS_SLIDE_MODEL=gpt-oss-120b
 ```
 
 
@@ -95,9 +104,29 @@ Notes:
 - The Compose setup is geared toward development, not production deployment.
 - `docker compose watch` syncs source changes into the running containers.
 - Changing `backend/requirements.txt`, `frontend/package.json`, or `frontend/package-lock.json` triggers a rebuild.
-- Gemini, Neon, JWT, and S3 storage settings are passed through from your shell or repo-root `.env` via Compose variable expansion.
+- Gemini, DeepSeek, Cerebras, Neon, JWT, and S3 storage settings are passed through from your shell or repo-root `.env` via Compose variable expansion.
 - Uploads accept PDF, DOCX, and PPTX files up to 50MB and create a `course_contents` row after the S3 storage upload succeeds.
 - Uploaded files are indexed for RAG chat in the background. The original file remains stored for previews, quizzes, and slide deck generation.
+
+## Project Chat
+
+The **Conversation** panel in a project answers questions from the selected sources, and answers stream in as they are written.
+
+1. The question moves into the conversation, and the composer clears right away.
+2. A thinking bubble shows a spinning orb and a shimmering status that follows the backend's progress: "Searching your sources", then "Reading N sources". The retrieved sources appear as numbered chips.
+3. While the model reasons, the status moves on to "Connecting the key ideas" and "Drafting an answer".
+4. The answer fades in piece by piece behind a pulsing caret. The panel stays pinned to the newest text unless you scroll up.
+5. When the answer finishes, the backend saves the exchange and the bubble settles into the saved copy.
+
+How it works:
+- The frontend calls `POST /projects/{project_uuid}/chat/stream`. It returns Server-Sent Events: `status`, `sources`, `delta` (answer text), then `done` (the saved conversation), or `error`.
+- Retrieval uses Gemini embeddings over pgvector chunks. DeepSeek writes the answer as plain text.
+- Only uploads with a finished index (`rag_status = ready`) can be searched.
+- The exchange is saved only when the answer completes. A failed or abandoned answer leaves the stored conversation unchanged, and a failed question goes back into the composer.
+- All chat motion is turned off when the operating system asks for reduced motion.
+- `POST /projects/{project_uuid}/chat` still returns the whole answer in one response, for API clients that do not stream.
+
+See `backend/README.md` for the event format and a curl example.
 
 ## Deployment (Render)
 
@@ -168,7 +197,9 @@ Backend
 - python-docx
 
 AI
-- Google GenAI SDK with Gemini model support
+- Google GenAI SDK: Gemini for quizzes, clarity rewrites, and embeddings
+- OpenAI SDK against OpenAI-compatible APIs: DeepSeek for streamed project chat, Cerebras for slide deck outlines
+- pgvector for retrieval over indexed course material
 
 ## Project Structure
 
