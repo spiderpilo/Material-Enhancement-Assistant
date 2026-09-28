@@ -10,3 +10,4 @@ psycopg2-binary==2.9.11
 boto3
 PyJWT
 bcrypt
+httpx

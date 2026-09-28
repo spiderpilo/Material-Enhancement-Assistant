@@ -17,6 +17,8 @@ DEFAULT_JWT_ACCESS_TOKEN_TTL_SECONDS = 3600
 DEFAULT_JWT_REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30
 MIN_JWT_SECRET_LENGTH = 32
 
+DEFAULT_FRONTEND_URL = "http://localhost:3000"
+
 DEFAULT_CORS_ALLOWED_ORIGINS = (
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -44,6 +46,12 @@ class AuthSettings:
     jwt_secret: str
     access_token_ttl_seconds: int
     refresh_token_ttl_seconds: int
+
+
+@dataclass(frozen=True)
+class OAuthClientSettings:
+    client_id: str
+    client_secret: str
 
 
 def get_gemini_api_key() -> str | None:
@@ -76,6 +84,32 @@ def get_cors_allowed_origins() -> list[str]:
         return list(DEFAULT_CORS_ALLOWED_ORIGINS)
 
     return [origin.strip().rstrip("/") for origin in value.split(",") if origin.strip()]
+
+
+def get_frontend_url() -> str:
+    """Where OAuth callbacks send the browser back to; the first CORS origin is not always right."""
+    value = os.getenv("FRONTEND_URL")
+    return value.strip().rstrip("/") if value and value.strip() else DEFAULT_FRONTEND_URL
+
+
+def get_oauth_redirect_base_url() -> str | None:
+    """Public backend URL registered with the OAuth providers. Unset: derived from the request."""
+    value = os.getenv("OAUTH_REDIRECT_BASE_URL")
+    return value.strip().rstrip("/") if value and value.strip() else None
+
+
+def get_oauth_client_settings(provider: str) -> OAuthClientSettings | None:
+    """Client credentials for ``provider``, or None when that sign-in option is not configured."""
+    if provider == "google":
+        client_id, client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_ID"), os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
+    elif provider == "github":
+        client_id, client_secret = os.getenv("GITHUB_OAUTH_CLIENT_ID"), os.getenv("GITHUB_OAUTH_CLIENT_SECRET")
+    else:
+        return None
+
+    if not client_id or not client_id.strip() or not client_secret or not client_secret.strip():
+        return None
+    return OAuthClientSettings(client_id=client_id.strip(), client_secret=client_secret.strip())
 
 
 def get_app_version() -> str:

@@ -46,7 +46,17 @@ def test_authentication_tag_groups_session_endpoints(schema):
     auth_paths = {
         path for method, path, operation in _operations(schema) if operation["tags"] == ["Authentication"]
     }
-    assert auth_paths == {"/create-account", "/login-account", "/refresh-token", "/logout", "/me"}
+    assert auth_paths == {
+        "/create-account",
+        "/login-account",
+        "/refresh-token",
+        "/logout",
+        "/me",
+        "/oauth/{provider}/authorize",
+        "/oauth/{provider}/callback",
+        "/oauth/exchange",
+        "/oauth/complete-signup",
+    }
 
 
 def test_login_and_create_account_document_token_fields(schema):

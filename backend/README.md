@@ -4,11 +4,11 @@ Minimal FastAPI backend for local testing.
 
 ## Endpoints
 
-The full, grouped contract is in Swagger UI at `http://127.0.0.1:8000/docs` (OpenAPI JSON at `/openapi.json`). Every route except `POST /create-account`, `POST /login-account`, `POST /refresh-token`, `GET /`, and `GET /health` requires a bearer access token.
+The full, grouped contract is in Swagger UI at `http://127.0.0.1:8000/docs` (OpenAPI JSON at `/openapi.json`). Every route except `POST /create-account`, `POST /login-account`, `POST /refresh-token`, the `/oauth/*` sign-in routes, `GET /`, and `GET /health` requires a bearer access token.
 
 | Tag | Routes |
 | --- | --- |
-| Authentication | `POST /create-account`, `POST /login-account`, `POST /refresh-token`, `POST /logout`, `GET /me` |
+| Authentication | `POST /create-account`, `POST /login-account`, `POST /refresh-token`, `POST /logout`, `GET /me`, `GET /oauth/{provider}/authorize`, `GET /oauth/{provider}/callback`, `POST /oauth/exchange`, `POST /oauth/complete-signup` |
 | Projects | `GET/POST /projects`, `GET/PATCH/DELETE /projects/{project_uuid}` |
 | Course materials | `POST /upload-doc`, `GET /course-contents/{id}/preview`, `GET /course-contents/{id}/file`, `PATCH/DELETE /course-contents/{id}` |
 | Project chat | `GET/POST/DELETE /projects/{project_uuid}/chat` |
@@ -25,6 +25,23 @@ The full, grouped contract is in Swagger UI at `http://127.0.0.1:8000/docs` (Ope
 - `POST /logout` revokes the caller's session only; other browsers stay signed in.
 - The frontend keeps tokens in `localStorage`, so a copied link opened in another browser asks for sign-in there. That is per-browser isolation, not a bug. Within one browser, expired access tokens are refreshed automatically.
 - Unauthenticated requests get `401` with `WWW-Authenticate: Bearer`. Ownership is enforced server-side from the token, never from request data.
+
+### Google and GitHub sign-in
+
+1. The login page navigates to `GET /oauth/{google|github}/authorize`, which sets a short-lived signed state cookie (CSRF + PKCE verifier) and redirects to the provider.
+2. The provider returns to `GET /oauth/{provider}/callback`. The backend checks the state, exchanges the code, and reads the account's **verified** email (Google `email_verified`, GitHub `/user/emails`). Accounts without a verified email are refused.
+3. It redirects to the frontend's `/auth/callback` with one of these in the URL fragment:
+   - `code`: a known provider account, or an existing account with the same verified email (linked on first use). The frontend posts it to `POST /oauth/exchange` for the usual token pair. The code expires after 2 minutes and works once; replaying it revokes the session.
+   - `signup`: a first-time sign-in. The user picks a username and role, and the frontend posts `{ ticket, username, profession }` to `POST /oauth/complete-signup` (201, same body as create-account). Tickets expire after 15 minutes.
+   - `error`: a message to show.
+
+Provider accounts are stored in `auth_identities` (migration `20260927_auth_identities.sql`). Users created through OAuth have no password; password login fails for them.
+
+Setup, per environment (a provider's button shows "not available" until both its id and secret are set):
+
+- **Google:** Google Cloud console -> APIs & Services -> Credentials -> Create OAuth client ID -> Web application. Authorized redirect URI: `<OAUTH_REDIRECT_BASE_URL>/oauth/google/callback`. Set `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`.
+- **GitHub:** GitHub -> Settings -> Developer settings -> OAuth Apps -> New OAuth App. Authorization callback URL: `<OAUTH_REDIRECT_BASE_URL>/oauth/github/callback`. Set `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET`. A GitHub OAuth App allows one callback URL, so use one app per environment.
+- `OAUTH_REDIRECT_BASE_URL` is the public backend URL (`http://127.0.0.1:8000` locally). `FRONTEND_URL` is where the callback sends the browser (`http://localhost:3000` locally). Use the same host (`127.0.0.1` vs `localhost`) you registered with the provider.
 
 **Testing in Swagger UI:** call `POST /login-account` (or `POST /create-account`), copy `access_token` from the response, click **Authorize**, paste the token (without `Bearer`), and call protected routes. Swagger keeps it across page reloads. When it expires, call `POST /refresh-token` and authorize again with the new token.
 

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.account import router as account_router
+from app.api.oauth import router as oauth_router
 from app.api.projects import router as projects_router
 from app.api.quiz import router as quiz_router
 from app.api.upload import router as upload_router
@@ -21,7 +22,7 @@ OPENAPI_TAGS = [
     {
         "name": "Authentication",
         "description": (
-            "Create an account or log in to get an access token and a refresh token. "
+            "Create an account or log in (with a password, Google, or GitHub) to get an access token and a refresh token. "
             "In Swagger UI, click **Authorize** and paste the `access_token` to call protected endpoints."
         ),
     },
@@ -50,6 +51,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(account_router)
+app.include_router(oauth_router)
 app.include_router(projects_router)
 app.include_router(quiz_router)
 app.include_router(upload_router)
