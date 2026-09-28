@@ -11,4 +11,3 @@ boto3
 PyJWT
 bcrypt
 openai
-anthropic

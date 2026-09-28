@@ -1,8 +1,10 @@
-"""Slide deck outlines, generated with Claude.
+"""Slide deck outlines, generated on Cerebras.
 
-Structured outputs constrain the reply to the outline's JSON schema, so the response
-never needs fence-stripping or JSON repair; ``_normalize_slide_deck_payload`` still
-enforces the requested slide count and bullet limits.
+Cerebras serves an OpenAI-compatible Chat Completions API, so this uses the ``openai``
+SDK pointed at Cerebras' base URL. Strict structured outputs constrain the reply to the
+outline's JSON schema, so the response never needs fence-stripping or JSON repair;
+``_normalize_slide_deck_payload`` still enforces the requested slide count and bullet
+limits.
 """
 
 from __future__ import annotations
@@ -11,23 +13,19 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-import anthropic
+import openai
 
-from app.config import get_anthropic_api_key
+from app.config import get_cerebras_api_key, get_cerebras_slide_model
 from app.models.quiz_model import QuizSourceMaterial
 from app.models.slide_deck_model import SlideDeckOutline, SlideDeckOutlineSlide
 from app.services.llm_service import LLMServiceError, MissingAPIKeyError
 from app.utils.token_usage import TokenUsage
 
 
-SLIDE_DECK_MODEL = "claude-opus-5"
-SLIDE_DECK_MAX_TOKENS = 16000
-SLIDE_DECK_TIMEOUT_SECONDS = 300.0
+CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
+SLIDE_DECK_TIMEOUT_SECONDS = 180.0
 MAX_SLIDE_INPUT_CHARS = 28000
 MAX_BULLETS_PER_SLIDE = 6
-# Re-runs a request Claude's safety classifiers decline on Anthropic's recommended
-# fallback model, inside the same call.
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 SLIDE_DECK_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -53,8 +51,8 @@ SLIDE_DECK_SCHEMA: dict[str, Any] = {
 }
 
 
-class ClaudeServiceError(LLMServiceError):
-    """Raised when Claude fails to produce a usable slide deck outline."""
+class SlideDeckServiceError(LLMServiceError):
+    """Raised when Cerebras fails to produce a usable slide deck outline."""
 
 
 @dataclass(frozen=True)
@@ -68,50 +66,57 @@ def generate_slide_deck_outline_with_usage(
     materials: list[QuizSourceMaterial],
     slide_count: int = 10,
 ) -> SlideDeckGenerationResult:
-    api_key = get_anthropic_api_key()
+    api_key = get_cerebras_api_key()
     if not api_key:
-        raise MissingAPIKeyError("Anthropic API key not found. Set ANTHROPIC_API_KEY.")
+        raise MissingAPIKeyError("Cerebras API key not found. Set CEREBRAS_API_KEY.")
 
     if not materials:
-        raise ClaudeServiceError("At least one source material is required.")
+        raise SlideDeckServiceError("At least one source material is required.")
 
-    client = anthropic.Anthropic(api_key=api_key, timeout=SLIDE_DECK_TIMEOUT_SECONDS, max_retries=3)
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url=CEREBRAS_BASE_URL,
+        timeout=SLIDE_DECK_TIMEOUT_SECONDS,
+        max_retries=3,
+    )
     try:
-        response = client.beta.messages.create(
-            model=SLIDE_DECK_MODEL,
-            max_tokens=SLIDE_DECK_MAX_TOKENS,
-            betas=[FALLBACK_BETA],
-            fallbacks="default",
-            output_config={"format": {"type": "json_schema", "schema": SLIDE_DECK_SCHEMA}},
+        response = client.chat.completions.create(
+            model=get_cerebras_slide_model(),
             messages=[{"role": "user", "content": _build_slide_deck_prompt(materials=materials, slide_count=slide_count)}],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "slide_deck", "strict": True, "schema": SLIDE_DECK_SCHEMA},
+            },
         )
-    except anthropic.AuthenticationError as exc:
-        raise ClaudeServiceError("Anthropic rejected the API key. Check ANTHROPIC_API_KEY.") from exc
-    except anthropic.BadRequestError as exc:
-        # An empty balance is reported as a 400, not a 402/429.
-        if "credit balance" in exc.message.lower():
-            raise ClaudeServiceError("The Anthropic account is out of credits, so slide decks are unavailable.") from exc
-        raise ClaudeServiceError(f"Claude request failed: {exc}") from exc
-    except anthropic.APIError as exc:
-        raise ClaudeServiceError(f"Claude request failed: {exc}") from exc
+    except openai.AuthenticationError as exc:
+        raise SlideDeckServiceError("Cerebras rejected the API key. Check CEREBRAS_API_KEY.") from exc
+    except openai.APIStatusError as exc:
+        if exc.status_code == 402:
+            raise SlideDeckServiceError("The Cerebras account needs billing set up, so slide decks are unavailable.") from exc
+        raise SlideDeckServiceError(f"Cerebras request failed: {exc}") from exc
+    except openai.APIError as exc:
+        raise SlideDeckServiceError(f"Cerebras request failed: {exc}") from exc
 
-    if response.stop_reason == "refusal":
-        raise ClaudeServiceError("Claude declined to build a slide deck from these materials.")
-    if response.stop_reason == "max_tokens":
-        raise ClaudeServiceError("The slide deck was too long to generate. Try fewer slides or sources.")
+    choice = response.choices[0] if response.choices else None
+    if choice is None:
+        raise SlideDeckServiceError("Cerebras returned no slide deck.")
+    if choice.finish_reason == "length":
+        raise SlideDeckServiceError("The slide deck was too long to generate. Try fewer slides or sources.")
 
-    response_text = next((block.text for block in response.content if block.type == "text"), "")
     try:
-        payload = json.loads(response_text)
+        payload = json.loads(choice.message.content or "")
     except json.JSONDecodeError as exc:
-        raise ClaudeServiceError("Claude returned an unreadable slide deck.") from exc
+        raise SlideDeckServiceError("Cerebras returned an unreadable slide deck.") from exc
+    if not isinstance(payload, dict):
+        raise SlideDeckServiceError("Cerebras returned an unreadable slide deck.")
 
+    usage = response.usage
     return SlideDeckGenerationResult(
         outline=_normalize_slide_deck_payload(payload=payload, slide_count=slide_count),
         token_usage=TokenUsage(
-            input_token=response.usage.input_tokens,
-            output_token=response.usage.output_tokens,
-            source="provider_usage",
+            input_token=usage.prompt_tokens if usage else None,
+            output_token=usage.completion_tokens if usage else None,
+            source="provider_usage" if usage else "estimated",
         ),
     )
 

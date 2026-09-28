@@ -36,7 +36,7 @@ os.environ["S3_ACCESS_KEY_ID"] = "test"
 os.environ["S3_SECRET_ACCESS_KEY"] = "test"
 os.environ["STORAGE_PUBLIC_URL"] = TEST_PUBLIC_URL
 # Empty values win over .env and read as "not configured", so no test can call a model provider.
-for provider_env_var in ("GOOGLE_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"):
+for provider_env_var in ("GOOGLE_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "DEEPSEEK_API_KEY", "CEREBRAS_API_KEY"):
     os.environ[provider_env_var] = ""
 
 import psycopg2  # noqa: E402

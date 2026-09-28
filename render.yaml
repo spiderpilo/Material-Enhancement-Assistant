@@ -39,9 +39,11 @@ services:
         sync: false
       - key: DEEPSEEK_CHAT_MODEL
         value: deepseek-v4-pro
-      # Slide deck outlines (Claude).
-      - key: ANTHROPIC_API_KEY
+      # Slide deck outlines.
+      - key: CEREBRAS_API_KEY
         sync: false
+      - key: CEREBRAS_SLIDE_MODEL
+        value: gpt-oss-120b
       - key: S3_ENDPOINT_URL
         sync: false
       - key: S3_REGION

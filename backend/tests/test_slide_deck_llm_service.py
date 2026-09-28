@@ -3,29 +3,34 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-import anthropic
 import httpx2
+import openai
 import pytest
 
 from app.models.quiz_model import QuizSourceMaterial
 from app.services import slide_deck_llm_service
 from app.services.llm_service import LLMServiceError, MissingAPIKeyError
-from app.services.slide_deck_llm_service import ClaudeServiceError, generate_slide_deck_outline_with_usage
+from app.services.slide_deck_llm_service import SlideDeckServiceError, generate_slide_deck_outline_with_usage
 
 
 MATERIALS = [QuizSourceMaterial(id=1, name="Week 3 notes", text="Photosynthesis makes glucose from light.")]
 
 
-def claude_message(payload, *, stop_reason: str = "end_turn"):
-    text = payload if isinstance(payload, str) else json.dumps(payload)
+def completion(payload, *, finish_reason: str = "stop"):
+    content = payload if isinstance(payload, str) else json.dumps(payload)
     return SimpleNamespace(
-        stop_reason=stop_reason,
-        content=[SimpleNamespace(type="text", text=text)],
-        usage=SimpleNamespace(input_tokens=1200, output_tokens=800),
+        choices=[SimpleNamespace(finish_reason=finish_reason, message=SimpleNamespace(content=content))],
+        usage=SimpleNamespace(prompt_tokens=1200, completion_tokens=800),
     )
 
 
-class FakeMessages:
+def status_error(status: int, message: str) -> openai.APIStatusError:
+    request = httpx2.Request("POST", "https://api.cerebras.ai/v1/chat/completions")
+    error_class = {401: openai.AuthenticationError}.get(status, openai.APIStatusError)
+    return error_class(message, response=httpx2.Response(status, request=request), body=None)
+
+
+class FakeCompletions:
     def __init__(self) -> None:
         self.result = None
         self.error: Exception | None = None
@@ -39,15 +44,19 @@ class FakeMessages:
 
 
 @pytest.fixture()
-def fake_claude(monkeypatch: pytest.MonkeyPatch) -> FakeMessages:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-    messages = FakeMessages()
-    monkeypatch.setattr(
-        slide_deck_llm_service.anthropic,
-        "Anthropic",
-        lambda **kwargs: SimpleNamespace(beta=SimpleNamespace(messages=messages)),
-    )
-    return messages
+def fake_cerebras(monkeypatch: pytest.MonkeyPatch) -> FakeCompletions:
+    monkeypatch.setenv("CEREBRAS_API_KEY", "csk-test")
+    monkeypatch.delenv("CEREBRAS_SLIDE_MODEL", raising=False)
+    completions = FakeCompletions()
+    clients: list[dict] = []
+
+    def fake_client(**kwargs):
+        clients.append(kwargs)
+        return SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    monkeypatch.setattr(slide_deck_llm_service.openai, "OpenAI", fake_client)
+    completions.clients = clients  # type: ignore[attr-defined]
+    return completions
 
 
 def deck(slide_total: int, *, bullets: int = 3) -> dict:
@@ -61,26 +70,37 @@ def deck(slide_total: int, *, bullets: int = 3) -> dict:
     }
 
 
-def test_outline_comes_from_claude_with_schema_and_fallback(fake_claude):
-    fake_claude.result = claude_message(deck(3))
+def test_outline_comes_from_cerebras_with_strict_schema(fake_cerebras):
+    fake_cerebras.result = completion(deck(3))
 
     result = generate_slide_deck_outline_with_usage(materials=MATERIALS, slide_count=3)
 
-    call = fake_claude.calls[0]
-    assert call["model"] == "claude-opus-5"
-    assert call["fallbacks"] == "default"
-    assert call["betas"] == ["server-side-fallback-2026-07-01"]
-    assert call["output_config"]["format"]["type"] == "json_schema"
-    assert "exactly 3 instructional slides" in call["messages"][0]["content"]
-    assert "Source: Week 3 notes" in call["messages"][0]["content"]
+    assert fake_cerebras.clients[0]["base_url"] == "https://api.cerebras.ai/v1"
+    assert fake_cerebras.clients[0]["api_key"] == "csk-test"
+    call = fake_cerebras.calls[0]
+    assert call["model"] == "gpt-oss-120b"
+    assert call["response_format"]["type"] == "json_schema"
+    assert call["response_format"]["json_schema"]["strict"] is True
+    prompt = call["messages"][0]["content"]
+    assert "exactly 3 instructional slides" in prompt
+    assert "Source: Week 3 notes" in prompt
     assert result.outline.title == "Photosynthesis"
     assert [slide.title for slide in result.outline.slides] == ["Slide 0", "Slide 1", "Slide 2"]
     assert (result.token_usage.input_token, result.token_usage.output_token) == (1200, 800)
     assert result.token_usage.source == "provider_usage"
 
 
-def test_outline_is_padded_or_trimmed_to_requested_count(fake_claude):
-    fake_claude.result = claude_message(deck(2, bullets=9))
+def test_slide_model_is_configurable(fake_cerebras, monkeypatch):
+    monkeypatch.setenv("CEREBRAS_SLIDE_MODEL", "qwen-3.8-27b")
+    fake_cerebras.result = completion(deck(5))
+
+    generate_slide_deck_outline_with_usage(materials=MATERIALS, slide_count=5)
+
+    assert fake_cerebras.calls[0]["model"] == "qwen-3.8-27b"
+
+
+def test_outline_is_padded_or_trimmed_to_requested_count(fake_cerebras):
+    fake_cerebras.result = completion(deck(2, bullets=9))
 
     outline = generate_slide_deck_outline_with_usage(materials=MATERIALS, slide_count=4).outline
 
@@ -89,44 +109,36 @@ def test_outline_is_padded_or_trimmed_to_requested_count(fake_claude):
     assert outline.slides[3].title == "Slide 4"
 
 
-def test_refusal_is_reported(fake_claude):
-    fake_claude.result = claude_message("", stop_reason="refusal")
+def test_truncated_output_is_reported(fake_cerebras):
+    fake_cerebras.result = completion('{"title": "cut', finish_reason="length")
 
-    with pytest.raises(ClaudeServiceError, match="declined"):
+    with pytest.raises(SlideDeckServiceError, match="too long"):
         generate_slide_deck_outline_with_usage(materials=MATERIALS)
 
 
-def test_truncated_output_is_reported(fake_claude):
-    fake_claude.result = claude_message('{"title": "cut', stop_reason="max_tokens")
+def test_unreadable_output_is_reported(fake_cerebras):
+    fake_cerebras.result = completion("not json")
 
-    with pytest.raises(ClaudeServiceError, match="too long"):
+    with pytest.raises(SlideDeckServiceError, match="unreadable"):
         generate_slide_deck_outline_with_usage(materials=MATERIALS)
 
 
-def test_bad_key_becomes_llm_service_error(fake_claude):
-    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
-    fake_claude.error = anthropic.AuthenticationError(
-        "bad key", response=httpx2.Response(401, request=request), body=None
-    )
+def test_bad_key_becomes_llm_service_error(fake_cerebras):
+    fake_cerebras.error = status_error(401, "bad key")
 
-    with pytest.raises(LLMServiceError, match="ANTHROPIC_API_KEY"):
+    with pytest.raises(LLMServiceError, match="CEREBRAS_API_KEY"):
         generate_slide_deck_outline_with_usage(materials=MATERIALS)
 
 
-def test_out_of_credit_is_explained(fake_claude):
-    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
-    fake_claude.error = anthropic.BadRequestError(
-        "Your credit balance is too low to access the Anthropic API.",
-        response=httpx2.Response(400, request=request),
-        body=None,
-    )
+def test_payment_required_is_explained(fake_cerebras):
+    fake_cerebras.error = status_error(402, "Payment required to access this resource.")
 
-    with pytest.raises(ClaudeServiceError, match="out of credits"):
+    with pytest.raises(SlideDeckServiceError, match="billing"):
         generate_slide_deck_outline_with_usage(materials=MATERIALS)
 
 
 def test_missing_key_is_reported(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("CEREBRAS_API_KEY", "")
 
-    with pytest.raises(MissingAPIKeyError, match="ANTHROPIC_API_KEY"):
+    with pytest.raises(MissingAPIKeyError, match="CEREBRAS_API_KEY"):
         generate_slide_deck_outline_with_usage(materials=MATERIALS)
